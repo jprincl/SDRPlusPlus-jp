@@ -1,9 +1,12 @@
 #ifdef __ANDROID__
 
 #include "QmxDevice_internal.h"
+#include "QmxCatStatus.h"
 
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <cinttypes>
 #include <cstdint>
 #include <mutex>
@@ -26,7 +29,7 @@ namespace {
     int initAndroidUsbContext(libusb_context** ctx) {
 #ifndef LIBUSB_API_VERSION
 #error "LIBUSB_API_VERSION is not defined, please update libusb"
-#endif // LIBUSB_API_VERSION
+#endif
 
 #if LIBUSB_API_VERSION >= 0x0100010A
         libusb_init_option option{};
@@ -51,7 +54,12 @@ namespace qmx::detail {
             stop();
         }
 
-        bool start(const StartOptions& options, StreamCallback callback, void* ctx, std::string& error) override {
+        bool start(const StartOptions& options,
+                   StreamCallback callback,
+                   void* ctx,
+                   StatusCallback statusCallback,
+                   void* statusCtx,
+                   std::string& error) override {
             stop();
 
             if (!options.androidUsb.valid()) {
@@ -97,22 +105,31 @@ namespace qmx::detail {
 
             callbackFn = callback;
             callbackCtx = ctx;
+            statusParser.setStatusCallback(statusCallback, statusCtx);
             pending.assign(kStreamBlockSize, {});
             pendingCount = 0;
+            statusParser.reset();
+
+            discoverCatEndpoints();
             running.store(true);
 
             if (options.enableIqMode && !sendCatCommand("Q91;")) {
+                running.store(false);
                 error = "Failed to enable QMX IQ mode over USB CAT";
                 cleanup();
                 return false;
             }
 
             if (!prepareTransfers(error)) {
+                running.store(false);
                 cleanup();
                 return false;
             }
 
             eventThread = std::thread(&AndroidUsbImpl::run, this);
+            if (statusCallback) {
+                catThread = std::thread(&AndroidUsbImpl::pollCatLoop, this);
+            }
             return true;
         }
 
@@ -128,12 +145,16 @@ namespace qmx::detail {
                 }
             }
 
+            if (catThread.joinable()) {
+                catThread.join();
+            }
             if (eventThread.joinable()) {
                 eventThread.join();
             }
 
             cleanup();
             pendingCount = 0;
+            statusParser.reset();
         }
 
         bool isStreaming() const override {
@@ -175,6 +196,52 @@ namespace qmx::detail {
                 return false;
             }
             return true;
+        }
+
+        void discoverCatEndpoints() {
+            catOutEndpoint = 0x01;
+            catInEndpoint = 0x82;
+
+            libusb_config_descriptor* config = nullptr;
+            libusb_device* device = usbHandle ? libusb_get_device(usbHandle) : nullptr;
+            if (!device || libusb_get_active_config_descriptor(device, &config) != LIBUSB_SUCCESS || !config) {
+                return;
+            }
+
+            unsigned char bulkOut = 0;
+            unsigned char bulkIn = 0;
+
+            for (int ifaceIndex = 0; ifaceIndex < config->bNumInterfaces; ++ifaceIndex) {
+                const libusb_interface& iface = config->interface[ifaceIndex];
+                for (int altIndex = 0; altIndex < iface.num_altsetting; ++altIndex) {
+                    const libusb_interface_descriptor& alt = iface.altsetting[altIndex];
+                    for (int epIndex = 0; epIndex < alt.bNumEndpoints; ++epIndex) {
+                        const libusb_endpoint_descriptor& ep = alt.endpoint[epIndex];
+                        const unsigned char addr = ep.bEndpointAddress;
+                        const unsigned char type = ep.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK;
+                        if (addr == 0x83 || type != LIBUSB_TRANSFER_TYPE_BULK) {
+                            continue;
+                        }
+
+                        const bool isIn = (addr & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN;
+                        if (isIn && !bulkIn) {
+                            bulkIn = addr;
+                        }
+                        else if (!isIn && !bulkOut) {
+                            bulkOut = addr;
+                        }
+                    }
+                }
+            }
+
+            libusb_free_config_descriptor(config);
+
+            if (bulkOut) {
+                catOutEndpoint = bulkOut;
+            }
+            if (bulkIn) {
+                catInEndpoint = bulkIn;
+            }
         }
 
         static void transferCallback(libusb_transfer* transfer) {
@@ -220,8 +287,95 @@ namespace qmx::detail {
 
             std::lock_guard<std::mutex> lock(catMutex);
             int transferred = 0;
-            int rc = libusb_bulk_transfer(usbHandle, 0x01, reinterpret_cast<unsigned char*>(const_cast<char*>(command.data())), static_cast<int>(command.size()), &transferred, 100);
-            return rc == 0 && transferred == static_cast<int>(command.size());
+            int rc = libusb_bulk_transfer(
+                usbHandle,
+                catOutEndpoint,
+                reinterpret_cast<unsigned char*>(const_cast<char*>(command.data())),
+                static_cast<int>(command.size()),
+                &transferred,
+                100);
+            return rc == LIBUSB_SUCCESS && transferred == static_cast<int>(command.size());
+        }
+
+        int readCatChunk(unsigned char* buffer, int bufferSize, int timeoutMs) {
+            if (!usbHandle) {
+                return LIBUSB_ERROR_NO_DEVICE;
+            }
+
+            std::lock_guard<std::mutex> lock(catMutex);
+            int transferred = 0;
+            int rc = libusb_bulk_transfer(usbHandle, catInEndpoint, buffer, bufferSize, &transferred, timeoutMs);
+            if (rc == LIBUSB_SUCCESS) {
+                return transferred;
+            }
+            return rc;
+        }
+
+        void pollCatLoop() {
+            using namespace std::chrono_literals;
+
+            auto nextIfPoll = std::chrono::steady_clock::now();
+            auto nextMeterPoll = nextIfPoll;
+            auto nextSlowPoll = nextIfPoll;
+            auto nextMenuPoll = nextIfPoll;
+
+            while (running.load()) {
+                const auto now = std::chrono::steady_clock::now();
+                std::string commands;
+                const QmxStatus currentStatus = statusParser.snapshot();
+                const bool txActive = currentStatus.hasTransmit && currentStatus.transmit;
+
+                if (now >= nextIfPoll) {
+                    commands += "IF;";
+                    nextIfPoll = now + 100ms;
+                }
+                if (now >= nextMeterPoll) {
+                    commands += txActive ? "PC;SW;" : "Q1;SM;";
+                    nextMeterPoll = now + 250ms;
+                }
+                if (now >= nextSlowPoll) {
+                    commands += "FA;FB;FR;FT;SP;MD;TQ;";
+                    nextSlowPoll = now + 1s;
+                }
+                if (now >= nextMenuPoll && !statusParser.hasPendingMenuValue()) {
+                    statusParser.armPendingMenuValue(PendingMenuValue::CwOffset);
+                    commands += "MMCW|CW offset;";
+                    nextMenuPoll = now + 5s;
+                }
+
+                if (!commands.empty()) {
+                    if (!sendCatCommand(commands)) {
+                        statusParser.clearPendingMenuValue();
+                        std::this_thread::sleep_for(25ms);
+                        continue;
+                    }
+                    readResponsesFor(120ms);
+                    continue;
+                }
+
+                readResponsesFor(25ms);
+                std::this_thread::sleep_for(10ms);
+            }
+        }
+
+        void readResponsesFor(std::chrono::milliseconds maxDuration) {
+            const auto start = std::chrono::steady_clock::now();
+            std::array<unsigned char, 256> buffer{};
+            int idleReads = 0;
+
+            while (running.load() && std::chrono::steady_clock::now() - start < maxDuration && idleReads < 2) {
+                int rc = readCatChunk(buffer.data(), static_cast<int>(buffer.size()), 40);
+                if (rc == LIBUSB_ERROR_TIMEOUT || rc == 0) {
+                    ++idleReads;
+                    continue;
+                }
+                if (rc < 0) {
+                    return;
+                }
+
+                idleReads = 0;
+                statusParser.feedBytes(reinterpret_cast<const char*>(buffer.data()), static_cast<std::size_t>(rc));
+            }
         }
 
         void push(float i, float q) {
@@ -272,8 +426,7 @@ namespace qmx::detail {
 
         void cleanup() {
             if (usbContext) {
-                // Let libusb process the cancellations
-                for (int i = 0; i < 50; ++ i) {
+                for (int i = 0; i < 50; ++i) {
                     struct timeval tv = { 0, 50000 };
                     libusb_handle_events_timeout_completed(usbContext, &tv, nullptr);
                 }
@@ -298,6 +451,8 @@ namespace qmx::detail {
 
         libusb_context* usbContext = nullptr;
         libusb_device_handle* usbHandle = nullptr;
+        unsigned char catOutEndpoint = 0x01;
+        unsigned char catInEndpoint = 0x82;
         std::array<std::array<unsigned char, kIsoPacketSize * kNumIsoPackets>, kNumIsoTransfers> transferBuffers{};
         std::array<libusb_transfer*, kNumIsoTransfers> transfers{};
         StreamCallback callbackFn = nullptr;
@@ -305,7 +460,9 @@ namespace qmx::detail {
         std::vector<IQSample> pending;
         std::size_t pendingCount = 0;
         std::thread eventThread;
+        std::thread catThread;
         std::mutex catMutex;
+        QmxCatStatusParser statusParser;
         std::atomic<bool> running = false;
     };
 

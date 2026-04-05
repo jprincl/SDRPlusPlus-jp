@@ -11,7 +11,12 @@ namespace qmx::detail {
     public:
         virtual ~DeviceImpl() = default;
 
-        virtual bool start(const StartOptions& options, StreamCallback callback, void* ctx, std::string& error) = 0;
+        virtual bool start(const StartOptions& options,
+                           StreamCallback callback,
+                           void* ctx,
+                           StatusCallback statusCallback,
+                           void* statusCtx,
+                           std::string& error) = 0;
         virtual void stop() = 0;
         virtual bool isStreaming() const = 0;
         virtual bool setFrequency(std::int64_t hz, std::string& error) = 0;

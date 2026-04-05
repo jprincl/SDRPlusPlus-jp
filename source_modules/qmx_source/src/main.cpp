@@ -5,11 +5,13 @@
 
 #include <config.h>
 #include <core.h>
+#include <gui/gui.h>
 #include <gui/smgui.h>
 #include <gui/style.h>
 #include <imgui.h>
 #include <module.h>
 #include <qmx/QmxDevice.h>
+#include <gui/tuner.h>
 #include <signal_path/signal_path.h>
 #include <utils/flog.h>
 #include <utils/optionlist.h>
@@ -20,6 +22,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <mutex>
 #include <string>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -35,6 +39,9 @@ SDRPP_MOD_INFO{
 ConfigManager config;
 
 namespace {
+    constexpr double kQmxIfOffsetHz = 12000.0;
+    constexpr double kQmxDefaultCwOffsetHz = 700.0;
+
     struct AudioChoice {
         std::string id;
         std::string label;
@@ -72,10 +79,15 @@ public:
         refresh();
         loadConfig();
 
+        fftRedrawHandler.ctx = this;
+        fftRedrawHandler.handler = fftRedraw;
+        gui::waterfall.onFFTRedraw.bindHandler(&fftRedrawHandler);
+
         sigpath::sourceManager.registerSource("QMX", &handler);
     }
 
     ~QMXSourceModule() {
+        gui::waterfall.onFFTRedraw.unbindHandler(&fftRedrawHandler);
         stop(this);
         sigpath::sourceManager.unregisterSource("QMX");
     }
@@ -101,33 +113,25 @@ private:
             freq = config.conf["frequency"];
         }
 #ifndef __ANDROID__
-        if (config.conf.contains("audioDevice")) {
+        if (config.conf.contains("audioDevice"))
             selectedAudioDevice = config.conf["audioDevice"];
-        }
-        if (config.conf.contains("serialPort")) {
+        if (config.conf.contains("serialPort"))
             selectedSerialPort = config.conf["serialPort"];
-        }
 #else
-        if (config.conf.contains("device")) {
+        if (config.conf.contains("device"))
             selectedAndroidDevice = config.conf["device"];
-        }
 #endif
         config.release();
 
 #ifndef __ANDROID__
-        if (!selectedAudioDevice.empty()) {
+        if (!selectedAudioDevice.empty())
             selectAudioDevice(selectedAudioDevice);
-        }
-        else {
+        else
             selectPreferredAudioDevice();
-        }
-
-        if (!selectedSerialPort.empty()) {
+        if (!selectedSerialPort.empty())
             selectSerialPort(selectedSerialPort);
-        }
-        else {
+        else
             selectFirstSerialPort();
-        }
 #else
         selectAndroidDeviceByName(selectedAndroidDevice);
 #endif
@@ -136,14 +140,12 @@ private:
     void refresh() {
 #ifndef __ANDROID__
         audioDevices.clear();
-        for (const auto& device : qmx::QmxDevice::listAudioDevices()) {
+        for (const auto& device : qmx::QmxDevice::listAudioDevices())
             audioDevices.define(device.id, device.label, { device.id, device.label });
-        }
 
         serialPorts.clear();
-        for (const auto& port : qmx::QmxDevice::listSerialPorts()) {
+        for (const auto& port : qmx::QmxDevice::listSerialPorts())
             serialPorts.define(port.path, port.label, { port.path, port.label });
-        }
 #else
         androidDevices.clear();
         androidDeviceListTxt.clear();
@@ -262,19 +264,44 @@ private:
     }
 
     void refreshAndroidDeviceSelectionIfNeeded() {
-        if (running) {
+        if (running)
             return;
-        }
 
         int generation = backend::usbHotplugGeneration.load(std::memory_order_relaxed);
-        if (generation == lastAndroidUsbHotplugGeneration) {
+        if (generation == lastAndroidUsbHotplugGeneration)
             return;
-        }
 
         refreshAndroidDeviceSelection();
     }
 #endif
-
+    static double qmxRigToIqOffset(const qmx::QmxStatus& status) {
+        const double cwOffsetHz = status.hasCwOffset ? static_cast<double>(status.cwOffsetHz) : kQmxDefaultCwOffsetHz;
+        double offset = kQmxIfOffsetHz;
+        if (!status.hasMode) {
+            return offset;
+        }
+        switch (status.mode) {
+        case qmx::QmxMode::CW:
+            return offset + cwOffsetHz;
+        case qmx::QmxMode::CWR:
+            return offset - cwOffsetHz;
+        default:
+            return offset;
+        }
+    }
+    static double rigFrequencyToCenterFrequency(std::int64_t rigFrequency, const qmx::QmxStatus& status) {
+        return static_cast<double>(rigFrequency) - qmxRigToIqOffset(status);
+    }
+    static std::int64_t centerFrequencyToRigFrequency(double centerFrequency, const qmx::QmxStatus& status) {
+        return static_cast<std::int64_t>(std::llround(centerFrequency + qmxRigToIqOffset(status)));
+    }
+    static std::int64_t effectiveReceiveRigFrequency(const qmx::QmxStatus& status) {
+        std::int64_t frequency = status.frequency;
+        if (status.hasRit && status.hasRitEnabled && status.ritEnabled) {
+            frequency += status.ritHz;
+        }
+        return frequency;
+    }
     static void menuSelected(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
         core::setInputSampleRate(self->sampleRate);
@@ -287,9 +314,8 @@ private:
 
     static void start(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
-        if (self->running) {
+        if (self->running)
             return;
-        }
 
         qmx::StartOptions options;
 #ifndef __ANDROID__
@@ -310,8 +336,16 @@ private:
         options.androidUsb.pid = self->androidPid;
 #endif
 
+        {
+            std::lock_guard<std::mutex> lock(self->statusMutex);
+            self->pendingStatus = {};
+            self->hasPendingStatus = false;
+        }
+        self->currentStatus = {};
+        self->hasStatus = false;
+
         std::string error;
-        if (!self->device.start(options, &QMXSourceModule::sampleHandler, self, &error)) {
+        if (!self->device.start(options, &QMXSourceModule::sampleHandler, self, &QMXSourceModule::statusHandler, self, &error)) {
             flog::error("QMXSourceModule: {}", error);
             return;
         }
@@ -319,7 +353,7 @@ private:
         self->running = true;
         if (self->freq > 0.0) {
             std::string tuneError;
-            if (!self->device.setFrequency(static_cast<std::int64_t>(std::llround(self->freq)), &tuneError)) {
+            if (!self->device.setFrequency(centerFrequencyToRigFrequency(self->freq, self->currentStatus), &tuneError)) {
                 flog::warn("QMXSourceModule: {}", tuneError);
             }
         }
@@ -329,14 +363,20 @@ private:
 
     static void stop(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
-        if (!self->running) {
+        if (!self->running)
             return;
-        }
 
         self->running = false;
         self->stream.stopWriter();
         self->device.stop();
         self->stream.clearWriteStop();
+        {
+            std::lock_guard<std::mutex> lock(self->statusMutex);
+            self->pendingStatus = {};
+            self->hasPendingStatus = false;
+        }
+        self->currentStatus = {};
+        self->hasStatus = false;
 
         flog::info("QMXSourceModule '{}': Stop!", self->name);
     }
@@ -351,7 +391,7 @@ private:
 
         if (self->running) {
             std::string error;
-            if (!self->device.setFrequency(static_cast<std::int64_t>(std::llround(freq)), &error)) {
+            if (!self->device.setFrequency(centerFrequencyToRigFrequency(freq, self->currentStatus), &error)) {
                 flog::warn("QMXSourceModule: {}", error);
             }
         }
@@ -361,9 +401,8 @@ private:
         auto* self = static_cast<QMXSourceModule*>(ctx);
 
 #ifndef __ANDROID__
-        if (self->running) {
+        if (self->running)
             SmGui::BeginDisabled();
-        }
 
         SmGui::FillWidth();
         SmGui::ForceSync();
@@ -394,30 +433,24 @@ private:
             self->selectSerialPort(self->selectedSerialPort);
         }
 
-        if (self->running) {
+        if (self->running)
             SmGui::EndDisabled();
-        }
 
         SmGui::Text("IQ Audio:");
         SmGui::SameLine();
-        if (self->selectedAudioDevice.empty()) {
+        if (self->selectedAudioDevice.empty())
             SmGui::Text("Not selected");
-        }
-        else {
+        else
             SmGui::Text(self->audioDevices.value(self->audioDevId).label.c_str());
-        }
 
         SmGui::Text("CAT:");
         SmGui::SameLine();
-        if (self->selectedSerialPort.empty()) {
+        if (self->selectedSerialPort.empty())
             SmGui::Text("Manual tune only");
-        }
-        else if (self->running) {
+        else if (self->running)
             SmGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), self->serialPorts.value(self->serialPortId).label.c_str());
-        }
-        else {
+        else
             SmGui::Text(self->serialPorts.value(self->serialPortId).label.c_str());
-        }
 #else
         self->refreshAndroidDeviceSelectionIfNeeded();
         if (self->running)
@@ -441,7 +474,7 @@ private:
         if (self->running)
             SmGui::EndDisabled();
 
-            SmGui::Text("Device:");
+        SmGui::Text("Device:");
         SmGui::SameLine();
         if (self->selectedAndroidDevice.empty())
             SmGui::Text("Not connected");
@@ -450,19 +483,147 @@ private:
         else
             SmGui::Text(self->selectedAndroidDevice.c_str());
 #endif
+
+        self->applyPendingStatus();
+
+        ImGui::Separator();
+        if (!self->hasStatus) {
+            SmGui::Text("CAT Status:");
+            SmGui::SameLine();
+            SmGui::Text(self->running ? "Waiting for QMX status" : "Unavailable");
+            return;
+        }
+
+        SmGui::Text("State:");
+        SmGui::SameLine();
+        if (self->currentStatus.hasTransmit && self->currentStatus.transmit)
+            SmGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "TX");
+        else if (self->currentStatus.hasTransmit)
+            SmGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "RX");
+        else
+            SmGui::Text("Unknown");
+
+        SmGui::Text("Mode:");
+        SmGui::SameLine();
+        SmGui::Text(formatModeLabel(self->currentStatus).c_str());
+
+        SmGui::Text("Rig Freq:");
+        SmGui::SameLine();
+        if (self->currentStatus.hasFrequency)
+            ImGui::Text("%.0f Hz", static_cast<double>(self->currentStatus.frequency));
+        else
+            SmGui::Text("Unknown");
+
+        if (self->currentStatus.hasRxVfo || self->currentStatus.hasTxVfo || self->currentStatus.hasSplit) {
+            SmGui::Text("VFO:");
+            SmGui::SameLine();
+            ImGui::Text("RX %s  TX %s  Split %s",
+                        formatVfoLabel(self->currentStatus.rxVfo),
+                        formatVfoLabel(self->currentStatus.txVfo),
+                        self->currentStatus.hasSplit ? (self->currentStatus.split ? "On" : "Off") : "?");
+        }
+
+        if (self->currentStatus.hasRit || self->currentStatus.hasRitEnabled) {
+            SmGui::Text("RIT:");
+            SmGui::SameLine();
+            if (self->currentStatus.hasRit)
+                ImGui::Text("%s %d Hz", self->currentStatus.hasRitEnabled ? (self->currentStatus.ritEnabled ? "On" : "Off") : "", self->currentStatus.ritHz);
+            else
+                SmGui::Text(self->currentStatus.ritEnabled ? "On" : "Off");
+        }
+
+        if (self->currentStatus.hasSMeter && (!self->currentStatus.hasTransmit || !self->currentStatus.transmit)) {
+            SmGui::Text("S-Meter:");
+            SmGui::SameLine();
+            ImGui::Text("%d dB", self->currentStatus.sMeterDb);
+        }
+
+        if (self->currentStatus.hasPower) {
+            SmGui::Text("Power:");
+            SmGui::SameLine();
+            ImGui::Text("%.1f W", self->currentStatus.powerTenthsW / 10.0f);
+        }
+
+        if (self->currentStatus.hasSWR) {
+            SmGui::Text("SWR:");
+            SmGui::SameLine();
+            ImGui::Text("%.2f:1", self->currentStatus.swrHundredths / 100.0f);
+        }
     }
 
     static void sampleHandler(const qmx::IQSample* samples, std::size_t count, void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
-        if (!self->running || !samples || count == 0) {
+        if (!self->running || !samples || count == 0)
             return;
-        }
 
         for (std::size_t i = 0; i < count; ++i) {
             self->stream.writeBuf[i].re = samples[i].i;
             self->stream.writeBuf[i].im = samples[i].q;
         }
         self->stream.swap(static_cast<int>(count));
+    }
+
+    static void statusHandler(const qmx::QmxStatus& status, void* ctx) {
+        auto* self = static_cast<QMXSourceModule*>(ctx);
+        std::lock_guard<std::mutex> lock(self->statusMutex);
+        self->pendingStatus = status;
+        self->hasPendingStatus = true;
+    }
+
+    static void fftRedraw(ImGui::WaterFall::FFTRedrawArgs, void* ctx) {
+        auto* self = static_cast<QMXSourceModule*>(ctx);
+        self->applyPendingStatus();
+    }
+    void applyPendingStatus() {
+        qmx::QmxStatus nextStatus;
+        {
+            std::lock_guard<std::mutex> lock(statusMutex);
+            if (!hasPendingStatus)
+                return;
+            nextStatus = pendingStatus;
+            hasPendingStatus = false;
+        }
+        currentStatus = nextStatus;
+        hasStatus = true;
+        if (running && nextStatus.hasFrequency && (!nextStatus.hasTransmit || !nextStatus.transmit)) {
+            const double centerFrequency = rigFrequencyToCenterFrequency(effectiveReceiveRigFrequency(nextStatus), nextStatus);
+            if (std::llround(freq) != std::llround(centerFrequency)) {
+                tuner::tune(tuner::TUNER_MODE_IQ_ONLY, "", centerFrequency);
+            }
+        }
+    }
+    static const char* formatVfoLabel(int vfo) {
+        if (vfo == 0)
+            return "A";
+        if (vfo == 1)
+            return "B";
+        return "?";
+    }
+
+    static std::string formatModeLabel(const qmx::QmxStatus& status) {
+        if (status.hasMode) {
+            switch (status.mode) {
+            case qmx::QmxMode::CW:
+                return "CW";
+            case qmx::QmxMode::CWR:
+                return "CW-R";
+            case qmx::QmxMode::DIGI:
+                if (status.hasSideband)
+                    return (status.sideband == qmx::QmxSideband::LSB) ? "DIGI/LSB" : "DIGI/USB";
+                return "DIGI";
+            case qmx::QmxMode::USB:
+                return "USB";
+            case qmx::QmxMode::LSB:
+                return "LSB";
+            default:
+                break;
+            }
+        }
+
+        if (status.hasSideband)
+            return (status.sideband == qmx::QmxSideband::LSB) ? "LSB" : "USB";
+
+        return "Unknown";
     }
 
     std::string name;
@@ -474,6 +635,12 @@ private:
     dsp::stream<dsp::complex_t> stream;
     SourceManager::SourceHandler handler;
     qmx::QmxDevice device;
+    EventHandler<ImGui::WaterFall::FFTRedrawArgs> fftRedrawHandler;
+    std::mutex statusMutex;
+    qmx::QmxStatus pendingStatus;
+    qmx::QmxStatus currentStatus;
+    bool hasPendingStatus = false;
+    bool hasStatus = false;
 
 #ifndef __ANDROID__
     OptionList<std::string, AudioChoice> audioDevices;

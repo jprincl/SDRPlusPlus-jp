@@ -38,7 +38,7 @@ namespace qmx::detail {
 #ifdef _WIN32
         std::string fullPort = portName;
         if (fullPort.rfind("\\\\.\\", 0) != 0) {
-            fullPort = "\\\\.\\" + fullPort;
+            fullPort = "\\\\.\\" + portName;
         }
 
         HANDLE serial = CreateFileA(fullPort.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -80,7 +80,6 @@ namespace qmx::detail {
         PurgeComm(serial, PURGE_RXCLEAR | PURGE_TXCLEAR);
 
         handle = serial;
-        return true;
 #else
         int fd = ::open(portName.c_str(), O_RDWR | O_NOCTTY | O_SYNC);
         if (fd < 0) {
@@ -112,12 +111,22 @@ namespace qmx::detail {
 
         tcflush(fd, TCIOFLUSH);
         handle = reinterpret_cast<void*>(static_cast<intptr_t>(fd));
-        return true;
 #endif
+
+        statusParser.reset();
+        polling.store(true);
+        pollWorker = std::thread(&SerialCatPort::pollLoop, this);
+        return true;
     }
 
     void SerialCatPort::close() {
+        polling.store(false);
+        if (pollWorker.joinable()) {
+            pollWorker.join();
+        }
+
         if (!handle) {
+            statusParser.reset();
             return;
         }
 
@@ -127,10 +136,15 @@ namespace qmx::detail {
         ::close(static_cast<int>(reinterpret_cast<intptr_t>(handle)));
 #endif
         handle = nullptr;
+        statusParser.reset();
     }
 
     bool SerialCatPort::isOpen() const {
         return handle != nullptr;
+    }
+
+    void SerialCatPort::setStatusCallback(StatusCallback callback, void* ctx) {
+        statusParser.setStatusCallback(callback, ctx);
     }
 
     bool SerialCatPort::setIQMode(bool enabled) {
@@ -192,7 +206,7 @@ namespace qmx::detail {
             return false;
         }
 
-        std::lock_guard<std::mutex> lock(mutex);
+        std::lock_guard<std::mutex> lock(ioMutex);
 
 #ifdef _WIN32
         DWORD written = 0;
@@ -209,5 +223,89 @@ namespace qmx::detail {
         tcdrain(static_cast<int>(reinterpret_cast<intptr_t>(handle)));
         return true;
 #endif
+    }
+
+    std::size_t SerialCatPort::readSome(char* buffer, std::size_t bufferSize) {
+        if (!handle || bufferSize == 0) {
+            return 0;
+        }
+
+#ifdef _WIN32
+        DWORD bytesRead = 0;
+        if (!ReadFile(reinterpret_cast<HANDLE>(handle), buffer, static_cast<DWORD>(bufferSize), &bytesRead, nullptr)) {
+            return 0;
+        }
+        return static_cast<std::size_t>(bytesRead);
+#else
+        ssize_t bytesRead = ::read(static_cast<int>(reinterpret_cast<intptr_t>(handle)), buffer, bufferSize);
+        if (bytesRead <= 0) {
+            return 0;
+        }
+        return static_cast<std::size_t>(bytesRead);
+#endif
+    }
+
+    void SerialCatPort::pollLoop() {
+        using namespace std::chrono_literals;
+
+        auto nextIfPoll = std::chrono::steady_clock::now();
+        auto nextMeterPoll = nextIfPoll;
+        auto nextSlowPoll = nextIfPoll;
+        auto nextMenuPoll = nextIfPoll;
+
+        while (polling.load()) {
+            const auto now = std::chrono::steady_clock::now();
+            std::string commands;
+            const QmxStatus currentStatus = statusParser.snapshot();
+            const bool txActive = currentStatus.hasTransmit && currentStatus.transmit;
+
+            if (now >= nextIfPoll) {
+                commands += "IF;";
+                nextIfPoll = now + 100ms;
+            }
+            if (now >= nextMeterPoll) {
+                commands += txActive ? "PC;SW;" : "Q1;SM;";
+                nextMeterPoll = now + 250ms;
+            }
+            if (now >= nextSlowPoll) {
+                commands += "FA;FB;FR;FT;SP;MD;TQ;";
+                nextSlowPoll = now + 1s;
+            }
+            if (now >= nextMenuPoll && !statusParser.hasPendingMenuValue()) {
+                statusParser.armPendingMenuValue(PendingMenuValue::CwOffset);
+                commands += "MMCW|CW offset;";
+                nextMenuPoll = now + 5s;
+            }
+
+            if (!commands.empty()) {
+                if (!send(commands)) {
+                    statusParser.clearPendingMenuValue();
+                    std::this_thread::sleep_for(25ms);
+                    continue;
+                }
+                readResponsesFor(120ms);
+                continue;
+            }
+
+            readResponsesFor(25ms);
+            std::this_thread::sleep_for(10ms);
+        }
+    }
+
+    void SerialCatPort::readResponsesFor(std::chrono::milliseconds maxDuration) {
+        const auto start = std::chrono::steady_clock::now();
+        char buffer[256];
+        int idleReads = 0;
+
+        while (polling.load() && std::chrono::steady_clock::now() - start < maxDuration && idleReads < 2) {
+            const std::size_t count = readSome(buffer, sizeof(buffer));
+            if (count == 0) {
+                ++idleReads;
+                continue;
+            }
+
+            idleReads = 0;
+            statusParser.feedBytes(buffer, count);
+        }
     }
 }

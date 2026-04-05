@@ -23,7 +23,12 @@ namespace qmx {
         return detail::listPlatformSerialPorts();
     }
 
-    bool QmxDevice::start(const StartOptions& options, StreamCallback callback, void* ctx, std::string* out) {
+    bool QmxDevice::start(const StartOptions& options,
+                          StreamCallback callback,
+                          void* ctx,
+                          StatusCallback statusCallback,
+                          void* statusCtx,
+                          std::string* out) {
         stop();
         impl = detail::createDeviceImpl();
         if (!impl) {
@@ -32,7 +37,7 @@ namespace qmx {
         }
 
         std::string localError;
-        if (!impl->start(options, callback, ctx, localError)) {
+        if (!impl->start(options, callback, ctx, statusCallback, statusCtx, localError)) {
             impl.reset();
             setError(localError, out);
             return false;

@@ -48,7 +48,57 @@ namespace qmx {
         float q = 0.0f;
     };
 
+    enum class QmxMode {
+        UNKNOWN,
+        CW,
+        CWR,
+        DIGI,
+        USB,
+        LSB
+    };
+
+    enum class QmxSideband {
+        UNKNOWN,
+        USB,
+        LSB
+    };
+
+    struct QmxStatus {
+        bool hasFrequency = false;
+        std::int64_t frequency = 0;
+        bool hasVfoAFrequency = false;
+        std::int64_t vfoAFrequency = 0;
+        bool hasVfoBFrequency = false;
+        std::int64_t vfoBFrequency = 0;
+        bool hasTransmit = false;
+        bool transmit = false;
+        bool hasMode = false;
+        QmxMode mode = QmxMode::UNKNOWN;
+        bool hasSideband = false;
+        QmxSideband sideband = QmxSideband::UNKNOWN;
+        bool hasRxVfo = false;
+        int rxVfo = -1;
+        bool hasTxVfo = false;
+        int txVfo = -1;
+        bool hasSplit = false;
+        bool split = false;
+        bool hasRit = false;
+        int ritHz = 0;
+        bool hasRitEnabled = false;
+        bool ritEnabled = false;
+        bool hasSMeter = false;
+        int sMeterDb = 0;
+        bool hasPower = false;
+        int powerTenthsW = 0;
+        bool hasSWR = false;
+        int swrHundredths = 0;
+        bool hasCwOffset = false;
+        int cwOffsetHz = 0;
+        std::uint64_t sequence = 0;
+    };
+
     using StreamCallback = void (*)(const IQSample* samples, std::size_t count, void* ctx);
+    using StatusCallback = void (*)(const QmxStatus& status, void* ctx);
 
     class QmxDevice {
     public:
@@ -62,7 +112,12 @@ namespace qmx {
         static std::vector<AudioDeviceInfo> listAudioDevices();
         static std::vector<SerialPortInfo> listSerialPorts();
 
-        bool start(const StartOptions& options, StreamCallback callback, void* ctx, std::string* error = nullptr);
+        bool start(const StartOptions& options,
+                   StreamCallback callback,
+                   void* ctx,
+                   StatusCallback statusCallback = nullptr,
+                   void* statusCtx = nullptr,
+                   std::string* error = nullptr);
         void stop();
 
         bool isStreaming() const;

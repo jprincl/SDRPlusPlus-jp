@@ -149,7 +149,7 @@ namespace qmx::detail {
             stop();
         }
 
-        bool start(const StartOptions& options, StreamCallback callback, void* ctx, std::string& error) override {
+        bool start(const StartOptions& options, StreamCallback callback, void* ctx, StatusCallback statusCallback, void* statusCtx, std::string& error) override {
             stop();
 
             if (options.audioDeviceId.empty()) {
@@ -243,6 +243,7 @@ namespace qmx::detail {
             pendingCount = 0;
             captureBuffer.resize(static_cast<std::size_t>(std::max<UInt32>(getDeviceBufferFrames(deviceId), static_cast<UInt32>(kStreamBlockSize))) * 2);
 
+            serial.setStatusCallback(statusCallback, statusCtx);
             if (!options.serialPort.empty()) {
                 if (!serial.open(options.serialPort)) {
                     error = "Failed to open QMX CAT serial port";
