@@ -172,7 +172,11 @@ bool FreqModeSync::getSyncVfo() const {
 
 // ── Per-frame tick ─────────────────────────────────────────────────────
 
-void FreqModeSync::tick() {
+void FreqModeSync::tick() 
+{
+    if (m_syncVfo)
+        gui::waterfall.VFOMoveSingleClick = true;
+
     qmx::QmxStatus  newQMXStatus;
     bool            hasNewQMXStatus = false;
 

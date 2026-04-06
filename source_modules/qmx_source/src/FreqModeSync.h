@@ -31,8 +31,8 @@ public:
 
     // ── Frequency model (pure, stateless helpers) ──────────────────────
 
-    static double qmxRigToIqOffset(const qmx::QmxStatus& status);
-    static double rigFrequencyToCenterFrequency(std::int64_t rigFreq, const qmx::QmxStatus& status);
+    static double       qmxRigToIqOffset(const qmx::QmxStatus& status);
+    static double       rigFrequencyToCenterFrequency(std::int64_t rigFreq, const qmx::QmxStatus& status);
     static std::int64_t centerFrequencyToRigFrequency(double centerFreq, const qmx::QmxStatus& status);
     static std::int64_t effectiveReceiveRigFrequency(const qmx::QmxStatus& status);
 
