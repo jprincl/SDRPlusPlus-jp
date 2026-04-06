@@ -28,10 +28,16 @@ public:
     void setPlayState(bool _playing);
     bool isPlaying();
 
+    struct FrameDrawArgs {
+        double deltaTime = 0.0;
+        double frameRate = 0.0;
+    };
+
     bool lockWaterfallControls = false;
     bool playButtonLocked = false;
 
     Event<bool> onPlayStateChange;
+    Event<FrameDrawArgs> onFrameDraw;
 
 private:
     static void vfoAddedHandler(VFOManager::VFO* vfo, void* ctx);

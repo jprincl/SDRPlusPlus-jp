@@ -329,6 +329,13 @@ void MainWindow::draw() {
         core::configManager.release(true);
     }
 
+    {
+        FrameDrawArgs frameArgs;
+        frameArgs.deltaTime = ImGui::GetIO().DeltaTime;
+        frameArgs.frameRate = ImGui::GetIO().Framerate;
+        onFrameDraw.emit(frameArgs);
+    }
+
     // To Bar
     // ImGui::BeginChild("TopBarChild", ImVec2(0, 49.0f * style::uiScale), false, ImGuiWindowFlags_HorizontalScrollbar);
     ImVec2 btnSize(30 * style::uiScale, 30 * style::uiScale);

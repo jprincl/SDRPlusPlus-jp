@@ -28,6 +28,10 @@ namespace qmx {
                           void* ctx,
                           StatusCallback statusCallback,
                           void* statusCtx,
+#if QMX_CAT_RAW_LOG
+                          CatLogCallback catLogCallback,
+                          void* catLogCtx,
+#endif
                           std::string* out) {
         stop();
         impl = detail::createDeviceImpl();
@@ -37,7 +41,11 @@ namespace qmx {
         }
 
         std::string localError;
-        if (!impl->start(options, callback, ctx, statusCallback, statusCtx, localError)) {
+        if (!impl->start(options, callback, ctx, statusCallback, statusCtx,
+#if QMX_CAT_RAW_LOG
+                         catLogCallback, catLogCtx,
+#endif
+                         localError)) {
             impl.reset();
             setError(localError, out);
             return false;
@@ -58,14 +66,30 @@ namespace qmx {
         return impl && impl->isStreaming();
     }
 
-    bool QmxDevice::setFrequency(std::int64_t hz, std::string* out) {
+    bool QmxDevice::setFrequency(std::int64_t hz, int vfo, std::string* out) {
         if (!impl) {
             setError("QMX device is not running", out);
             return false;
         }
 
         std::string localError;
-        if (!impl->setFrequency(hz, localError)) {
+        if (!impl->setFrequency(hz, vfo, localError)) {
+            setError(localError, out);
+            return false;
+        }
+
+        error.clear();
+        return true;
+    }
+
+    bool QmxDevice::setMode(QmxMode mode, std::string* out) {
+        if (!impl) {
+            setError("QMX device is not running", out);
+            return false;
+        }
+
+        std::string localError;
+        if (!impl->setMode(mode, localError)) {
             setError(localError, out);
             return false;
         }

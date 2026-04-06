@@ -160,6 +160,7 @@ public:
         RADIO_DEMOD_CW,
         RADIO_DEMOD_LSB,
         RADIO_DEMOD_RAW,
+        RADIO_DEMOD_CWR,
         _RADIO_DEMOD_COUNT,
     };
 
@@ -173,34 +174,37 @@ private:
         ImGui::BeginGroup();
 
         ImGui::Columns(4, CONCAT("RadioModeColumns##_", _this->name), false);
-        if (ImGui::RadioButton(CONCAT("NFM##_", _this->name), _this->selectedDemodID == 0) && _this->selectedDemodID != 0) {
+        if (ImGui::RadioButton(CONCAT("NFM##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_NFM) && _this->selectedDemodID != RADIO_DEMOD_NFM) {
             _this->selectDemodByID(RADIO_DEMOD_NFM);
         }
-        if (ImGui::RadioButton(CONCAT("WFM##_", _this->name), _this->selectedDemodID == 1) && _this->selectedDemodID != 1) {
+        if (ImGui::RadioButton(CONCAT("WFM##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_WFM) && _this->selectedDemodID != RADIO_DEMOD_WFM) {
             _this->selectDemodByID(RADIO_DEMOD_WFM);
         }
         ImGui::NextColumn();
-        if (ImGui::RadioButton(CONCAT("AM##_", _this->name), _this->selectedDemodID == 2) && _this->selectedDemodID != 2) {
+        if (ImGui::RadioButton(CONCAT("AM##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_AM) && _this->selectedDemodID != RADIO_DEMOD_AM) {
             _this->selectDemodByID(RADIO_DEMOD_AM);
         }
-        if (ImGui::RadioButton(CONCAT("DSB##_", _this->name), _this->selectedDemodID == 3) && _this->selectedDemodID != 3) {
+        if (ImGui::RadioButton(CONCAT("DSB##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_DSB) && _this->selectedDemodID != RADIO_DEMOD_DSB) {
             _this->selectDemodByID(RADIO_DEMOD_DSB);
         }
         ImGui::NextColumn();
-        if (ImGui::RadioButton(CONCAT("USB##_", _this->name), _this->selectedDemodID == 4) && _this->selectedDemodID != 4) {
+        if (ImGui::RadioButton(CONCAT("USB##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_USB) && _this->selectedDemodID != RADIO_DEMOD_USB) {
             _this->selectDemodByID(RADIO_DEMOD_USB);
         }
-        if (ImGui::RadioButton(CONCAT("CW##_", _this->name), _this->selectedDemodID == 5) && _this->selectedDemodID != 5) {
+        if (ImGui::RadioButton(CONCAT("CW##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_CW) && _this->selectedDemodID != RADIO_DEMOD_CW) {
             _this->selectDemodByID(RADIO_DEMOD_CW);
-        };
+        }
         ImGui::NextColumn();
-        if (ImGui::RadioButton(CONCAT("LSB##_", _this->name), _this->selectedDemodID == 6) && _this->selectedDemodID != 6) {
+        if (ImGui::RadioButton(CONCAT("LSB##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_LSB) && _this->selectedDemodID != RADIO_DEMOD_LSB) {
             _this->selectDemodByID(RADIO_DEMOD_LSB);
         }
-        if (ImGui::RadioButton(CONCAT("RAW##_", _this->name), _this->selectedDemodID == 7) && _this->selectedDemodID != 7) {
-            _this->selectDemodByID(RADIO_DEMOD_RAW);
-        };
+        if (ImGui::RadioButton(CONCAT("CW-R##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_CWR) && _this->selectedDemodID != RADIO_DEMOD_CWR) {
+            _this->selectDemodByID(RADIO_DEMOD_CWR);
+        }
         ImGui::Columns(1, CONCAT("EndRadioModeColumns##_", _this->name), false);
+        if (ImGui::RadioButton(CONCAT("RAW##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_RAW) && _this->selectedDemodID != RADIO_DEMOD_RAW) {
+            _this->selectDemodByID(RADIO_DEMOD_RAW);
+        }
 
         ImGui::EndGroup();
 
@@ -293,6 +297,7 @@ private:
             case DemodID::RADIO_DEMOD_CW:   demod = new demod::CW(); break;
             case DemodID::RADIO_DEMOD_LSB:  demod = new demod::LSB(); break;
             case DemodID::RADIO_DEMOD_RAW:  demod = new demod::RAW(); break;
+            case DemodID::RADIO_DEMOD_CWR:  demod = new demod::CWR(); break;
             default:                        demod = NULL; break;
         }
         if (!demod) { return NULL; }

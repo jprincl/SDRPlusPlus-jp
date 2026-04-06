@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstring>
+
+#ifndef _WIN32
+#include <cerrno>
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -25,6 +30,29 @@ namespace {
 #endif
     }
 #endif
+
+    bool encodeModeCommand(qmx::QmxMode mode, std::string& command) {
+        switch (mode) {
+        case qmx::QmxMode::LSB:
+            command = "MD1;";
+            return true;
+        case qmx::QmxMode::USB:
+            command = "MD2;";
+            return true;
+        case qmx::QmxMode::CW:
+            command = "MD3;";
+            return true;
+        case qmx::QmxMode::CWR:
+            command = "MD7;";
+            return true;
+        case qmx::QmxMode::DIGI:
+        case qmx::QmxMode::FM:
+        case qmx::QmxMode::AM:
+        case qmx::QmxMode::UNKNOWN:
+        default:
+            return false;
+        }
+    }
 }
 
 namespace qmx::detail {
@@ -73,7 +101,7 @@ namespace qmx::detail {
         COMMTIMEOUTS timeouts = {};
         timeouts.ReadIntervalTimeout = 20;
         timeouts.ReadTotalTimeoutConstant = 20;
-        timeouts.ReadTotalTimeoutMultiplier = 1;
+        timeouts.ReadTotalTimeoutMultiplier = 0;
         timeouts.WriteTotalTimeoutConstant = 20;
         timeouts.WriteTotalTimeoutMultiplier = 1;
         SetCommTimeouts(serial, &timeouts);
@@ -113,20 +141,18 @@ namespace qmx::detail {
         handle = reinterpret_cast<void*>(static_cast<intptr_t>(fd));
 #endif
 
-        statusParser.reset();
-        polling.store(true);
-        pollWorker = std::thread(&SerialCatPort::pollLoop, this);
+        poller.start(this, storedStatusCallback, storedStatusCtx
+#if QMX_CAT_RAW_LOG
+                     , storedCatLogCallback, storedCatLogCtx
+#endif
+        );
         return true;
     }
 
     void SerialCatPort::close() {
-        polling.store(false);
-        if (pollWorker.joinable()) {
-            pollWorker.join();
-        }
+        poller.stop();
 
         if (!handle) {
-            statusParser.reset();
             return;
         }
 
@@ -136,7 +162,6 @@ namespace qmx::detail {
         ::close(static_cast<int>(reinterpret_cast<intptr_t>(handle)));
 #endif
         handle = nullptr;
-        statusParser.reset();
     }
 
     bool SerialCatPort::isOpen() const {
@@ -144,17 +169,45 @@ namespace qmx::detail {
     }
 
     void SerialCatPort::setStatusCallback(StatusCallback callback, void* ctx) {
-        statusParser.setStatusCallback(callback, ctx);
+        storedStatusCallback = callback;
+        storedStatusCtx = ctx;
     }
+
+#if QMX_CAT_RAW_LOG
+    void SerialCatPort::setCatLogCallback(CatLogCallback callback, void* ctx) {
+        storedCatLogCallback = callback;
+        storedCatLogCtx = ctx;
+    }
+#endif
 
     bool SerialCatPort::setIQMode(bool enabled) {
-        return send(enabled ? "Q91;" : "Q90;");
+        std::string cmd = enabled ? "Q91;" : "Q90;";
+        if (poller.isRunning()) {
+            return poller.enqueueCommand(std::move(cmd)).get();
+        }
+        return sendCommand(cmd);
     }
 
-    bool SerialCatPort::setFrequency(std::int64_t frequency) {
-        char cmd[32];
-        std::snprintf(cmd, sizeof(cmd), "FA%011lld;", static_cast<long long>(frequency));
-        return send(cmd);
+    bool SerialCatPort::setFrequency(std::int64_t frequency, int vfo) {
+        char buf[32];
+        const char* prefix = (vfo == 1) ? "FB" : "FA";
+        std::snprintf(buf, sizeof(buf), "%s%011lld;", prefix, static_cast<long long>(frequency));
+        std::string cmd = buf;
+        if (poller.isRunning()) {
+            return poller.enqueueCommand(std::move(cmd)).get();
+        }
+        return sendCommand(cmd);
+    }
+
+    bool SerialCatPort::setMode(QmxMode mode) {
+        std::string command;
+        if (!encodeModeCommand(mode, command)) {
+            return false;
+        }
+        if (poller.isRunning()) {
+            return poller.enqueueCommand(std::move(command)).get();
+        }
+        return sendCommand(command);
     }
 
     std::vector<SerialPortInfo> SerialCatPort::listPorts() {
@@ -201,111 +254,99 @@ namespace qmx::detail {
         return ports;
     }
 
-    bool SerialCatPort::send(const std::string& command) {
-        if (!handle) {
+    bool SerialCatPort::sendCommand(const std::string& command) {
+        if (!handle)
             return false;
-        }
-
-        std::lock_guard<std::mutex> lock(ioMutex);
 
 #ifdef _WIN32
+#if QMX_CAT_DEBUG_TIMING || QMX_CAT_RAW_LOG
+        const std::uint64_t writeStartUs = qmxCatDebugNowUs();
+#endif
         DWORD written = 0;
         if (!WriteFile(reinterpret_cast<HANDLE>(handle), command.data(), static_cast<DWORD>(command.size()), &written, nullptr)) {
+#if QMX_CAT_RAW_LOG
+            if (debugParser) {
+                debugParser->noteError("CAT write failed: WriteFile error " + std::to_string(static_cast<unsigned long long>(GetLastError())));
+            }
+#endif
+            return false;
+        }
+#if QMX_CAT_DEBUG_TIMING || QMX_CAT_RAW_LOG
+        const std::uint64_t writeDoneUs = qmxCatDebugNowUs();
+#endif
+        if (written != command.size()) {
+#if QMX_CAT_RAW_LOG
+            if (debugParser) {
+                debugParser->noteError("CAT write failed: short write");
+            }
+#endif
             return false;
         }
         FlushFileBuffers(reinterpret_cast<HANDLE>(handle));
-        return written == command.size();
+#if QMX_CAT_DEBUG_TIMING || QMX_CAT_RAW_LOG
+        const std::uint64_t flushDoneUs = qmxCatDebugNowUs();
+        if (debugParser) {
+            debugParser->noteWrite(command, writeStartUs, writeDoneUs, flushDoneUs);
+        }
+#endif
+        return true;
 #else
+#if QMX_CAT_DEBUG_TIMING || QMX_CAT_RAW_LOG
+        const std::uint64_t writeStartUs = qmxCatDebugNowUs();
+#endif
         ssize_t written = ::write(static_cast<int>(reinterpret_cast<intptr_t>(handle)), command.data(), command.size());
+#if QMX_CAT_DEBUG_TIMING || QMX_CAT_RAW_LOG
+        const std::uint64_t writeDoneUs = qmxCatDebugNowUs();
+#endif
         if (written != static_cast<ssize_t>(command.size())) {
+#if QMX_CAT_RAW_LOG
+            if (debugParser) {
+                debugParser->noteError(std::string("CAT write failed: ") + std::strerror(errno));
+            }
+#endif
             return false;
         }
         tcdrain(static_cast<int>(reinterpret_cast<intptr_t>(handle)));
+#if QMX_CAT_DEBUG_TIMING || QMX_CAT_RAW_LOG
+        const std::uint64_t flushDoneUs = qmxCatDebugNowUs();
+        if (debugParser) {
+            debugParser->noteWrite(command, writeStartUs, writeDoneUs, flushDoneUs);
+        }
+#endif
         return true;
 #endif
     }
 
-    std::size_t SerialCatPort::readSome(char* buffer, std::size_t bufferSize) {
-        if (!handle || bufferSize == 0) {
+    std::size_t SerialCatPort::readBytes(char* buffer, std::size_t size) {
+        if (!handle || size == 0)
             return 0;
-        }
 
 #ifdef _WIN32
         DWORD bytesRead = 0;
-        if (!ReadFile(reinterpret_cast<HANDLE>(handle), buffer, static_cast<DWORD>(bufferSize), &bytesRead, nullptr)) {
+        if (!ReadFile(reinterpret_cast<HANDLE>(handle), buffer, static_cast<DWORD>(size), &bytesRead, nullptr)) {
+#if QMX_CAT_RAW_LOG
+            if (debugParser) {
+                debugParser->noteError("CAT read failed: ReadFile error " + std::to_string(static_cast<unsigned long long>(GetLastError())));
+            }
+#endif
             return 0;
         }
         return static_cast<std::size_t>(bytesRead);
 #else
-        ssize_t bytesRead = ::read(static_cast<int>(reinterpret_cast<intptr_t>(handle)), buffer, bufferSize);
-        if (bytesRead <= 0) {
+        ssize_t bytesRead = ::read(static_cast<int>(reinterpret_cast<intptr_t>(handle)), buffer, size);
+        if (bytesRead < 0) {
+#if QMX_CAT_RAW_LOG
+            if (debugParser) {
+                debugParser->noteError(std::string("CAT read failed: ") + std::strerror(errno));
+            }
+#endif
+            return 0;
+        }
+        if (bytesRead == 0) {
             return 0;
         }
         return static_cast<std::size_t>(bytesRead);
 #endif
     }
 
-    void SerialCatPort::pollLoop() {
-        using namespace std::chrono_literals;
-
-        auto nextIfPoll = std::chrono::steady_clock::now();
-        auto nextMeterPoll = nextIfPoll;
-        auto nextSlowPoll = nextIfPoll;
-        auto nextMenuPoll = nextIfPoll;
-
-        while (polling.load()) {
-            const auto now = std::chrono::steady_clock::now();
-            std::string commands;
-            const QmxStatus currentStatus = statusParser.snapshot();
-            const bool txActive = currentStatus.hasTransmit && currentStatus.transmit;
-
-            if (now >= nextIfPoll) {
-                commands += "IF;";
-                nextIfPoll = now + 100ms;
-            }
-            if (now >= nextMeterPoll) {
-                commands += txActive ? "PC;SW;" : "Q1;SM;";
-                nextMeterPoll = now + 250ms;
-            }
-            if (now >= nextSlowPoll) {
-                commands += "FA;FB;FR;FT;SP;MD;TQ;";
-                nextSlowPoll = now + 1s;
-            }
-            if (now >= nextMenuPoll && !statusParser.hasPendingMenuValue()) {
-                statusParser.armPendingMenuValue(PendingMenuValue::CwOffset);
-                commands += "MMCW|CW offset;";
-                nextMenuPoll = now + 5s;
-            }
-
-            if (!commands.empty()) {
-                if (!send(commands)) {
-                    statusParser.clearPendingMenuValue();
-                    std::this_thread::sleep_for(25ms);
-                    continue;
-                }
-                readResponsesFor(120ms);
-                continue;
-            }
-
-            readResponsesFor(25ms);
-            std::this_thread::sleep_for(10ms);
-        }
-    }
-
-    void SerialCatPort::readResponsesFor(std::chrono::milliseconds maxDuration) {
-        const auto start = std::chrono::steady_clock::now();
-        char buffer[256];
-        int idleReads = 0;
-
-        while (polling.load() && std::chrono::steady_clock::now() - start < maxDuration && idleReads < 2) {
-            const std::size_t count = readSome(buffer, sizeof(buffer));
-            if (count == 0) {
-                ++idleReads;
-                continue;
-            }
-
-            idleReads = 0;
-            statusParser.feedBytes(buffer, count);
-        }
-    }
 }

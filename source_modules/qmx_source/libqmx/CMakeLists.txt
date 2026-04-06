@@ -1,12 +1,15 @@
 cmake_minimum_required(VERSION 3.13)
 project(libqmx)
 
+option(QMX_CAT_DEBUG_TIMING "Enable QMX CAT timing diagnostics" OFF)
+
 file(GLOB_RECURSE LIBQMX_SRC "src/*.cpp")
 
 add_library(qmx STATIC ${LIBQMX_SRC})
 set_target_properties(qmx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(qmx PUBLIC cxx_std_17)
 target_include_directories(qmx PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_definitions(qmx PUBLIC QMX_CAT_DEBUG_TIMING=$<BOOL:${QMX_CAT_DEBUG_TIMING}>)
 
 if (MSVC)
     target_link_libraries(qmx PRIVATE ole32 avrt winmm)

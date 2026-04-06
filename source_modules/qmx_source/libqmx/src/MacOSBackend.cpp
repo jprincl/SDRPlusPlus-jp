@@ -149,7 +149,11 @@ namespace qmx::detail {
             stop();
         }
 
-        bool start(const StartOptions& options, StreamCallback callback, void* ctx, StatusCallback statusCallback, void* statusCtx, std::string& error) override {
+        bool start(const StartOptions& options, StreamCallback callback, void* ctx, StatusCallback statusCallback, void* statusCtx,
+#if QMX_CAT_RAW_LOG
+                   CatLogCallback catLogCallback, void* catLogCtx,
+#endif
+                   std::string& error) override {
             stop();
 
             if (options.audioDeviceId.empty()) {
@@ -244,6 +248,9 @@ namespace qmx::detail {
             captureBuffer.resize(static_cast<std::size_t>(std::max<UInt32>(getDeviceBufferFrames(deviceId), static_cast<UInt32>(kStreamBlockSize))) * 2);
 
             serial.setStatusCallback(statusCallback, statusCtx);
+#if QMX_CAT_RAW_LOG
+            serial.setCatLogCallback(catLogCallback, catLogCtx);
+#endif
             if (!options.serialPort.empty()) {
                 if (!serial.open(options.serialPort)) {
                     error = "Failed to open QMX CAT serial port";
@@ -288,13 +295,25 @@ namespace qmx::detail {
             return running.load();
         }
 
-        bool setFrequency(std::int64_t hz, std::string& error) override {
+        bool setFrequency(std::int64_t hz, int vfo, std::string& error) override {
             if (!serial.isOpen()) {
                 error = "QMX CAT serial port is not open";
                 return false;
             }
-            if (!serial.setFrequency(hz)) {
+            if (!serial.setFrequency(hz, vfo)) {
                 error = "Failed to send QMX frequency command";
+                return false;
+            }
+            return true;
+        }
+
+        bool setMode(QmxMode mode, std::string& error) override {
+            if (!serial.isOpen()) {
+                error = "QMX CAT serial port is not open";
+                return false;
+            }
+            if (!serial.setMode(mode)) {
+                error = "Failed to send QMX mode command";
                 return false;
             }
             return true;
