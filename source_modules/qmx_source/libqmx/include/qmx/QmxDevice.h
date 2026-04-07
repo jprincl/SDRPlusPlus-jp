@@ -53,57 +53,147 @@ namespace qmx {
 
     enum class QmxMode {
         UNKNOWN,
-        CW,
-        CWR,
-        DIGI,
-        USB,
         LSB,
+        USB,
+        CW,
         FM, // Parsed for Kenwood MD compatibility; QMX does not use this yet.
-        AM  // Parsed for Kenwood MD compatibility; QMX does not use this yet.
+        AM, // Parsed for Kenwood MD compatibility; QMX does not use this yet.
+        CWR,
+        FSK, // aka DIGI
+        FSKR, // aka DIGI reversed
     };
 
-    enum class QmxSideband {
-        UNKNOWN,
-        USB,
-        LSB
+    using QmxStatusFlags = std::uint32_t;
+
+    enum class QmxStatusFlag : QmxStatusFlags {
+        None               = 0,
+        Frequency     = 1u << 0,
+        VfoAFrequency = 1u << 1,
+        VfoBFrequency = 1u << 2,
+        Transmit      = 1u << 3,
+        Mode          = 1u << 4,
+        RxVfo         = 1u << 5,
+        TxVfo         = 1u << 6,
+        Split         = 1u << 7,
+        Rit           = 1u << 8,
+        RitEnabled    = 1u << 9,
+        SMeter        = 1u << 10,
+        Power         = 1u << 11,
+        SWR           = 1u << 12,
+        CwOffset      = 1u << 13,
     };
+
+    constexpr QmxStatusFlags qmxStatusFlagMask(QmxStatusFlag flag) {
+        return static_cast<QmxStatusFlags>(flag);
+    }
+
+    constexpr QmxStatusFlags operator|(QmxStatusFlag lhs, QmxStatusFlag rhs) {
+        return qmxStatusFlagMask(lhs) | qmxStatusFlagMask(rhs);
+    }
+
+    constexpr QmxStatusFlags operator|(QmxStatusFlags lhs, QmxStatusFlag rhs) {
+        return lhs | qmxStatusFlagMask(rhs);
+    }
 
     // Queried regularly from QMX over CAT (USB CDC connection).
     struct QmxStatus {
-        bool hasFrequency = false;
+        QmxStatusFlags flags = 0;
         std::int64_t frequency = 0;
-        bool hasVfoAFrequency = false;
         std::int64_t vfoAFrequency = 0;
-        bool hasVfoBFrequency = false;
         std::int64_t vfoBFrequency = 0;
-        bool hasTransmit = false;
         bool transmit = false;
-        bool hasMode = false;
         QmxMode mode = QmxMode::UNKNOWN;
-        bool hasSideband = false;
-        QmxSideband sideband = QmxSideband::UNKNOWN;
-        bool hasRxVfo = false;
         int rxVfo = -1;
-        bool hasTxVfo = false;
         int txVfo = -1;
-        bool hasSplit = false;
         bool split = false;
-        bool hasRit = false;
         int ritHz = 0;
-        bool hasRitEnabled = false;
         bool ritEnabled = false;
-        bool hasSMeter = false;
         int sMeterDb = 0;
-        bool hasPower = false;
         int powerTenthsW = 0;
-        bool hasSWR = false;
         int swrHundredths = 0;
-        bool hasCwOffset = false;
         int cwOffsetHz = 0;
         std::uint64_t sequence = 0;
 #if QMX_CAT_DEBUG_TIMING
         QmxCatTimingDebug catDebug;
 #endif
+
+        bool hasFlag(QmxStatusFlag flag) const {
+            return (flags & qmxStatusFlagMask(flag)) != 0;
+        }
+
+        bool hasAll(QmxStatusFlags mask) const {
+            return (flags & mask) == mask;
+        }
+
+        void setFlag(QmxStatusFlag flag, bool enabled = true) {
+            if (enabled) {
+                flags |= qmxStatusFlagMask(flag);
+            } else {
+                flags &= ~qmxStatusFlagMask(flag);
+            }
+        }
+
+        void clearFlags(QmxStatusFlags mask) {
+            flags &= ~mask;
+        }
+
+        void clearFlag(QmxStatusFlag flag) {
+            clearFlags(qmxStatusFlagMask(flag));
+        }
+
+        QmxStatus& operator+=(const QmxStatus& incoming) {
+            flags = incoming.flags;
+            sequence = incoming.sequence;
+#if QMX_CAT_DEBUG_TIMING
+            catDebug = incoming.catDebug;
+#endif
+
+            if (incoming.hasFrequency())
+                frequency = incoming.frequency;
+            if (incoming.hasVfoAFrequency())
+                vfoAFrequency = incoming.vfoAFrequency;
+            if (incoming.hasVfoBFrequency())
+                vfoBFrequency = incoming.vfoBFrequency;
+            if (incoming.hasTransmit())
+                transmit = incoming.transmit;
+            if (incoming.hasMode())
+                mode = incoming.mode;
+            if (incoming.hasRxVfo())
+                rxVfo = incoming.rxVfo;
+            if (incoming.hasTxVfo())
+                txVfo = incoming.txVfo;
+            if (incoming.hasSplit())
+                split = incoming.split;
+            if (incoming.hasRit())
+                ritHz = incoming.ritHz;
+            if (incoming.hasRitEnabled())
+                ritEnabled = incoming.ritEnabled;
+            if (incoming.hasSMeter())
+                sMeterDb = incoming.sMeterDb;
+            if (incoming.hasPower())
+                powerTenthsW = incoming.powerTenthsW;
+            if (incoming.hasSWR())
+                swrHundredths = incoming.swrHundredths;
+            if (incoming.hasCwOffset())
+                cwOffsetHz = incoming.cwOffsetHz;
+
+            return *this;
+        }
+
+        bool hasFrequency() const { return hasFlag(QmxStatusFlag::Frequency); }
+        bool hasVfoAFrequency() const { return hasFlag(QmxStatusFlag::VfoAFrequency); }
+        bool hasVfoBFrequency() const { return hasFlag(QmxStatusFlag::VfoBFrequency); }
+        bool hasTransmit() const { return hasFlag(QmxStatusFlag::Transmit); }
+        bool hasMode() const { return hasFlag(QmxStatusFlag::Mode); }
+        bool hasRxVfo() const { return hasFlag(QmxStatusFlag::RxVfo); }
+        bool hasTxVfo() const { return hasFlag(QmxStatusFlag::TxVfo); }
+        bool hasSplit() const { return hasFlag(QmxStatusFlag::Split); }
+        bool hasRit() const { return hasFlag(QmxStatusFlag::Rit); }
+        bool hasRitEnabled() const { return hasFlag(QmxStatusFlag::RitEnabled); }
+        bool hasSMeter() const { return hasFlag(QmxStatusFlag::SMeter); }
+        bool hasPower() const { return hasFlag(QmxStatusFlag::Power); }
+        bool hasSWR() const { return hasFlag(QmxStatusFlag::SWR); }
+        bool hasCwOffset() const { return hasFlag(QmxStatusFlag::CwOffset); }
     };
 
     // Called by QMX driver when a new IQ sample block is available.

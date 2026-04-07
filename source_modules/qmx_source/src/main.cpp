@@ -458,9 +458,9 @@ private:
 
         SmGui::Text("State:");
         SmGui::SameLine();
-        if (st.hasTransmit && st.transmit)
+        if (st.hasTransmit() && st.transmit)
             SmGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "TX");
-        else if (st.hasTransmit)
+        else if (st.hasTransmit())
             SmGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "RX");
         else
             SmGui::Text("Unknown");
@@ -471,42 +471,42 @@ private:
 
         SmGui::Text("Rig Freq:");
         SmGui::SameLine();
-        if (st.hasFrequency)
+        if (st.hasFrequency())
             ImGui::Text("%.0f Hz", static_cast<double>(st.frequency));
         else
             SmGui::Text("Unknown");
 
-        if (st.hasRxVfo || st.hasTxVfo || st.hasSplit) {
+        if (st.hasRxVfo() || st.hasTxVfo() || st.hasSplit()) {
             SmGui::Text("VFO:");
             SmGui::SameLine();
             ImGui::Text("RX %s  TX %s  Split %s",
                         formatVfoLabel(st.rxVfo),
                         formatVfoLabel(st.txVfo),
-                        st.hasSplit ? (st.split ? "On" : "Off") : "?");
+                        st.hasSplit() ? (st.split ? "On" : "Off") : "?");
         }
 
-        if (st.hasRit || st.hasRitEnabled) {
+        if (st.hasRit() || st.hasRitEnabled()) {
             SmGui::Text("RIT:");
             SmGui::SameLine();
-            if (st.hasRit)
-                ImGui::Text("%s %d Hz", st.hasRitEnabled ? (st.ritEnabled ? "On" : "Off") : "", st.ritHz);
+            if (st.hasRit())
+                ImGui::Text("%s %d Hz", st.hasRitEnabled() ? (st.ritEnabled ? "On" : "Off") : "", st.ritHz);
             else
                 SmGui::Text(st.ritEnabled ? "On" : "Off");
         }
 
-        if (st.hasSMeter && (!st.hasTransmit || !st.transmit)) {
+        if (st.hasSMeter() && (!st.hasTransmit() || !st.transmit)) {
             SmGui::Text("S-Meter:");
             SmGui::SameLine();
             ImGui::Text("%d dB", st.sMeterDb);
         }
 
-        if (st.hasPower) {
+        if (st.hasPower()) {
             SmGui::Text("Power:");
             SmGui::SameLine();
             ImGui::Text("%.1f W", st.powerTenthsW / 10.0f);
         }
 
-        if (st.hasSWR) {
+        if (st.hasSWR()) {
             SmGui::Text("SWR:");
             SmGui::SameLine();
             ImGui::Text("%.2f:1", st.swrHundredths / 100.0f);
@@ -543,28 +543,24 @@ private:
     }
 
     static std::string formatModeLabel(const qmx::QmxStatus& status) {
-        if (status.hasMode) {
+        if (status.hasMode()) {
             switch (status.mode) {
             case qmx::QmxMode::CW:
                 return "CW";
             case qmx::QmxMode::CWR:
                 return "CW-R";
-            case qmx::QmxMode::DIGI:
-                if (status.hasSideband)
-                    return (status.sideband == qmx::QmxSideband::LSB) ? "DIGI/LSB" : "DIGI/USB";
-                return "DIGI";
+            case qmx::QmxMode::FSK:
+                return "FSK";
+            case qmx::QmxMode::FSKR:
+                return "FSKR";
             case qmx::QmxMode::USB:
                 return "USB";
             case qmx::QmxMode::LSB:
                 return "LSB";
             default:
-                break;
+                return "Unknown";
             }
         }
-
-        if (status.hasSideband)
-            return (status.sideband == qmx::QmxSideband::LSB) ? "LSB" : "USB";
-
         return "Unknown";
     }
 

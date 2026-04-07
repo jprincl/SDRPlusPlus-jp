@@ -26,29 +26,6 @@ namespace {
         return static_cast<float>(value) / 8388608.0f;
     }
 
-    bool buildModeCommand(qmx::QmxMode mode, std::string& command) {
-        switch (mode) {
-        case qmx::QmxMode::LSB:
-            command = "MD1;";
-            return true;
-        case qmx::QmxMode::USB:
-            command = "MD2;";
-            return true;
-        case qmx::QmxMode::CW:
-            command = "MD3;";
-            return true;
-        case qmx::QmxMode::CWR:
-            command = "MD7;";
-            return true;
-        case qmx::QmxMode::DIGI:
-        case qmx::QmxMode::FM:
-        case qmx::QmxMode::AM:
-        case qmx::QmxMode::UNKNOWN:
-        default:
-            return false;
-        }
-    }
-
     int initAndroidUsbContext(libusb_context** ctx) {
 #ifndef LIBUSB_API_VERSION
 #error "LIBUSB_API_VERSION is not defined, please update libusb"
@@ -277,7 +254,15 @@ namespace qmx::detail {
             char cmd[32];
             const char* prefix = (vfo == 1) ? "FB" : "FA";
             std::snprintf(cmd, sizeof(cmd), "%s%011" PRId64 ";", prefix, hz);
-            if (!catTransport->sendCommand(cmd)) {
+            if (catPoller.isRunning()) {
+                const QmxStatusFlags clearFlags = qmxStatusFlagMask(QmxStatusFlag::Frequency)
+                                                | ((vfo == 1) ? qmxStatusFlagMask(QmxStatusFlag::VfoBFrequency)
+                                                             : qmxStatusFlagMask(QmxStatusFlag::VfoAFrequency));
+                if (!catPoller.enqueueCommand(std::string(cmd), clearFlags).get()) {
+                    error = "Failed to send QMX USB CAT frequency command";
+                    return false;
+                }
+            } else if (!catTransport->sendCommand(cmd)) {
                 error = "Failed to send QMX USB CAT frequency command";
                 return false;
             }
@@ -290,11 +275,16 @@ namespace qmx::detail {
                 return false;
             }
             std::string command;
-            if (!buildModeCommand(mode, command)) {
+            if (!encodeModeCommand(mode, command)) {
                 error = "QMX mode is not supported for CAT sync";
                 return false;
             }
-            if (!catTransport->sendCommand(command)) {
+            if (catPoller.isRunning()) {
+                if (!catPoller.enqueueCommand(std::move(command), qmxStatusFlagMask(QmxStatusFlag::Mode)).get()) {
+                    error = "Failed to send QMX USB CAT mode command";
+                    return false;
+                }
+            } else if (!catTransport->sendCommand(command)) {
                 error = "Failed to send QMX USB CAT mode command";
                 return false;
             }

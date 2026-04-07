@@ -7,9 +7,10 @@
 
 namespace qmx::detail {
 
-    std::future<bool> CatPoller::enqueueCommand(std::string command) {
+    std::future<bool> CatPoller::enqueueCommand(std::string command, QmxStatusFlags clearFlags) {
         PendingCommand pc;
         pc.command = std::move(command);
+        pc.clearFlags = clearFlags;
         auto f = pc.result.get_future();
         {
             std::lock_guard<std::mutex> lock(queueMutex);
@@ -77,9 +78,11 @@ namespace qmx::detail {
                     std::lock_guard<std::mutex> lock(queueMutex);
                     queued.swap(commandQueue);
                 }
-                if (! queued.empty()) {
+                if (!queued.empty()) {
                     for (auto& pc : queued) {
-                        bool ok = transport->sendCommand(pc.command);
+                        const bool ok = transport->sendCommand(pc.command);
+                        if (ok && pc.clearFlags != 0)
+                            statusParser.clearStatusFlags(pc.clearFlags);
                         pc.result.set_value(ok);
                     }
                     // Wait for QMX to process the commands so that the polling will not return the old values.
@@ -98,7 +101,7 @@ namespace qmx::detail {
             }
             if (now >= nextMeterPoll) {
                 const QmxStatus currentStatus   = statusParser.snapshot();
-                const bool      txActive        = currentStatus.hasTransmit && currentStatus.transmit;
+                const bool      txActive        = currentStatus.hasTransmit() && currentStatus.transmit;
                 commands += txActive ? "PC;SW;" : "SM;";
                 expectedReplies += txActive ? 2 : 1;
                 nextMeterPoll = now + 250ms;

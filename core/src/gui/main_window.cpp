@@ -329,12 +329,14 @@ void MainWindow::draw() {
         core::configManager.release(true);
     }
 
+#if 0
     {
         FrameDrawArgs frameArgs;
         frameArgs.deltaTime = ImGui::GetIO().DeltaTime;
         frameArgs.frameRate = ImGui::GetIO().Framerate;
         onFrameDraw.emit(frameArgs);
     }
+#endif
 
     // To Bar
     // ImGui::BeginChild("TopBarChild", ImVec2(0, 49.0f * style::uiScale), false, ImGuiWindowFlags_HorizontalScrollbar);

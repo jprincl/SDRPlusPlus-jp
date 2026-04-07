@@ -30,29 +30,6 @@ namespace {
 #endif
     }
 #endif
-
-    bool encodeModeCommand(qmx::QmxMode mode, std::string& command) {
-        switch (mode) {
-        case qmx::QmxMode::LSB:
-            command = "MD1;";
-            return true;
-        case qmx::QmxMode::USB:
-            command = "MD2;";
-            return true;
-        case qmx::QmxMode::CW:
-            command = "MD3;";
-            return true;
-        case qmx::QmxMode::CWR:
-            command = "MD7;";
-            return true;
-        case qmx::QmxMode::DIGI:
-        case qmx::QmxMode::FM:
-        case qmx::QmxMode::AM:
-        case qmx::QmxMode::UNKNOWN:
-        default:
-            return false;
-        }
-    }
 }
 
 namespace qmx::detail {
@@ -194,7 +171,10 @@ namespace qmx::detail {
         std::snprintf(buf, sizeof(buf), "%s%011lld;", prefix, static_cast<long long>(frequency));
         std::string cmd = buf;
         if (poller.isRunning()) {
-            return poller.enqueueCommand(std::move(cmd)).get();
+            const QmxStatusFlags clearFlags = qmxStatusFlagMask(QmxStatusFlag::Frequency)
+                                            | ((vfo == 1) ? qmxStatusFlagMask(QmxStatusFlag::VfoBFrequency)
+                                                         : qmxStatusFlagMask(QmxStatusFlag::VfoAFrequency));
+            return poller.enqueueCommand(std::move(cmd), clearFlags).get();
         }
         return sendCommand(cmd);
     }
@@ -205,7 +185,7 @@ namespace qmx::detail {
             return false;
         }
         if (poller.isRunning()) {
-            return poller.enqueueCommand(std::move(command)).get();
+            return poller.enqueueCommand(std::move(command), qmxStatusFlagMask(QmxStatusFlag::Mode)).get();
         }
         return sendCommand(command);
     }

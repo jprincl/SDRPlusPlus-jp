@@ -34,6 +34,7 @@ namespace qmx::detail {
 
     struct PendingCommand {
         std::string command;
+        QmxStatusFlags clearFlags = 0;
         std::promise<bool> result;
     };
 
@@ -45,7 +46,7 @@ namespace qmx::detail {
 
         // Enqueue a command to be sent by the poller thread.
         // Blocks the caller until the command has been sent and returns the send result.
-        std::future<bool> enqueueCommand(std::string command);
+        std::future<bool> enqueueCommand(std::string command, QmxStatusFlags clearFlags = 0);
 
         void start(CatTransport* transport, StatusCallback statusCallback, void* statusCtx
 #if QMX_CAT_RAW_LOG

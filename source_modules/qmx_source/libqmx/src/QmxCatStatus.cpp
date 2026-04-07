@@ -45,33 +45,27 @@ namespace {
     }
 
     template <typename T>
-    bool assignWithPresence(bool& hasField, T& field, const T& value) {
-        const bool changed = !hasField || field != value;
-        hasField = true;
+    bool assignWithPresence(qmx::QmxStatus& status, qmx::QmxStatusFlag presentFlag, T& field, const T& value) {
+        const bool changed = !status.hasFlag(presentFlag) || field != value;
+        status.setFlag(presentFlag);
         field = value;
         return changed;
     }
 
-    // Decode mode from Kenwood 480 "IF" or "MD" response.
-    bool decodeModeChar(char modeChar, qmx::QmxMode& modeOut, bool& hasSidebandOut, qmx::QmxSideband& sidebandOut) {
-        hasSidebandOut = false;
-        sidebandOut = qmx::QmxSideband::UNKNOWN;
 
+    // Decode mode from Kenwood 480 "IF" or "MD" response.
+    bool decodeModeChar(char modeChar, qmx::QmxMode& modeOut) {
         switch (static_cast<char>(std::toupper(static_cast<unsigned char>(modeChar)))) {
         case '1':
         case 'L':
             modeOut = qmx::QmxMode::LSB;
-            hasSidebandOut = true;
-            sidebandOut = qmx::QmxSideband::LSB;
             return true;
         case '2':
         case 'U':
             modeOut = qmx::QmxMode::USB;
-            hasSidebandOut = true;
-            sidebandOut = qmx::QmxSideband::USB;
             return true;
-        case 'C':
         case '3':
+        case 'C':
             modeOut = qmx::QmxMode::CW;
             return true;
         case '4':
@@ -82,21 +76,15 @@ namespace {
         case 'A':
             modeOut = qmx::QmxMode::AM; // Parsed for Kenwood MD compatibility; QMX does not use this yet.
             return true;
+        case '6':
+        case 'D':
+            modeOut = qmx::QmxMode::FSK;
+            return true;
         case '7':
             modeOut = qmx::QmxMode::CWR;
             return true;
-        case 'D':
-            modeOut = qmx::QmxMode::DIGI;
-            return true;
-        case '6':
-            modeOut = qmx::QmxMode::DIGI;
-            hasSidebandOut = true;
-            sidebandOut = qmx::QmxSideband::USB;
-            return true;
         case '9':
-            modeOut = qmx::QmxMode::DIGI;
-            hasSidebandOut = true;
-            sidebandOut = qmx::QmxSideband::LSB;
+            modeOut = qmx::QmxMode::FSKR;
             return true;
         default:
             return false;
@@ -105,6 +93,35 @@ namespace {
 }
 
 namespace qmx::detail {
+
+    bool encodeModeCommand(qmx::QmxMode mode, std::string& command) {
+        switch (mode) {
+        case qmx::QmxMode::LSB:
+            command = "MD1;";
+            return true;
+        case qmx::QmxMode::USB:
+            command = "MD2;";
+            return true;
+        case qmx::QmxMode::CW:
+            command = "MD3;";
+            return true;
+        case qmx::QmxMode::FSK:
+            command = "MD6;";
+            return true;
+        case qmx::QmxMode::CWR:
+            command = "MD7;";
+            return true;
+        case qmx::QmxMode::FSKR:
+            command = "MD9;";
+            return true;
+        case qmx::QmxMode::FM:
+        case qmx::QmxMode::AM:
+        case qmx::QmxMode::UNKNOWN:
+        default:
+            return false;
+        }
+    }
+
     void QmxCatStatusParser::reset() {
         std::lock_guard<std::mutex> lock(mutex);
         parserBuffer.clear();
@@ -125,7 +142,7 @@ namespace qmx::detail {
 
     void QmxCatStatusParser::beginBatch(std::size_t expectedResponses) {
         std::lock_guard<std::mutex> lock(mutex);
-        batchDirty = false;
+        // Preserve externally invalidated fields until the batch is published.
         batchHadIf = false;
         batchExpectedResponses = expectedResponses;
         batchRepliesSeen = 0;
@@ -239,6 +256,17 @@ namespace qmx::detail {
     }
 #endif
 
+    void QmxCatStatusParser::clearStatusFlags(QmxStatusFlags flags) {
+        if (flags == 0)
+            return;
+
+        std::lock_guard<std::mutex> lock(mutex);
+        const QmxStatusFlags oldFlags = status.flags;
+        status.clearFlags(flags);
+        if (status.flags != oldFlags)
+            batchDirty = true;
+    }
+
     void QmxCatStatusParser::feedBytes(const char* data, std::size_t count) {
         if (!data || count == 0)
             return;
@@ -323,34 +351,36 @@ namespace qmx::detail {
             return !payload.empty() && (payload[0] == '0' || payload[0] == '1');
         };
 
+        // not implemented:
+        // AG: Get/Set AF Gain (volume)
+        // C2: Get/Set Signal Generator frequency
+
+        //FIXME implement:
+        // VN: Returns firmware version
+        
         if (code == "IF") {
+            // IF: Get transceiver information (TS-480 format)
             batchHadIf = true;
 
             if (std::int64_t frequency = 0; 
                 payload.size() >= 11 && parseUnsigned(std::string_view(payload).substr(0, 11), frequency))
-                changed |= assignWithPresence(status.hasFrequency, status.frequency, frequency);
+                changed |= assignWithPresence(status, QmxStatusFlag::Frequency, status.frequency, frequency);
             if (int ritHz = 0; 
                 payload.size() >= 21 && parseSigned(std::string_view(payload).substr(16, 5), ritHz))
-                changed |= assignWithPresence(status.hasRit, status.ritHz, ritHz);
+                changed |= assignWithPresence(status, QmxStatusFlag::Rit, status.ritHz, ritHz);
             if (payload.size() > 21 && (payload[21] == '0' || payload[21] == '1'))
-                changed |= assignWithPresence(status.hasRitEnabled, status.ritEnabled, payload[21] == '1');
+                changed |= assignWithPresence(status, QmxStatusFlag::RitEnabled, status.ritEnabled, payload[21] == '1');
             if (payload.size() > 26 && (payload[26] == '0' || payload[26] == '1'))
-                changed |= assignWithPresence(status.hasTransmit, status.transmit, payload[26] == '1');
+                changed |= assignWithPresence(status, QmxStatusFlag::Transmit, status.transmit, payload[26] == '1');
             if (payload.size() > 27) {
                 QmxMode mode = QmxMode::UNKNOWN;
-                bool hasSideband = false;
-                QmxSideband sideband = QmxSideband::UNKNOWN;
-                if (decodeModeChar(payload[27], mode, hasSideband, sideband)) {
-                    changed |= assignWithPresence(status.hasMode, status.mode, mode);
-                    if (hasSideband) {
-                        changed |= assignWithPresence(status.hasSideband, status.sideband, sideband);
-                    }
-                }
+                if (decodeModeChar(payload[27], mode))
+                    changed |= assignWithPresence(status, QmxStatusFlag::Mode, status.mode, mode);
             }
             if (payload.size() > 28 && (payload[28] == '0' || payload[28] == '1'))
-                changed |= assignWithPresence(status.hasRxVfo, status.rxVfo, payload[28] - '0');
+                changed |= assignWithPresence(status, QmxStatusFlag::RxVfo, status.rxVfo, payload[28] - '0');
             if (payload.size() > 30 && (payload[30] == '0' || payload[30] == '1'))
-                changed |= assignWithPresence(status.hasSplit, status.split, payload[30] == '1');
+                changed |= assignWithPresence(status, QmxStatusFlag::Split, status.split, payload[30] == '1');
 #if QMX_CAT_DEBUG_TIMING
             status.catDebug.ifSequence = pendingIfSequence ? pendingIfSequence : nextIfSequence++;
             status.catDebug.ifWriteStartUs = pendingIfWriteStartUs;
@@ -366,66 +396,71 @@ namespace qmx::detail {
 #endif
         }
         else if (code == "FA") {
+            // FA: Get/Set VFO A frequency
             if (std::int64_t frequency = 0; parseUnsigned(payload, frequency))
-                changed |= assignWithPresence(status.hasVfoAFrequency, status.vfoAFrequency, frequency);
+                changed |= assignWithPresence(status, QmxStatusFlag::VfoAFrequency, status.vfoAFrequency, frequency);
         }
         else if (code == "FB") {
+            // FB: Get/Set VFO B frequency
             if (std::int64_t frequency = 0; parseUnsigned(payload, frequency))
-                changed |= assignWithPresence(status.hasVfoBFrequency, status.vfoBFrequency, frequency);
+                changed |= assignWithPresence(status, QmxStatusFlag::VfoBFrequency, status.vfoBFrequency, frequency);
         }
         else if (code == "FR") {
+            // FR: Get/Set Receive VFO Mode (0 = VFO A, 1 = VFO B, 2= Split)
             if (valid_bool_response())
-                changed |= assignWithPresence(status.hasRxVfo, status.rxVfo, payload[0] - '0');
+                changed |= assignWithPresence(status, QmxStatusFlag::RxVfo, status.rxVfo, payload[0] - '0');
         }
         else if (code == "FT") {
+            // FT: Get/Set Transmit VFO Mode (0 = VFO A, 1 = VFO B, 2= Split)
             if (valid_bool_response())
-                changed |= assignWithPresence(status.hasTxVfo, status.txVfo, payload[0] - '0');
+                changed |= assignWithPresence(status, QmxStatusFlag::TxVfo, status.txVfo, payload[0] - '0');
         }
-        else if (code == "SP") {
+        else if (code == "SP") {    
             if (valid_bool_response())
-                changed |= assignWithPresence(status.hasSplit, status.split, payload[0] == '1');
+                changed |= assignWithPresence(status, QmxStatusFlag::Split, status.split, payload[0] == '1');
         }
         else if (code == "TQ") {
+            // TQ: Get/Set transmit state (0 = receive, 1 = transmit)
+            // Not polled, because IF response contains transmit state in TS-480 emulation mode.
             if (valid_bool_response())
-                changed |= assignWithPresence(status.hasTransmit, status.transmit, payload[0] == '1');
+                changed |= assignWithPresence(status, QmxStatusFlag::Transmit, status.transmit, payload[0] == '1');
         }
-        else if (code == "Q1") {
-            if (valid_bool_response())
-                changed |= assignWithPresence(status.hasSideband, status.sideband, (payload[0] == '1') ? QmxSideband::LSB : QmxSideband::USB);
-        }
+//        else if (code == "Q1") {
+//            if (valid_bool_response())
+//                changed |= assignWithPresence(status.hasSideband, status.sideband, (payload[0] == '1') ? QmxSideband::LSB : QmxSideband::USB);
+//        }
         else if (code == "MD") {
+            // MD: Get/Set operating mode
             if (!payload.empty()) {
                 QmxMode mode = QmxMode::UNKNOWN;
-                bool hasSideband = false;
-                QmxSideband sideband = QmxSideband::UNKNOWN;
-                if (decodeModeChar(payload[0], mode, hasSideband, sideband)) {
-                    changed |= assignWithPresence(status.hasMode, status.mode, mode);
-                    if (hasSideband) {
-                        changed |= assignWithPresence(status.hasSideband, status.sideband, sideband);
-                    }
-                }
+                if (decodeModeChar(payload[0], mode))
+                    changed |= assignWithPresence(status, QmxStatusFlag::Mode, status.mode, mode);
             }
         }
         else if (code == "MM") {
+            // MM: Get/Set/Query menu item
             if (pendingMenuValue == PendingMenuValue::CwOffset) {
                 if (int value = 0; parseSigned(payload, value))
-                    changed |= assignWithPresence(status.hasCwOffset, status.cwOffsetHz, value);
+                    changed |= assignWithPresence(status, QmxStatusFlag::CwOffset, status.cwOffsetHz, value);
                 pendingMenuValue = PendingMenuValue::None;
             }
         } else if (code == "SM") {
+            // SM: Get the S-meter value
             if (int value = 0; parseSigned(payload, value))
-                changed |= assignWithPresence(status.hasSMeter, status.sMeterDb, value);
+                changed |= assignWithPresence(status, QmxStatusFlag::SMeter, status.sMeterDb, value);
         } else if (code == "PC") {
+            // PC: Get power output
             if (std::int64_t value = 0; parseUnsigned(payload, value))
-                changed |= assignWithPresence(status.hasPower, status.powerTenthsW, static_cast<int>(value));
+                changed |= assignWithPresence(status, QmxStatusFlag::Power, status.powerTenthsW, static_cast<int>(value));
         } else if (code == "SW") {
+            // SW: Get the SWR-meter value
             if (payload.empty()) {
-                if (status.hasSWR) {
-                    status.hasSWR = false;
+                if (status.hasSWR()) {
+                    status.clearFlag(QmxStatusFlag::SWR);
                     changed = true;
                 }
             } else if (std::int64_t value = 0; parseUnsigned(payload, value))
-                changed |= assignWithPresence(status.hasSWR, status.swrHundredths, static_cast<int>(value));
+                changed |= assignWithPresence(status, QmxStatusFlag::SWR, status.swrHundredths, static_cast<int>(value));
         }
 
         if (changed)

@@ -13,6 +13,9 @@ namespace qmx::detail {
         CwOffset,
     };
 
+    // Encode mode into a CAT command "MD"
+    bool encodeModeCommand(qmx::QmxMode mode, std::string& command);
+
     class QmxCatStatusParser {
     public:
         void reset();
@@ -36,6 +39,7 @@ namespace qmx::detail {
         // Feed raw CAT response bytes into the parser.
         // Whenever a full response is parsed, the internal QmxStatus is updated and the status callback is triggered.
         void feedBytes(const char* data, std::size_t count);
+        void clearStatusFlags(QmxStatusFlags flags);
         QmxStatus snapshot() const;
 
     private:
