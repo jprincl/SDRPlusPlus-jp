@@ -36,7 +36,7 @@ import androidx.core.content.PermissionChecker;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.io.*;
 
-private const val ACTION_USB_PERMISSION = "${BuildConfig.APPLICATION_ID}.USB_PERMISSION";
+private val ACTION_USB_PERMISSION = "${BuildConfig.APPLICATION_ID}.USB_PERMISSION";
 
 private val usbReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

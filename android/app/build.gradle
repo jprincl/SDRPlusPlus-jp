@@ -48,6 +48,11 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig true
+        resValues true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -89,9 +94,3 @@ dependencies {
 
 copyResources.dependsOn deleteTempAssets
 preBuild.dependsOn copyResources
-
-android.applicationVariants.all { variant ->
-    variant.outputs.all {
-        outputFileName = "sdrpp-iak-${variant.buildType.name}.apk"
-    }
-}
