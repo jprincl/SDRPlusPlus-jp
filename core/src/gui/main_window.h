@@ -28,6 +28,9 @@ public:
     void setPlayState(bool _playing);
     bool isPlaying();
 
+    // Active tuning mode: tuner::TUNER_MODE_CENTER or tuner::TUNER_MODE_NORMAL
+    int getTuningMode() const { return tuningMode; }
+
     struct FrameDrawArgs {
         double deltaTime = 0.0;
         double frameRate = 0.0;

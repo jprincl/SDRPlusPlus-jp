@@ -141,8 +141,25 @@ namespace qmx {
             clearFlags(qmxStatusFlagMask(flag));
         }
 
+        bool updated_with(const QmxStatus& incoming) {
+            return (incoming.hasFrequency() && (!this->hasFrequency() || frequency != incoming.frequency)) ||
+                   (incoming.hasVfoAFrequency() && (!this->hasVfoAFrequency() || vfoAFrequency != incoming.vfoAFrequency)) ||
+                   (incoming.hasVfoBFrequency() && (!this->hasVfoBFrequency() || vfoBFrequency != incoming.vfoBFrequency)) ||
+                   (incoming.hasTransmit() && (!this->hasTransmit() || transmit != incoming.transmit)) ||
+                   (incoming.hasMode() && (!this->hasMode() || mode != incoming.mode)) ||
+                   (incoming.hasRxVfo() && (!this->hasRxVfo() || rxVfo != incoming.rxVfo)) ||
+                   (incoming.hasTxVfo() && (!this->hasTxVfo() || txVfo != incoming.txVfo)) ||
+                   (incoming.hasSplit() && (!this->hasSplit() || split != incoming.split)) ||
+                   (incoming.hasRit() && (!this->hasRit() || ritHz != incoming.ritHz)) ||
+                   (incoming.hasRitEnabled() && (!this->hasRitEnabled() || ritEnabled != incoming.ritEnabled)) ||
+                   (incoming.hasSMeter() && (!this->hasSMeter() || sMeterDb != incoming.sMeterDb)) ||
+                   (incoming.hasPower() && (!this->hasPower() || powerTenthsW != incoming.powerTenthsW)) ||
+                   (incoming.hasSWR() && (!this->hasSWR() || swrHundredths != incoming.swrHundredths)) ||
+                   (incoming.hasCwOffset() && (!this->hasCwOffset() || cwOffsetHz != incoming.cwOffsetHz));
+        }
+
         QmxStatus& operator+=(const QmxStatus& incoming) {
-            flags = incoming.flags;
+            flags |= incoming.flags;
             sequence = incoming.sequence;
 #if QMX_CAT_DEBUG_TIMING
             catDebug = incoming.catDebug;

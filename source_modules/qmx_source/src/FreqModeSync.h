@@ -65,8 +65,8 @@ public:
 
     // ── Configuration ─────────────────────────────────────────────────
 
-    void setSyncVfo(bool enabled);
-    bool getSyncVfo() const;
+    void setSyncVfo(bool enabled) { m_syncVfo = enabled; }
+    bool getSyncVfo() const { return m_syncVfo; }
 
     // ── Accessors for UI display ──────────────────────────────────────
 

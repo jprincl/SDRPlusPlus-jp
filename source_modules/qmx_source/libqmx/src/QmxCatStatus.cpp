@@ -263,8 +263,10 @@ namespace qmx::detail {
         std::lock_guard<std::mutex> lock(mutex);
         const QmxStatusFlags oldFlags = status.flags;
         status.clearFlags(flags);
-        if (status.flags != oldFlags)
-            batchDirty = true;
+        // Don't report cache invalidation to the upstream, it keeps its own copy which it updates
+        // when sending to QMX.
+//        if (status.flags != oldFlags)
+//            batchDirty = true;
     }
 
     void QmxCatStatusParser::feedBytes(const char* data, std::size_t count) {
