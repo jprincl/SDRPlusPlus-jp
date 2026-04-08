@@ -329,7 +329,7 @@ void MainWindow::draw() {
         core::configManager.release(true);
     }
 
-#if 0
+#if 1
     {
         FrameDrawArgs frameArgs;
         frameArgs.deltaTime = ImGui::GetIO().DeltaTime;
@@ -625,6 +625,11 @@ void MainWindow::draw() {
     ImGui::TextUnformatted("Zoom");
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - 10 * style::uiScale);
     ImVec2 wfSliderSize(20.0 * style::uiScale, 150.0 * style::uiScale);
+    bool   sliderSeparators = true;
+    if (3.f * wfSliderSize.y > ImGui::GetContentRegionAvail().y - 5.f * ImGui::GetTextLineHeightWithSpacing()) {
+        wfSliderSize.y = ImGui::GetContentRegionAvail().y / 3.f - ImGui::GetTextLineHeightWithSpacing();
+        sliderSeparators = false;
+    }
     if (ImGui::VSliderFloat("##_7_", wfSliderSize, &bw, 1.0, 0.0, "")) {
         double factor = (double)bw * (double)bw;
 
@@ -639,7 +644,7 @@ void MainWindow::draw() {
         }
     }
 
-    ImGui::NewLine();
+    if (sliderSeparators) ImGui::NewLine();
 
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - (ImGui::CalcTextSize("Max").x / 2.0));
     ImGui::TextUnformatted("Max");
@@ -651,7 +656,7 @@ void MainWindow::draw() {
         core::configManager.release(true);
     }
 
-    ImGui::NewLine();
+    if (sliderSeparators) ImGui::NewLine();
 
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - (ImGui::CalcTextSize("Min").x / 2.0));
     ImGui::TextUnformatted("Min");

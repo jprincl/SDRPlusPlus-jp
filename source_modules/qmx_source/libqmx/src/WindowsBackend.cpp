@@ -11,8 +11,9 @@
 #include <thread>
 #include <vector>
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+#ifndef NOMINMAX
+    #define NOMINMAX
+#endif // NOMINMAX
 #include <windows.h>
 #include <mmsystem.h>
 #include <audioclient.h>

@@ -16,6 +16,7 @@ add_definitions(-DSDRPP_IS_CORE)
 add_definitions(-DFLOG_ANDROID_TAG="SDR++")
 if (MSVC)
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
 endif ()
 
 # Configure backend sources

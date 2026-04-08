@@ -1,8 +1,3 @@
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#endif // _WIN32
-
 #include "FreqModeSync.h"
 
 #include <config.h>
@@ -435,7 +430,7 @@ private:
             SmGui::Text(self->selectedAndroidDevice.c_str());
 #endif
 
-        self->sync.tick();
+        //self->sync.tick();
 
         bool syncVfoCb = self->sync.getSyncVfo();
         SmGui::ForceSync();
