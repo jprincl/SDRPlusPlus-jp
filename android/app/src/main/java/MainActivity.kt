@@ -106,6 +106,7 @@ class MainActivity : NativeActivity() {
     companion object {
         private const val QMX_USB_VID = 0x0483
         private const val QMX_USB_PID = 0xA34C
+        private const val STORAGE_PERMISSION_REQUEST_CODE = 100
         private val openUsbConnections = HashMap<Int, UsbDeviceConnection>()
         private val openUsbDeviceNames = HashMap<String, Int>()
 
@@ -357,9 +358,9 @@ class MainActivity : NativeActivity() {
         }
     }
 
-    fun checkAndAsk(permission: String) {
+    fun checkAndAsk(permission: String, requestCode: Int = 1) {
         if (PermissionChecker.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(permission), 1);
+            ActivityCompat.requestPermissions(this, arrayOf(permission), requestCode);
         }
     }
 
@@ -458,12 +459,22 @@ class MainActivity : NativeActivity() {
         // Hide bars
         hideSystemBars();
 
-        // Ask for required permissions, without these the app cannot run.
-        checkAndAsk(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-        checkAndAsk(Manifest.permission.READ_EXTERNAL_STORAGE);
-//        checkAndAsk(Manifest.permission.RECORD_AUDIO);
-
-        // TODO: Have the main code wait until these two permissions are available
+        // Request storage permissions on API 23-28 (on API 29+ they are no-ops).
+        // Native startup uses internal storage (getFilesDir), so the race with
+        // permission grant is not harmful, but external-storage features (e.g.
+        // recordings) may need these later.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val storagePerms = arrayOf(
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            )
+            val needed = storagePerms.filter {
+                PermissionChecker.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (needed.isNotEmpty()) {
+                ActivityCompat.requestPermissions(this, needed.toTypedArray(), STORAGE_PERMISSION_REQUEST_CODE)
+            }
+        }
 
         // Register events
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager;
@@ -484,6 +495,18 @@ class MainActivity : NativeActivity() {
         checkAndAsk(Manifest.permission.INTERNET);
 
         super.onCreate(savedInstanceState)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == STORAGE_PERMISSION_REQUEST_CODE) {
+            val denied = permissions.zip(grantResults.toList())
+                .filter { it.second != PackageManager.PERMISSION_GRANTED }
+                .map { it.first }
+            if (denied.isNotEmpty()) {
+                Log.w(TAG, "Storage permissions denied: $denied — some features may be unavailable")
+            }
+        }
     }
 
     public override fun onResume() {

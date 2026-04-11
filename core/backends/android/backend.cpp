@@ -510,7 +510,6 @@ namespace backend {
         return getPreferredAudioDeviceId("getPreferredAudioInputDeviceId");
     }
 
-    //FIXME not used yet
     UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids) {
         UsbDeviceHandle handle;
 
@@ -570,7 +569,6 @@ namespace backend {
         return handle;
     }
 
-    //FIXME not used yet
     void releaseUsbDeviceHandle(const UsbDeviceHandle& handle) {
         if (handle.fd < 0)
             return;

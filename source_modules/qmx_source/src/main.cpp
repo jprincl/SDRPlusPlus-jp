@@ -148,20 +148,17 @@ private:
         androidDeviceListTxt.clear();
         selectedAndroidDevice.clear();
         androidDevId = 0;
-        androidDevFd = -1;
-        androidVid = -1;
-        androidPid = -1;
+        androidUsbHandle = {};
+        androidDevHasDevice = false;
 
-        int vid = -1;
-        int pid = -1;
-        int fd = backend::getDeviceFD(vid, pid, backend::QMX_VIDPIDS);
-        if (fd < 0) {
+        auto handle = backend::getUsbDeviceHandle(backend::QMX_VIDPIDS);
+        if (!handle.valid()) {
             return;
         }
 
-        androidDevFd = fd;
-        androidVid = vid;
-        androidPid = pid;
+        // Release immediately; a fresh handle will be acquired in start().
+        backend::releaseUsbDeviceHandle(handle);
+        androidDevHasDevice = true;
         androidDevices.push_back("QMX USB");
         androidDeviceListTxt += androidDevices.back();
         androidDeviceListTxt += '\0';
@@ -296,13 +293,19 @@ private:
         options.serialPort = self->selectedSerialPort;
 #else
         self->refreshAndroidDeviceSelectionIfNeeded();
-        if (self->selectedAndroidDevice.empty() || self->androidDevFd < 0) {
+        if (self->selectedAndroidDevice.empty()) {
             flog::error("QMXSourceModule: No authorized QMX USB device available on Android");
             return;
         }
-        options.androidUsb.fd = self->androidDevFd;
-        options.androidUsb.vid = self->androidVid;
-        options.androidUsb.pid = self->androidPid;
+        // Acquire a fresh USB handle for each start.
+        self->androidUsbHandle = backend::getUsbDeviceHandle(backend::QMX_VIDPIDS);
+        if (!self->androidUsbHandle.valid()) {
+            flog::error("QMXSourceModule: Failed to acquire USB device handle");
+            return;
+        }
+        options.androidUsb.fd = self->androidUsbHandle.fd;
+        options.androidUsb.vid = self->androidUsbHandle.vid;
+        options.androidUsb.pid = self->androidUsbHandle.pid;
 #endif
 
         self->sync.start(self->freq, self->sync.getSyncVfo());
@@ -310,6 +313,10 @@ private:
         std::string error;
         if (!self->device.start(options, &QMXSourceModule::sampleHandler, self, &QMXSourceModule::statusHandler, self, &error)) {
             flog::error("QMXSourceModule: {}", error);
+#ifdef __ANDROID__
+            backend::releaseUsbDeviceHandle(self->androidUsbHandle);
+            self->androidUsbHandle = {};
+#endif
             return;
         }
 
@@ -328,6 +335,11 @@ private:
         self->device.stop();
         self->stream.clearWriteStop();
         self->sync.stop();
+
+#ifdef __ANDROID__
+        backend::releaseUsbDeviceHandle(self->androidUsbHandle);
+        self->androidUsbHandle = {};
+#endif
 
         flog::info("QMXSourceModule '{}': Stop!", self->name);
     }
@@ -583,9 +595,8 @@ private:
     std::string androidDeviceListTxt;
     std::string selectedAndroidDevice;
     int androidDevId = 0;
-    int androidDevFd = -1;
-    int androidVid = -1;
-    int androidPid = -1;
+    backend::UsbDeviceHandle androidUsbHandle;
+    bool androidDevHasDevice = false;
     int lastAndroidUsbHotplugGeneration = 0;
 #endif
 };
