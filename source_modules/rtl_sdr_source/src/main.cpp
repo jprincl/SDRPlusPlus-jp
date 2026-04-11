@@ -300,11 +300,15 @@ private:
     static void menuSelected(void* ctx) {
         RTLSDRSourceModule* _this = (RTLSDRSourceModule*)ctx;
         core::setInputSampleRate(_this->sampleRate);
+        gui::freqSelect.minFreq = 100000ul; // 100 kHz for direct sampling
+        gui::freqSelect.maxFreq = 1750000000ul; // 1.75 GHz
+        gui::freqSelect.limitFreq = true;
         flog::info("RTLSDRSourceModule '{0}': Menu Select!", _this->name);
     }
 
     static void menuDeselected(void* ctx) {
         RTLSDRSourceModule* _this = (RTLSDRSourceModule*)ctx;
+        gui::freqSelect.limitFreq = false;
         flog::info("RTLSDRSourceModule '{0}': Menu Deselect!", _this->name);
     }
 

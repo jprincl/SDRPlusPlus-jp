@@ -34,5 +34,11 @@ private:
     ImVec2 digitBottomMaxs[12];
     ImVec2 digitTopMaxs[12];
 
+    // First digit visible and manipulated (based on maxFreq)
+    int firstDigit = 0;
+    // Cached maxFreq and limitFreq to detect a change of layout.
+    uint64_t lastMaxFreq = 0;
+    bool lastLimitFreq = false;
+
     char buf[100];
 };

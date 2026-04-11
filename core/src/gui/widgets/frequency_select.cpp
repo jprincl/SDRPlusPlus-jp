@@ -29,12 +29,14 @@ void FrequencySelect::onPosChange() {
     int digitHeight = digitSz.y;
     int digitWidth = digitSz.x;
     int commaOffset = 0;
-    for (int i = 0; i < 12; i++) {
-        digitTopMins[i] = ImVec2(widgetPos.x + (i * digitWidth) + commaOffset, widgetPos.y);
-        digitBottomMins[i] = ImVec2(widgetPos.x + (i * digitWidth) + commaOffset, widgetPos.y + (digitHeight / 2));
+    int xOffset = 0;
+    for (int i = firstDigit; i < 12; i++) {
+        int pos = i - firstDigit;
+        digitTopMins[i] = ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset, widgetPos.y);
+        digitBottomMins[i] = ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset, widgetPos.y + (digitHeight / 2));
 
-        digitTopMaxs[i] = ImVec2(widgetPos.x + (i * digitWidth) + commaOffset + digitWidth, widgetPos.y + (digitHeight / 2));
-        digitBottomMaxs[i] = ImVec2(widgetPos.x + (i * digitWidth) + commaOffset + digitWidth, widgetPos.y + digitHeight);
+        digitTopMaxs[i] = ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset + digitWidth, widgetPos.y + (digitHeight / 2));
+        digitBottomMaxs[i] = ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset + digitWidth, widgetPos.y + digitHeight);
 
         if ((i + 1) % 3 == 0 && i < 11) {
             commaOffset += commaSz.x;
@@ -100,7 +102,27 @@ void FrequencySelect::draw() {
     ImVec2 commaSz = ImGui::CalcTextSize(".");
     widgetPos.y = window->Pos.y + cursorPos.y - ((digitSz.y / 2.0f) - ceilf(15 * style::uiScale) - 5);
 
-    if (widgetPos.x != lastWidgetPos.x || widgetPos.y != lastWidgetPos.y) {
+    // Recompute the first visible digit only when maxFreq or limitFreq changes
+    bool firstDigitChanged = false;
+    if (maxFreq != lastMaxFreq || limitFreq != lastLimitFreq) {
+        lastMaxFreq = maxFreq;
+        lastLimitFreq = limitFreq;
+        int newFirstDigit = 0;
+        if (limitFreq && maxFreq > 0) {
+            uint64_t mf = maxFreq;
+            int numDigits = 0;
+            while (mf > 0) { mf /= 10; numDigits++; }
+            newFirstDigit = 12 - numDigits;
+            if (newFirstDigit < 0) { newFirstDigit = 0; }
+        }
+        firstDigitChanged = (newFirstDigit != firstDigit);
+        firstDigit = newFirstDigit;
+        // Zero out hidden leading digits
+        for (int i = 0; i < firstDigit; i++)
+            digits[i] = 0;
+    }
+
+    if (widgetPos.x != lastWidgetPos.x || widgetPos.y != lastWidgetPos.y || firstDigitChanged) {
         lastWidgetPos = widgetPos;
         onPosChange();
     }
@@ -114,18 +136,19 @@ void FrequencySelect::draw() {
     float textOffset = 11.0f * style::uiScale;
     bool zeros = true;
 
-    ImGui::ItemSize(ImRect(digitTopMins[0], ImVec2(digitBottomMaxs[11].x + 15, digitBottomMaxs[11].y)));
+    ImGui::ItemSize(ImRect(digitTopMins[firstDigit], ImVec2(digitBottomMaxs[11].x + 15, digitBottomMaxs[11].y)));
 
-    for (int i = 0; i < 12; i++) {
+    for (int i = firstDigit; i < 12; i++) {
         if (digits[i] != 0) {
             zeros = false;
         }
+        int pos = i - firstDigit;
         sprintf(buf, "%d", digits[i]);
-        window->DrawList->AddText(ImVec2(widgetPos.x + (i * digitWidth) + commaOffset, widgetPos.y),
+        window->DrawList->AddText(ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset, widgetPos.y),
                                   zeros ? disabledColor : textColor, buf);
         if ((i + 1) % 3 == 0 && i < 11) {
             commaOffset += commaSz.x;
-            window->DrawList->AddText(ImVec2(widgetPos.x + (i * digitWidth) + commaOffset + textOffset, widgetPos.y),
+            window->DrawList->AddText(ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset + textOffset, widgetPos.y),
                                       zeros ? disabledColor : textColor, ".");
         }
     }
@@ -138,7 +161,7 @@ void FrequencySelect::draw() {
         bool onDigit = false;
         bool hovered = false;
 
-        for (int i = 0; i < 12; i++) {
+        for (int i = firstDigit; i < 12; i++) {
             onDigit = false;
             if (isInArea(mousePos, digitTopMins[i], digitTopMaxs[i])) {
                 window->DrawList->AddRectFilled(digitTopMins[i], digitTopMaxs[i], IM_COL32(255, 0, 0, 75));
@@ -169,7 +192,7 @@ void FrequencySelect::draw() {
                 if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
                     decrementDigit(i);
                 }
-                if ((ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && i > 0) {
+                if ((ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && i > firstDigit) {
                     moveCursorToDigit(i - 1);
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && i < 11) {
@@ -197,7 +220,7 @@ void FrequencySelect::draw() {
         }
         digitHovered = hovered;
 
-        if (isInArea(mousePos, digitTopMins[0], digitBottomMaxs[11])) {
+        if (isInArea(mousePos, digitTopMins[firstDigit], digitBottomMaxs[11])) {
             bool shortcutKey = io.ConfigMacOSXBehaviors ? (io.KeyMods == ImGuiKeyModFlags_Super) : (io.KeyMods == ImGuiKeyModFlags_Ctrl);
             bool ctrlOnly = (io.KeyMods == ImGuiKeyModFlags_Ctrl);
             bool shiftOnly = (io.KeyMods == ImGuiKeyModFlags_Shift);

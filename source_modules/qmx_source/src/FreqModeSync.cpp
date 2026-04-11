@@ -101,7 +101,20 @@ void FreqModeSync::stop() {
 //   4. If syncVfo: place the SDR++ VFO at the new rig frequency.
 // This way the cached status is always the source of truth and tick() won't
 // produce a feedback bounce.
-void FreqModeSync::onIqCenterChanged(double newFreq) {
+void FreqModeSync::onIqCenterChanged(double newFreq) 
+{
+    if (m_insideIqCenterFreqCallback)
+        return;
+
+    class Guard {
+    public:
+        Guard(bool& flag) : m_flag(flag) { flag = true; }
+        ~Guard() { m_flag = false; }
+    private:
+        bool& m_flag;
+    };
+    Guard guard(m_insideIqCenterFreqCallback);
+
     if (m_iqCenterFreq == newFreq)
         return;
 

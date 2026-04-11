@@ -271,11 +271,15 @@ private:
     static void menuSelected(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
         core::setInputSampleRate(self->sampleRate);
+        gui::freqSelect.minFreq = 100000; // 100 kHz
+        gui::freqSelect.maxFreq = 60000000; // 60 MHz
+        gui::freqSelect.limitFreq = true;
     }
 
     static void menuDeselected(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
         flog::info("QMXSourceModule '{}': Menu Deselect!", self->name);
+        gui::freqSelect.limitFreq = false;
     }
 
     static void start(void* ctx) {

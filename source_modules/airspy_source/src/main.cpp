@@ -278,11 +278,15 @@ private:
     static void menuSelected(void* ctx) {
         AirspySourceModule* _this = (AirspySourceModule*)ctx;
         core::setInputSampleRate(_this->sampleRate);
+        gui::freqSelect.minFreq = 24000000ul; // 24 MHz
+        gui::freqSelect.maxFreq = 1750000000ul; // 1.75 GHz
+        gui::freqSelect.limitFreq = true;
         flog::info("AirspySourceModule '{0}': Menu Select!", _this->name);
     }
 
     static void menuDeselected(void* ctx) {
         AirspySourceModule* _this = (AirspySourceModule*)ctx;
+        gui::freqSelect.limitFreq = false;
         flog::info("AirspySourceModule '{0}': Menu Deselect!", _this->name);
     }
 
