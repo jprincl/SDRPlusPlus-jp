@@ -591,18 +591,26 @@ jobs:
           working-directory: ${{runner.workspace}}/android-sdr-kit
           run: docker build --progress=plain -t android-sdr-kit .
 
-        - name: Build Debug APK
-          run: docker run --name build -v $GITHUB_WORKSPACE:/root/SDRPlusPlus android-sdr-kit /bin/bash -l -c "cd /root/SDRPlusPlus/android && gradle --info assembleDebug"
+        - name: Build Debug APKs
+          run: docker run --name build -v $GITHUB_WORKSPACE:/root/SDRPlusPlus android-sdr-kit /bin/bash -l -c "cd /root/SDRPlusPlus/android && gradle --info assembleArmDebug assembleX86Debug"
 
-        - name: Recover Debug APK
+        - name: Recover Debug APKs
           working-directory: ${{runner.workspace}}
-          run: docker cp build:/root/SDRPlusPlus/android/app/build/outputs/apk/debug/app-debug.apk ./ && mv app-debug.apk sdrpp.apk
+          run: |
+            docker cp build:/root/SDRPlusPlus/android/app/build/outputs/apk/arm/debug/app-arm-debug.apk ./sdrpp_arm_debug.apk
+            docker cp build:/root/SDRPlusPlus/android/app/build/outputs/apk/x86/debug/app-x86-debug.apk ./sdrpp_x86_debug.apk
 
-        - name: Save Debug APK
+        - name: Save ARM Debug APK
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_android
-              path: ${{runner.workspace}}/sdrpp.apk
+              name: sdrpp_android_arm_debug
+              path: ${{runner.workspace}}/sdrpp_arm_debug.apk
+
+        - name: Save x86 Debug APK
+          uses: actions/upload-artifact@v4
+          with:
+              name: sdrpp_android_x86_debug
+              path: ${{runner.workspace}}/sdrpp_x86_debug.apk
 
         - name: Decode Keystore
           id: check_signing
@@ -616,7 +624,7 @@ jobs:
           env:
             ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
-        - name: Build Signed Release APK
+        - name: Build Signed Release APKs
           if: steps.check_signing.outputs.has_keystore == 'true'
           env:
             ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -631,19 +639,28 @@ jobs:
               -e ANDROID_KEY_PASSWORD="$ANDROID_KEY_PASSWORD" \
               -v $GITHUB_WORKSPACE:/root/SDRPlusPlus \
               -v ${{runner.workspace}}/release.keystore:/root/release.keystore \
-              android-sdr-kit /bin/bash -l -c "cd /root/SDRPlusPlus/android && gradle --info assembleRelease"
+              android-sdr-kit /bin/bash -l -c "cd /root/SDRPlusPlus/android && gradle --info assembleArmRelease assembleX86Release"
 
-        - name: Recover Release APK
+        - name: Recover Release APKs
           if: steps.check_signing.outputs.has_keystore == 'true'
           working-directory: ${{runner.workspace}}
-          run: docker cp build_release:/root/SDRPlusPlus/android/app/build/outputs/apk/release/app-release.apk ./ && mv app-release.apk sdrpp_release.apk
+          run: |
+            docker cp build_release:/root/SDRPlusPlus/android/app/build/outputs/apk/arm/release/app-arm-release.apk ./sdrpp_arm_release.apk
+            docker cp build_release:/root/SDRPlusPlus/android/app/build/outputs/apk/x86/release/app-x86-release.apk ./sdrpp_x86_release.apk
 
-        - name: Save Release APK
+        - name: Save ARM Release APK
           if: steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_android_release
-              path: ${{runner.workspace}}/sdrpp_release.apk
+              name: sdrpp_android_arm_release
+              path: ${{runner.workspace}}/sdrpp_arm_release.apk
+
+        - name: Save x86 Release APK
+          if: steps.check_signing.outputs.has_keystore == 'true'
+          uses: actions/upload-artifact@v4
+          with:
+              name: sdrpp_android_x86_release
+              path: ${{runner.workspace}}/sdrpp_x86_release.apk
 
     create_full_archive:
         needs: [
@@ -692,8 +709,10 @@ jobs:
             mv sdrpp_ubuntu_jammy_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_jammy_aarch64.deb &&
             mv sdrpp_ubuntu_noble_amd64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_noble_amd64.deb &&
             mv sdrpp_ubuntu_noble_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_noble_aarch64.deb &&
-            mv sdrpp_android/sdrpp.apk sdrpp_all/sdrpp.apk &&
-            ([ -d sdrpp_android_release ] && mv sdrpp_android_release/sdrpp_release.apk sdrpp_all/sdrpp_release.apk || true)
+            mv sdrpp_android_arm_debug/sdrpp_arm_debug.apk sdrpp_all/sdrpp_arm_debug.apk &&
+            mv sdrpp_android_x86_debug/sdrpp_x86_debug.apk sdrpp_all/sdrpp_x86_debug.apk &&
+            ([ -d sdrpp_android_arm_release ] && mv sdrpp_android_arm_release/sdrpp_arm_release.apk sdrpp_all/sdrpp_arm_release.apk || true) &&
+            ([ -d sdrpp_android_x86_release ] && mv sdrpp_android_x86_release/sdrpp_x86_release.apk sdrpp_all/sdrpp_x86_release.apk || true)
 
         - uses: actions/upload-artifact@v4
           with:
