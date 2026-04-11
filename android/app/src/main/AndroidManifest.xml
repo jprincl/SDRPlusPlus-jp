@@ -12,6 +12,7 @@
             android:icon="@mipmap/ic_launcher"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
             android:configChanges="orientation|keyboardHidden|screenSize"
+            android:launchMode="singleTask"
             android:exported="true">
             <meta-data android:name="android.app.lib_name" android:value="sdrpp_core" />
             <meta-data
