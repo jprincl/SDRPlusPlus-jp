@@ -190,7 +190,9 @@ private:
     bool tryStartStreamLocked(oboe::AudioApi audioApi) {
         oboe::AudioStreamBuilder builder;
         builder.setDirection(oboe::Direction::Output);
-        builder.setPerformanceMode(oboe::PerformanceMode::LowLatency);
+        // Performance mode disabled for now, on modern Android the audio is not restarted after a radio streaming
+        // is stopped and restarted.
+        //builder.setPerformanceMode(oboe::PerformanceMode::LowLatency);
         builder.setUsage(oboe::Usage::Media);
         builder.setFormat(oboe::AudioFormat::Float);
         builder.setChannelCount(2);
