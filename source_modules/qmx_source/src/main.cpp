@@ -18,6 +18,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -288,6 +289,8 @@ private:
         if (self->running)
             return;
 
+        self->catTransmitActive.store(false, std::memory_order_relaxed);
+
         qmx::StartOptions options;
 #ifndef __ANDROID__
         if (self->selectedAudioDevice.empty()) {
@@ -336,6 +339,7 @@ private:
             return;
 
         self->running = false;
+        self->catTransmitActive.store(false, std::memory_order_relaxed);
         self->stream.stopWriter();
         self->device.stop();
         self->stream.clearWriteStop();
@@ -537,15 +541,21 @@ private:
         if (!self->running || !samples || count == 0)
             return;
 
-        for (std::size_t i = 0; i < count; ++i) {
-            self->stream.writeBuf[i].re = samples[i].i;
-            self->stream.writeBuf[i].im = samples[i].q;
+        if (self->catTransmitActive.load(std::memory_order_relaxed))
+            std::fill_n(self->stream.writeBuf, count, dsp::complex_t{});
+        else {
+            for (std::size_t i = 0; i < count; ++i) {
+                self->stream.writeBuf[i].re = samples[i].i;
+                self->stream.writeBuf[i].im = samples[i].q;
+            }
         }
         self->stream.swap(static_cast<int>(count));
     }
 
     static void statusHandler(const qmx::QmxStatus& status, void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
+        if (status.hasTransmit())
+            self->catTransmitActive.store(status.transmit, std::memory_order_relaxed);
         self->sync.onStatusReceived(status);
     }
 
@@ -594,6 +604,7 @@ private:
     qmx::QmxDevice device;
     FreqModeSync sync;
     EventHandler<MainWindow::FrameDrawArgs> frameDrawHandler;
+    std::atomic<bool> catTransmitActive{ false };
 
 #ifndef __ANDROID__
     OptionList<std::string, AudioChoice> audioDevices;
