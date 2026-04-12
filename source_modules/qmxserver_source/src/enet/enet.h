@@ -551,7 +551,7 @@ extern "C" {
     typedef struct _ENetAddress {
         struct in6_addr host;
         enet_uint16 port;
-        enet_uint16 sin6_scope_id;
+        enet_uint32 sin6_scope_id;
     } ENetAddress;
 
     #define in6_equal(in6_addr_a, in6_addr_b) (memcmp(&in6_addr_a, &in6_addr_b, sizeof(struct in6_addr)) == 0)
@@ -5326,7 +5326,7 @@ static int enet_address_has_source(const ENetAddress *address) {
 
                 } else if (result->ai_family == AF_INET6 || (result->ai_family == AF_UNSPEC && result->ai_addrlen == sizeof(struct sockaddr_in6))) {
                     memcpy(&out->host, &((struct sockaddr_in6*)result->ai_addr)->sin6_addr, sizeof(struct in6_addr));
-                    out->sin6_scope_id = (enet_uint16) ((struct sockaddr_in6*)result->ai_addr)->sin6_scope_id;
+                    out->sin6_scope_id = ((struct sockaddr_in6*)result->ai_addr)->sin6_scope_id;
                     freeaddrinfo(resultList);
                     return 0;
                 }
@@ -5775,9 +5775,12 @@ static int enet_address_has_source(const ENetAddress *address) {
             }
 #endif
 
-            case ENET_SOCKOPT_TTL:
-                result = setsockopt(socket, IPPROTO_IP, IP_TTL, (char *)&value, sizeof(int));
+            case ENET_SOCKOPT_TTL: {
+                int ipv4Result = setsockopt(socket, IPPROTO_IP, IP_TTL, (char *)&value, sizeof(int));
+                int ipv6Result = setsockopt(socket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&value, sizeof(int));
+                result = (ipv4Result == -1 && ipv6Result == -1) ? -1 : 0;
                 break;
+            }
 
             default:
                 break;
@@ -5797,7 +5800,10 @@ static int enet_address_has_source(const ENetAddress *address) {
 
             case ENET_SOCKOPT_TTL:
                 len = sizeof (int);
-                result = getsockopt(socket, IPPROTO_IP, IP_TTL, (char *)value, &len);
+                result = getsockopt(socket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)value, &len);
+                if (result == -1) {
+                    result = getsockopt(socket, IPPROTO_IP, IP_TTL, (char *)value, &len);
+                }
                 break;
 
             default:
@@ -6366,9 +6372,12 @@ static int enet_address_has_source(const ENetAddress *address) {
             }
 #endif
 
-            case ENET_SOCKOPT_TTL:
-                result = setsockopt(socket, IPPROTO_IP, IP_TTL, (char *)&value, sizeof(int));
+            case ENET_SOCKOPT_TTL: {
+                int ipv4Result = setsockopt(socket, IPPROTO_IP, IP_TTL, (char *)&value, sizeof(int));
+                int ipv6Result = setsockopt(socket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&value, sizeof(int));
+                result = (ipv4Result == SOCKET_ERROR && ipv6Result == SOCKET_ERROR) ? SOCKET_ERROR : 0;
                 break;
+            }
 
             default:
                 break;
@@ -6387,7 +6396,10 @@ static int enet_address_has_source(const ENetAddress *address) {
 
             case ENET_SOCKOPT_TTL:
                 len = sizeof(int);
-                result = getsockopt(socket, IPPROTO_IP, IP_TTL, (char *)value, &len);
+                result = getsockopt(socket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)value, &len);
+                if (result == SOCKET_ERROR) {
+                    result = getsockopt(socket, IPPROTO_IP, IP_TTL, (char *)value, &len);
+                }
                 break;
 
             default:
