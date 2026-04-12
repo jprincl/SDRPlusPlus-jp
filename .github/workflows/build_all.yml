@@ -735,6 +735,13 @@ jobs:
             # Check if nightly release exists, create if not
             gh release view nightly -R ${{github.repository}} 2>/dev/null || gh release create nightly -R ${{github.repository}} --title "Nightly Build" --notes "Automated nightly build from CI - Built from commit ${{ github.sha }}" --prerelease
             
+            # Keep the nightly release assets in sync with the current build output.
+            gh release view nightly -R ${{github.repository}} --json assets --jq '.assets[].name' | while read -r asset; do
+              if [ -n "$asset" ] && [ ! -f "sdrpp_all/$asset" ]; then
+                gh release delete-asset nightly "$asset" -R ${{github.repository}} --yes
+              fi
+            done
+
             # Upload artifacts (--clobber overwrites existing files)
             gh release upload nightly sdrpp_all/* -R ${{github.repository}} --clobber
 
