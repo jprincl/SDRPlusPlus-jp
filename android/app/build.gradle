@@ -6,7 +6,7 @@ android {
     ndkVersion "29.0.14206865"
     defaultConfig {
         applicationId "org.ok1iak.sdrpp"
-        minSdk 23
+        minSdk 24
         targetSdk 36
         versionCode 1
         versionName "1.2.1"
