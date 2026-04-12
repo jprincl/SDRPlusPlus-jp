@@ -771,7 +771,9 @@ extern "C" {
         // Call main
         char* rootpath = new char[appdir.size() + 1];
         strcpy(rootpath, appdir.c_str());
-        char* dummy[] = { "", "-r", rootpath };
+        char arg0[] = "";
+        char arg1[] = "-r";
+        char* dummy[] = { arg0, arg1, rootpath };
         sdrpp_main(3, dummy);
     }
 

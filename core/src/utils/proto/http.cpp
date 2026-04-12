@@ -214,7 +214,7 @@ namespace net::http {
 
     std::string ChunkHeader::serialize() {
         char buf[64];
-        sprintf(buf, "%" PRIX64 "\r\n", length);
+        sprintf(buf, "%zX\r\n", length);
         return buf;
     }
 

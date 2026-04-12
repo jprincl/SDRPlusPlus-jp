@@ -135,8 +135,10 @@ public:
                     ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "Total latency: N/A");
                 }
 
-                ImGui::Text("XRun count: %d", s->getXRunCount());
-
+                if (auto xRunResult = s->getXRunCount(); xRunResult)
+                    ImGui::Text("XRun count: %d", xRunResult.value());
+                else
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "XRun count: N/A");
                 ImGui::Separator();
                 ImGui::Text("Device ID: %d", s->getDeviceId());
                 const int prefId = backend::getPreferredAudioOutputDeviceId();
@@ -149,9 +151,8 @@ public:
                             "OpenSL ES ignores setDeviceId()");
                     }
                 }
-                else {
+                else
                     ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "Preferred ID: none");
-                }
 
 #if ANDROID_AUDIO_SINK_USE_CALLBACK
                 ImGui::Separator();
