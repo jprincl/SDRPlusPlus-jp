@@ -1,7 +1,9 @@
-// Define AUDIO_SINK_USE_CALLBACK=1 to use RT callback + FIFO (lowest latency on Pro Audio devices).
+// Define ANDROID_AUDIO_SINK_USE_CALLBACK=1 to use RT callback + FIFO (lowest latency on Pro Audio devices).
 // Default (0): blocking write, no FIFO — simpler, consistent ~20 ms latency everywhere.
-#ifndef AUDIO_SINK_USE_CALLBACK
-#define AUDIO_SINK_USE_CALLBACK 0
+// On high end Androids the callback path may provide lower latency due to Exclusive mode with memory sharing,
+// however many low end devices do not implement it and then the direct path is simpler.
+#ifndef ANDROID_AUDIO_SINK_USE_CALLBACK
+#define ANDROID_AUDIO_SINK_USE_CALLBACK 0
 #endif
 
 #include <imgui.h>
@@ -42,7 +44,7 @@ ConfigManager config;
 static_assert(sizeof(dsp::stereo_t) == sizeof(float) * 2, "AudioSink expects packed stereo float frames");
 
 class AudioSink : SinkManager::Sink,
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
                   private oboe::AudioStreamDataCallback,
 #endif
                   private oboe::AudioStreamErrorCallback {
@@ -84,15 +86,15 @@ public:
             if (audioStream) {
                 oboe::AudioStream* s = audioStream.get();
 
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
                 ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1), "Mode: Callback + FIFO");
 #else
                 ImGui::TextColored(ImVec4(0.4f, 0.8f, 1, 1), "Mode: Blocking write");
 #endif
 
                 const char* api = audioApiName(s->getAudioApi());
-                const char* apiReason = (android_get_device_api_level() <= 27)
-                    ? "forced (API <= 27)" : "auto-selected";
+                const char* apiReason = (preferredAudioApi() == oboe::AudioApi::OpenSLES)
+                    ? "forced (API <= 25)" : "auto-selected";
                 ImGui::TextUnformatted("Backend:");
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(1, 1, 0, 1), "%s (%s)", api, apiReason);
@@ -151,7 +153,7 @@ public:
                     ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "Preferred ID: none");
                 }
 
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
                 ImGui::Separator();
                 ImGui::Text("Frames/callback: %d", s->getFramesPerCallback());
                 const size_t ri = fifoReadIndex.load(std::memory_order_relaxed);
@@ -195,7 +197,7 @@ private:
         builder.setErrorCallback(this);
         builder.setAudioApi(audioApi);
 
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
         // Callback mode: request exclusive for potential MMAP bypass.
         // Oboe falls back to Shared automatically if unavailable.
         builder.setSharingMode(oboe::SharingMode::Exclusive);
@@ -221,45 +223,40 @@ private:
         }
 
         // Tune buffer size: 2x burst for minimum latency.
-        const int32_t burst = stream->getFramesPerBurst();
+        const int32_t burst = std::max<int32_t>(1, stream->getFramesPerBurst());
         stream->setBufferSizeInFrames(burst * 2);
 
         // Set packer to burst-aligned chunk size.
-        const int packerSize = std::max<int>(1, burst);
+        const int packerSize = burst;
         packer.setSampleCount(packerSize);
 
-#if AUDIO_SINK_USE_CALLBACK
-        // Size FIFO to 4x burst — enough to absorb jitter, small enough to limit latency.
-        fifoCapacity = (size_t)(burst * 4) + 1;
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
+        // Keep callback-mode buffering tight so we do not front-load latency.
+        fifoCapacity = (size_t)(burst * 2) + 1;
         audioFifo.resize(fifoCapacity);
         resetAudioFifo();
-
-        packer.start();
-        producerThread = std::thread(&AudioSink::producerLoop, this);
-        callbackStream.store(stream.get(), std::memory_order_release);
-#else
-        packer.start();
-        writerStream.store(stream.get(), std::memory_order_release);
 #endif
+
+        activeStream.store(stream.get(), std::memory_order_release);
 
         const oboe::Result startResult = stream->requestStart();
         if (startResult != oboe::Result::OK) {
             flog::error("AudioSink: failed to start {} stream: {}",
                         audioApiName(stream->getAudioApi()),
                         oboe::convertToText(startResult));
-#if AUDIO_SINK_USE_CALLBACK
-            callbackStream.store(nullptr, std::memory_order_release);
-#else
-            writerStream.store(nullptr, std::memory_order_release);
-#endif
-            stopProducerLocked();
+            activeStream.store(nullptr, std::memory_order_release);
+            stopAudioWorkerLocked();
             stream->close();
             return false;
         }
 
         audioStream = std::move(stream);
 
-#if !AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
+        packer.start();
+        producerThread = std::thread(&AudioSink::producerLoop, this);
+#else
+        packer.start();
         // Start writer thread after stream is running.
         writerThread = std::thread(&AudioSink::writerLoop, this);
 #endif
@@ -284,7 +281,7 @@ private:
 
     void stopLocked(bool closeStream) {
         if (!running && !audioStream
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
             && !producerThread.joinable()
 #else
             && !writerThread.joinable()
@@ -294,14 +291,10 @@ private:
         }
 
         shuttingDown.store(true, std::memory_order_release);
-#if AUDIO_SINK_USE_CALLBACK
-        callbackStream.store(nullptr, std::memory_order_release);
-#else
-        writerStream.store(nullptr, std::memory_order_release);
-#endif
+        activeStream.store(nullptr, std::memory_order_release);
 
         std::shared_ptr<oboe::AudioStream> stream = std::move(audioStream);
-        stopProducerLocked();
+        stopAudioWorkerLocked();
         running = false;
 
         if (closeStream && stream) {
@@ -319,21 +312,21 @@ private:
         shuttingDown.store(false, std::memory_order_release);
     }
 
-    void stopProducerLocked() {
+    void stopAudioWorkerLocked() {
         packer.out.stopReader();
         packer.stop();
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
         if (producerThread.joinable()) { producerThread.join(); }
 #else
         if (writerThread.joinable()) { writerThread.join(); }
 #endif
         packer.out.clearReadStop();
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
         resetAudioFifo();
 #endif
     }
 
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
     // ---- Callback mode: producer thread → FIFO → RT callback ----
 
     void producerLoop() {
@@ -349,7 +342,7 @@ private:
     oboe::DataCallbackResult onAudioReady(oboe::AudioStream* stream, void* audioData, int32_t numFrames) override {
         auto* out = static_cast<dsp::stereo_t*>(audioData);
         if (shuttingDown.load(std::memory_order_acquire) ||
-            stream != callbackStream.load(std::memory_order_acquire)) {
+            stream != activeStream.load(std::memory_order_acquire)) {
             std::memset(out, 0, numFrames * sizeof(dsp::stereo_t));
             return oboe::DataCallbackResult::Stop;
         }
@@ -381,7 +374,7 @@ private:
                 return;
             }
 
-            oboe::AudioStream* stream = writerStream.load(std::memory_order_acquire);
+            oboe::AudioStream* stream = activeStream.load(std::memory_order_acquire);
             if (!stream) {
                 packer.out.flush();
                 return;
@@ -391,7 +384,12 @@ private:
             packer.out.flush();
 
             if (result != oboe::Result::OK) {
-                flog::warn("AudioSink: write failed: {}", oboe::convertToText(result.error()));
+                const oboe::Result error = result.error();
+                flog::warn("AudioSink: write failed: {}", oboe::convertToText(error));
+                if (!shuttingDown.load(std::memory_order_acquire) &&
+                    stream == activeStream.load(std::memory_order_acquire)) {
+                    scheduleRestart(true);
+                }
                 return;
             }
         }
@@ -407,21 +405,22 @@ private:
 
     void onErrorAfterClose(oboe::AudioStream* stream, oboe::Result error) override {
         if (shuttingDown.load(std::memory_order_acquire)) { return; }
-
-#if AUDIO_SINK_USE_CALLBACK
-        if (stream != callbackStream.load(std::memory_order_acquire)) { return; }
-#endif
+        if (stream != activeStream.load(std::memory_order_acquire)) { return; }
 
         flog::warn("AudioSink: {} stream closed with error {}",
                    audioApiName(stream->getAudioApi()),
                    oboe::convertToText(error));
 
         if (error == oboe::Result::ErrorDisconnected) {
-            scheduleRestart();
+            scheduleRestart(false);
         }
     }
 
-    void scheduleRestart() {
+    void scheduleRestart(bool closeCurrentStream) {
+        if (closeCurrentStream) {
+            restartNeedsClose.store(true, std::memory_order_release);
+        }
+
         bool expected = false;
         if (!restartPending.compare_exchange_strong(expected, true)) {
             return;
@@ -438,11 +437,13 @@ private:
         {
             std::lock_guard<std::mutex> lck(stateMtx);
             if (!running) {
+                restartNeedsClose.store(false, std::memory_order_release);
                 restartPending = false;
                 return;
             }
 
-            stopLocked(false);
+            const bool closeCurrentStream = restartNeedsClose.exchange(false, std::memory_order_acq_rel);
+            stopLocked(closeCurrentStream);
             running = openAndStartStreamLocked();
             if (!running) {
                 flog::error("AudioSink: restart failed, audio unavailable");
@@ -460,7 +461,11 @@ private:
     }
 
     oboe::AudioApi preferredAudioApi() const {
-        return android_get_device_api_level() <= 27
+        // AAudio is available on API 26+ and supports setDeviceId().
+        // OpenSL ES ignores setDeviceId(), so only use it on API 24–25
+        // where AAudio doesn't exist. Oboe handles AAudio lifecycle bugs
+        // (requestStop/close race) internally, so API 26–27 is safe.
+        return android_get_device_api_level() <= 25
             ? oboe::AudioApi::OpenSLES
             : oboe::AudioApi::Unspecified;
     }
@@ -476,7 +481,7 @@ private:
         }
     }
 
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
     // ---- FIFO helpers (callback mode only) ----
 
     size_t fifoReadable(size_t readIndex, size_t writeIndex) const {
@@ -540,19 +545,19 @@ private:
     std::mutex restartThreadMtx;
     std::thread restartThread;
     std::atomic<bool> restartPending = false;
+    std::atomic<bool> restartNeedsClose = false;
     std::atomic<bool> shuttingDown = false;
+    std::atomic<oboe::AudioStream*> activeStream{nullptr};
     std::shared_ptr<oboe::AudioStream> audioStream;
 
-#if AUDIO_SINK_USE_CALLBACK
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
     std::thread producerThread;
-    std::atomic<oboe::AudioStream*> callbackStream{nullptr};
     std::atomic<size_t> fifoReadIndex{0};
     std::atomic<size_t> fifoWriteIndex{0};
     std::vector<dsp::stereo_t> audioFifo;
     size_t fifoCapacity = 0;
 #else
     std::thread writerThread;
-    std::atomic<oboe::AudioStream*> writerStream{nullptr};
 #endif
 
     SinkManager::Stream* _stream = nullptr;
