@@ -6,6 +6,11 @@
 #ifdef _WIN32
 #define WOULD_BLOCK (WSAGetLastError() == WSAEWOULDBLOCK)
 #else
+#include <net/if.h>
+#include <sys/ioctl.h>
+#if defined(__ANDROID__) && __ANDROID_API__ < 24
+#include <dlfcn.h>
+#endif
 #define WOULD_BLOCK (errno == EWOULDBLOCK)
 #endif
 
@@ -55,6 +60,12 @@ namespace net {
         fcntl(sock, F_SETFL, O_NONBLOCK);
 #endif
     }
+
+#ifndef _WIN32
+    IP_t ipv4FromSockaddr(const sockaddr* addr) {
+        return ntohl(((const sockaddr_in*)addr)->sin_addr.s_addr);
+    }
+#endif
 
     // === Address functions ===
 
@@ -292,6 +303,59 @@ namespace net {
         // Free tables
         free(addresses);
 #else
+#if defined(__ANDROID__) && __ANDROID_API__ < 24
+        // Resolve getifaddrs/freeifaddrs at runtime (available on API 24+ devices)
+        using getifaddrs_t  = int  (*)(struct ifaddrs**);
+        using freeifaddrs_t = void (*)(struct ifaddrs*);
+        static auto dyn_getifaddrs  = (getifaddrs_t)dlsym(RTLD_DEFAULT, "getifaddrs");
+        static auto dyn_freeifaddrs = (freeifaddrs_t)dlsym(RTLD_DEFAULT, "freeifaddrs");
+
+        if (dyn_getifaddrs && dyn_freeifaddrs) {
+            // Device has getifaddrs — full enumeration
+            struct ifaddrs* addresses = NULL;
+            dyn_getifaddrs(&addresses);
+            for (auto iface = addresses; iface; iface = iface->ifa_next) {
+                if (!iface->ifa_addr || !iface->ifa_netmask) { continue; }
+                if (iface->ifa_addr->sa_family != AF_INET) { continue; }
+                InterfaceInfo info;
+                info.address = ipv4FromSockaddr(iface->ifa_addr);
+                info.netmask = ipv4FromSockaddr(iface->ifa_netmask);
+                info.broadcast = info.address | (~info.netmask);
+                ifaces[iface->ifa_name] = info;
+            }
+            dyn_freeifaddrs(addresses);
+        } else {
+            // ioctl fallback — IPv4 only (API 23 devices)
+            SockHandle_t querySock = socket(AF_INET, SOCK_DGRAM, 0);
+            if (querySock >= 0) {
+                char buffer[16384];
+                struct ifconf ifacesConf;
+                memset(&ifacesConf, 0, sizeof(ifacesConf));
+                ifacesConf.ifc_len = sizeof(buffer);
+                ifacesConf.ifc_buf = buffer;
+
+                if (ioctl(querySock, SIOCGIFCONF, &ifacesConf) == 0) {
+                    for (char* ptr = buffer; ptr < (buffer + ifacesConf.ifc_len); ptr += sizeof(struct ifreq)) {
+                        auto* iface = (struct ifreq*)ptr;
+                        if (iface->ifr_addr.sa_family != AF_INET) { continue; }
+
+                        struct ifreq netmaskReq;
+                        memset(&netmaskReq, 0, sizeof(netmaskReq));
+                        strncpy(netmaskReq.ifr_name, iface->ifr_name, IFNAMSIZ - 1);
+                        if (ioctl(querySock, SIOCGIFNETMASK, &netmaskReq) != 0 || netmaskReq.ifr_netmask.sa_family != AF_INET) { continue; }
+
+                        InterfaceInfo info;
+                        info.address = ipv4FromSockaddr(&iface->ifr_addr);
+                        info.netmask = ipv4FromSockaddr(&netmaskReq.ifr_netmask);
+                        info.broadcast = info.address | (~info.netmask);
+                        ifaces[iface->ifr_name] = info;
+                    }
+                }
+
+                ::close(querySock);
+            }
+        }
+#else
         // Get iface list
         struct ifaddrs* addresses = NULL;
         getifaddrs(&addresses);
@@ -301,14 +365,15 @@ namespace net {
             if (!iface->ifa_addr || !iface->ifa_netmask) { continue; }
             if (iface->ifa_addr->sa_family != AF_INET) { continue; }
             InterfaceInfo info;
-            info.address = ntohl(*(uint32_t*)&iface->ifa_addr->sa_data[2]);
-            info.netmask = ntohl(*(uint32_t*)&iface->ifa_netmask->sa_data[2]);
+            info.address = ipv4FromSockaddr(iface->ifa_addr);
+            info.netmask = ipv4FromSockaddr(iface->ifa_netmask);
             info.broadcast = info.address | (~info.netmask);
             ifaces[iface->ifa_name] = info;
         }
 
         // Free iface list
         freeifaddrs(addresses);
+#endif
 #endif
 
         return ifaces;
