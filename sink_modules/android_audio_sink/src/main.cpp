@@ -231,10 +231,14 @@ private:
         packer.setSampleCount(packerSize);
 
 #if ANDROID_AUDIO_SINK_USE_CALLBACK
-        // Keep callback-mode buffering tight so we do not front-load latency.
+        // Keep callback-mode buffering tight and start the producer before the stream
+        // so the FIFO can begin filling naturally before the first callback fires.
         fifoCapacity = (size_t)(burst * 2) + 1;
         audioFifo.resize(fifoCapacity);
         resetAudioFifo();
+
+        packer.start();
+        producerThread = std::thread(&AudioSink::producerLoop, this);
 #endif
 
         activeStream.store(stream.get(), std::memory_order_release);
@@ -252,10 +256,7 @@ private:
 
         audioStream = std::move(stream);
 
-#if ANDROID_AUDIO_SINK_USE_CALLBACK
-        packer.start();
-        producerThread = std::thread(&AudioSink::producerLoop, this);
-#else
+#if !ANDROID_AUDIO_SINK_USE_CALLBACK
         packer.start();
         // Start writer thread after stream is running.
         writerThread = std::thread(&AudioSink::writerLoop, this);
@@ -388,7 +389,7 @@ private:
                 flog::warn("AudioSink: write failed: {}", oboe::convertToText(error));
                 if (!shuttingDown.load(std::memory_order_acquire) &&
                     stream == activeStream.load(std::memory_order_acquire)) {
-                    scheduleRestart(true);
+                    scheduleRestart();
                 }
                 return;
             }
@@ -412,15 +413,11 @@ private:
                    oboe::convertToText(error));
 
         if (error == oboe::Result::ErrorDisconnected) {
-            scheduleRestart(false);
+            scheduleRestart();
         }
     }
 
-    void scheduleRestart(bool closeCurrentStream) {
-        if (closeCurrentStream) {
-            restartNeedsClose.store(true, std::memory_order_release);
-        }
-
+    void scheduleRestart() {
         bool expected = false;
         if (!restartPending.compare_exchange_strong(expected, true)) {
             return;
@@ -437,13 +434,11 @@ private:
         {
             std::lock_guard<std::mutex> lck(stateMtx);
             if (!running) {
-                restartNeedsClose.store(false, std::memory_order_release);
                 restartPending = false;
                 return;
             }
 
-            const bool closeCurrentStream = restartNeedsClose.exchange(false, std::memory_order_acq_rel);
-            stopLocked(closeCurrentStream);
+            stopLocked(true);
             running = openAndStartStreamLocked();
             if (!running) {
                 flog::error("AudioSink: restart failed, audio unavailable");
@@ -545,7 +540,6 @@ private:
     std::mutex restartThreadMtx;
     std::thread restartThread;
     std::atomic<bool> restartPending = false;
-    std::atomic<bool> restartNeedsClose = false;
     std::atomic<bool> shuttingDown = false;
     std::atomic<oboe::AudioStream*> activeStream{nullptr};
     std::shared_ptr<oboe::AudioStream> audioStream;
