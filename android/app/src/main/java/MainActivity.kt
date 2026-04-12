@@ -140,6 +140,10 @@ class MainActivity : NativeActivity() {
                 containsQmxMarker(device.address)
             }
             else {
+               // On Android older than 9, we cannot confirm whether the audio USB device is a QRP Labs QMX or QDX product.
+                // Thus we rather enable audio routing to USB in SDR++ iak build for those old Android devices for now
+                // and leave it to the user to disable USB audio routing in development mode.
+                // Also the QMX source shows the recommendation in its UI page.
                 false
             }
             if (containsQmxMarker(device.productName) || addressMatches) {

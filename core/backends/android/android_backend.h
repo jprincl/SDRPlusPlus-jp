@@ -32,6 +32,10 @@ namespace backend {
     int getDeviceFD(int& vid, int& pid, const std::vector<DevVIDPID>& allowedVidPids);
     int getPreferredAudioOutputDeviceId();
     int getPreferredAudioInputDeviceId();
+    // Sticky flag to indicate that OpenGL ES is used on old Android devices
+    // instead of a modern lower latency AAudio.
+    void setAudioOutputUsesOpenSLES(bool usesOpenSLES);
+    bool audioOutputUsesOpenSLES();
     UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids);
     void releaseUsbDeviceHandle(const UsbDeviceHandle& handle);
 

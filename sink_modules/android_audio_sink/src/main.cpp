@@ -255,6 +255,7 @@ private:
         }
 
         audioStream = std::move(stream);
+        backend::setAudioOutputUsesOpenSLES(audioStream->getAudioApi() == oboe::AudioApi::OpenSLES);
 
 #if !ANDROID_AUDIO_SINK_USE_CALLBACK
         packer.start();
@@ -293,6 +294,9 @@ private:
 
         shuttingDown.store(true, std::memory_order_release);
         activeStream.store(nullptr, std::memory_order_release);
+        // Make it sticky, we don't expect the audio routing to change
+        // on a particular Android device.
+        //backend::setAudioOutputUsesOpenSLES(false);
 
         std::shared_ptr<oboe::AudioStream> stream = std::move(audioStream);
         stopAudioWorkerLocked();

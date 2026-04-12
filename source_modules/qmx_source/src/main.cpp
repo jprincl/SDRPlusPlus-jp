@@ -13,6 +13,7 @@
 #include <utils/optionlist.h>
 
 #ifdef __ANDROID__
+#include <android/api-level.h>
 #include <android_backend.h>
 #endif
 
@@ -444,6 +445,13 @@ private:
             SmGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), self->selectedAndroidDevice.c_str());
         else
             SmGui::Text(self->selectedAndroidDevice.c_str());
+
+        if (android_get_device_api_level() < __ANDROID_API_P__ || backend::audioOutputUsesOpenSLES()) {
+            SmGui::TextColored(
+                ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                "Disable 'USB audio routing' in Android developer options."
+            );
+        }
 #endif
 
         //self->sync.tick();

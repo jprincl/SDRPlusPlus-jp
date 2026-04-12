@@ -31,6 +31,7 @@ namespace backend {
     std::atomic<bool> sleepScreenDimmed{false};   // True during DIM and DARK phases (set via JNI)
     std::atomic<bool> sleepRenderPaused{false};   // True during DARK phase only (set via JNI)
     std::atomic<bool> sleepBlackFrameSent{false}; // Ensures one black frame before pausing
+    std::atomic<bool> audioOutputOpenSLES{false};
     std::atomic<int> usbHotplugGeneration{0};
     bool exited = false;
 
@@ -508,6 +509,14 @@ namespace backend {
 
     int getPreferredAudioInputDeviceId() {
         return getPreferredAudioDeviceId("getPreferredAudioInputDeviceId");
+    }
+
+    void setAudioOutputUsesOpenSLES(bool usesOpenSLES) {
+        audioOutputOpenSLES.store(usesOpenSLES, std::memory_order_relaxed);
+    }
+
+    bool audioOutputUsesOpenSLES() {
+        return audioOutputOpenSLES.load(std::memory_order_relaxed);
     }
 
     UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids) {
