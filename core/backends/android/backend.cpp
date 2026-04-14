@@ -39,73 +39,51 @@ namespace backend {
     int ShowSoftKeyboardInput();
     int PollUnicodeChars();
     static UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids);
-    static void releaseUsbDeviceHandle(const UsbDeviceHandle& handle);
+    static bool releaseUsbDeviceHandle(const UsbDeviceHandle& handle);
+    static bool callActivityVoidMethod(const char* name);
 
-    int startSleepTimer() {
-        if (!app || !app->activity || !app->activity->vm) return -1;
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
+    // Encapsulates the JNI per-call lifecycle: GetEnv → AttachCurrentThread →
+    // GetObjectClass(activity). Detaches automatically on destruction.
+    // Check valid() before use; env and clazz are accessible individually for
+    // callers that need to distinguish attach failure from class-lookup failure.
+    struct JniSession {
+        JNIEnv* env   = nullptr;
+        jclass  clazz = nullptr;
 
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR) return -1;
+        JniSession() {
+            if (!app || !app->activity || !app->activity->vm) return;
+            vm_ = app->activity->vm;
+            jint ret = vm_->GetEnv((void**)&env, JNI_VERSION_1_6);
+            if (ret == JNI_ERR) return;
+            ret = vm_->AttachCurrentThread(&env, nullptr);
+            if (ret != JNI_OK) { env = nullptr; return; }
+            attached_ = true;
+            clazz = env->GetObjectClass(app->activity->clazz);
+        }
+        ~JniSession() { if (attached_) vm_->DetachCurrentThread(); }
 
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK) return -2;
+        bool valid() const { return attached_ && clazz != nullptr; }
 
-        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (clazz == NULL) { java_vm->DetachCurrentThread(); return -3; }
+        JniSession(const JniSession&) = delete;
+        JniSession& operator=(const JniSession&) = delete;
 
-        jmethodID method = java_env->GetMethodID(clazz, "startSleepTimer", "()V");
-        if (method == NULL) { java_vm->DetachCurrentThread(); return -4; }
+    private:
+        JavaVM* vm_       = nullptr;
+        bool    attached_ = false;
+    };
 
-        java_env->CallVoidMethod(app->activity->clazz, method);
-        java_vm->DetachCurrentThread();
-        return 0;
+    static bool callActivityVoidMethod(const char* name) {
+        JniSession jni;
+        if (!jni.valid()) return false;
+        jmethodID method = jni.env->GetMethodID(jni.clazz, name, "()V");
+        if (!method) return false;
+        jni.env->CallVoidMethod(app->activity->clazz, method);
+        return true;
     }
 
-    int stopSleepTimer() {
-        if (!app || !app->activity || !app->activity->vm) return -1;
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
-
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR) return -1;
-
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK) return -2;
-
-        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (clazz == NULL) { java_vm->DetachCurrentThread(); return -3; }
-
-        jmethodID method = java_env->GetMethodID(clazz, "stopSleepTimer", "()V");
-        if (method == NULL) { java_vm->DetachCurrentThread(); return -4; }
-
-        java_env->CallVoidMethod(app->activity->clazz, method);
-        java_vm->DetachCurrentThread();
-        return 0;
-    }
-
-    int resetSleepToActive() {
-        if (!app || !app->activity || !app->activity->vm) return -1;
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
-
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR) return -1;
-
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK) return -2;
-
-        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (clazz == NULL) { java_vm->DetachCurrentThread(); return -3; }
-
-        jmethodID method = java_env->GetMethodID(clazz, "resetSleepToActive", "()V");
-        if (method == NULL) { java_vm->DetachCurrentThread(); return -4; }
-
-        java_env->CallVoidMethod(app->activity->clazz, method);
-        java_vm->DetachCurrentThread();
-        return 0;
-    }
+    int startSleepTimer()       { return callActivityVoidMethod("startSleepTimer")   ? 0 : -1; }
+    int stopSleepTimer()        { return callActivityVoidMethod("stopSleepTimer")     ? 0 : -1; }
+    int resetSleepToActive()    { return callActivityVoidMethod("resetSleepToActive") ? 0 : -1; }
 
     void doPartialInit() {
         std::string root = (std::string)core::args["root"];
@@ -367,73 +345,14 @@ namespace backend {
         return 0;
     }
 
-    int ShowSoftKeyboardInput() {
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
-
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR)
-            return -1;
-
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK)
-            return -2;
-
-        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (native_activity_clazz == NULL)
-            return -3;
-
-        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "showSoftInput", "()V");
-        if (method_id == NULL)
-            return -4;
-
-        java_env->CallVoidMethod(app->activity->clazz, method_id);
-
-        jni_return = java_vm->DetachCurrentThread();
-        if (jni_return != JNI_OK)
-            return -5;
-
-        return 0;
-    }
+    int ShowSoftKeyboardInput()  { return callActivityVoidMethod("showSoftInput")     ? 0 : -1; }
 
     static int getPreferredAudioDeviceId(const char* methodName) {
-        if (!app || !app->activity || !app->activity->vm) {
-            return 0;
-        }
-
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
-
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR) {
-            return 0;
-        }
-
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK) {
-            return 0;
-        }
-
-        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (native_activity_clazz == NULL) {
-            java_vm->DetachCurrentThread();
-            return 0;
-        }
-
-        jmethodID method = java_env->GetStaticMethodID(
-            native_activity_clazz,
-            methodName,
-            "(Landroid/content/Context;)I"
-        );
-        if (!method) {
-            java_vm->DetachCurrentThread();
-            return 0;
-        }
-
-        jobject context_obj = app->activity->clazz;
-        jint deviceId = java_env->CallStaticIntMethod(native_activity_clazz, method, context_obj);
-        java_vm->DetachCurrentThread();
-        return (int)deviceId;
+        JniSession jni;
+        if (!jni.valid()) return 0;
+        jmethodID method = jni.env->GetStaticMethodID(jni.clazz, methodName, "(Landroid/content/Context;)I");
+        if (!method) return 0;
+        return (int)jni.env->CallStaticIntMethod(jni.clazz, method, app->activity->clazz);
     }
 
     int getPreferredAudioOutputDeviceId() {
@@ -457,108 +376,80 @@ namespace backend {
     }
 
     bool UsbDeviceLease::acquire(const std::vector<DevVIDPID>& allowedVidPids) {
-        reset();
+        if (!reset())
+            return false;
         handle = getUsbDeviceHandle(allowedVidPids);
         return handle.valid();
     }
 
-    void UsbDeviceLease::reset() {
+    bool UsbDeviceLease::reset() {
         if (!handle.valid()) {
             handle = {};
-            return;
+            return true;
         }
-        releaseUsbDeviceHandle(handle);
+        if (!releaseUsbDeviceHandle(handle)) {
+            flog::error("UsbDeviceLease::reset(): Java-side USB release failed for fd={}; retaining handle to avoid orphan", handle.fd);
+            return false;
+        }
         handle = {};
+        return true;
     }
 
     static UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids) {
         UsbDeviceHandle handle;
 
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
+        JniSession jni;
+        if (!jni.valid()) return handle;
 
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR)
-            return handle;
-
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK)
-            return handle;
-
-        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (native_activity_clazz == NULL)
-            return handle;
-
-        jmethodID method = java_env->GetStaticMethodID(
-            native_activity_clazz,
+        jmethodID method = jni.env->GetStaticMethodID(
+            jni.clazz,
             "getOpenUsbDeviceHandleByVidPid",
             "(Landroid/content/Context;II)Ljava/lang/String;"
         );
-        if (!method)
-            return handle;
+        if (!method) return handle;
 
-        jobject context_obj = app->activity->clazz;
         for (const auto& vp : allowedVidPids) {
-            jstring descriptor = (jstring)java_env->CallStaticObjectMethod(
-                native_activity_clazz,
-                method,
-                context_obj,
-                (jint)vp.vid,
-                (jint)vp.pid
+            jstring descriptor = (jstring)jni.env->CallStaticObjectMethod(
+                jni.clazz, method, app->activity->clazz, (jint)vp.vid, (jint)vp.pid
             );
-            if (!descriptor)
-                continue;
+            if (!descriptor) continue;
 
-            const char* utf = java_env->GetStringUTFChars(descriptor, NULL);
+            const char* utf = jni.env->GetStringUTFChars(descriptor, NULL);
             std::string value = utf ? utf : "";
-            java_env->ReleaseStringUTFChars(descriptor, utf);
-            java_env->DeleteLocalRef(descriptor);
+            jni.env->ReleaseStringUTFChars(descriptor, utf);
+            jni.env->DeleteLocalRef(descriptor);
 
             auto separator = value.find('|');
-            if (separator == std::string::npos)
-                continue;
+            if (separator == std::string::npos) continue;
 
-            handle.fd = std::stoi(value.substr(0, separator));
+            handle.fd   = std::stoi(value.substr(0, separator));
             handle.path = value.substr(separator + 1);
-            handle.vid = vp.vid;
-            handle.pid = vp.pid;
-            java_vm->DetachCurrentThread();
+            handle.vid  = vp.vid;
+            handle.pid  = vp.pid;
             return handle;
         }
 
-        java_vm->DetachCurrentThread();
         return handle;
     }
 
-    static void releaseUsbDeviceHandle(const UsbDeviceHandle& handle) {
-        if (handle.fd < 0)
-            return;
+    static bool releaseUsbDeviceHandle(const UsbDeviceHandle& handle) {
+        if (handle.fd < 0) return true;
 
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
+        JniSession jni;
+        if (!jni.env) return false; // attach failed; nothing to log
+        if (!jni.clazz) {
+            flog::error("releaseUsbDeviceHandle(): GetObjectClass() failed for fd={}", handle.fd);
+            return false;
+        }
 
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR)
-            return;
+        jmethodID method = jni.env->GetStaticMethodID(jni.clazz, "releaseOpenUsbDeviceHandle", "(I)V");
+        if (!method) {
+            flog::error("releaseUsbDeviceHandle(): GetStaticMethodID() failed for fd={}", handle.fd);
+            return false;
+        }
 
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK)
-            return;
-
-        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (native_activity_clazz == NULL)
-            return;
-
-        jmethodID method = java_env->GetStaticMethodID(
-            native_activity_clazz,
-            "releaseOpenUsbDeviceHandle",
-            "(I)V"
-        );
-        if (!method)
-            return;
-
-        java_env->CallStaticVoidMethod(native_activity_clazz, method, (jint)handle.fd);
-        java_vm->DetachCurrentThread();
+        jni.env->CallStaticVoidMethod(jni.clazz, method, (jint)handle.fd);
+        return true;
     }
 
     bool hasUsbDeviceAvailable(const std::vector<DevVIDPID>& allowedVidPids) {
@@ -570,69 +461,35 @@ namespace backend {
     // Therefore, we implement the processing of KeyEvents in MainActivity.kt and poll
     // the resulting Unicode characters here via JNI and send them to Dear ImGui.
     int PollUnicodeChars() {
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
+        JniSession jni;
+        if (!jni.valid()) return -1;
 
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR)
-            return -1;
-
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK)
-            return -2;
-
-        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (native_activity_clazz == NULL)
-            return -3;
-
-        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "pollUnicodeChar", "()I");
-        if (method_id == NULL)
-            return -4;
+        jmethodID method_id = jni.env->GetMethodID(jni.clazz, "pollUnicodeChar", "()I");
+        if (!method_id) return -2;
 
         // Send the actual characters to Dear ImGui
         ImGuiIO& io = ImGui::GetIO();
         jint unicode_character;
-        while ((unicode_character = java_env->CallIntMethod(app->activity->clazz, method_id)) != 0)
+        while ((unicode_character = jni.env->CallIntMethod(app->activity->clazz, method_id)) != 0)
             io.AddInputCharacter(unicode_character);
-
-        jni_return = java_vm->DetachCurrentThread();
-        if (jni_return != JNI_OK)
-            return -5;
 
         return 0;
     }
 
     std::string getAppFilesDir() {
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
+        JniSession jni;
+        if (!jni.env)   throw std::runtime_error("Could not attach to JNI thread");
+        if (!jni.clazz) throw std::runtime_error("Could not get MainActivity class");
 
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR)
-            throw std::runtime_error("Could not get JNI environment");
+        jmethodID method_id = jni.env->GetMethodID(jni.clazz, "getAppDir", "()Ljava/lang/String;");
+        if (!method_id) throw std::runtime_error("Could not get getAppDir method ID");
 
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK)
-            throw std::runtime_error("Could not attach to thread");
+        jstring jstr = (jstring)jni.env->CallObjectMethod(app->activity->clazz, method_id);
 
-        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (native_activity_clazz == NULL)
-            throw std::runtime_error("Could not get MainActivity class");
-
-        jmethodID method_id = java_env->GetMethodID(native_activity_clazz, "getAppDir", "()Ljava/lang/String;");
-        if (method_id == NULL)
-            throw std::runtime_error("Could not get method ID");
-
-        jstring jstr = (jstring)java_env->CallObjectMethod(app->activity->clazz, method_id);
-
-        const char* _str = java_env->GetStringUTFChars(jstr, NULL);
+        const char* _str = jni.env->GetStringUTFChars(jstr, NULL);
         std::string str(_str);
-        java_env->ReleaseStringUTFChars(jstr, _str);
+        jni.env->ReleaseStringUTFChars(jstr, _str);
 
-        jni_return = java_vm->DetachCurrentThread();
-        if (jni_return != JNI_OK)
-            throw std::runtime_error("Could not detach from thread");
-
-        
         return str;
     }
 

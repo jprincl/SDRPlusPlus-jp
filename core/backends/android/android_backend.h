@@ -46,7 +46,9 @@ namespace backend {
         }
 
         bool acquire(const std::vector<DevVIDPID>& allowedVidPids);
-        void reset();
+        // Returns true if the USB handle was released successfully (or was already invalid).
+        // Returns false if the Java-side release failed; the handle is retained in that case.
+        bool reset();
 
         bool valid() const { return handle.valid(); }
         int fd() const { return handle.fd; }
