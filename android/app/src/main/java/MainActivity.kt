@@ -643,6 +643,22 @@ class MainActivity : NativeActivity() {
     }
 
     /**
+     * Configure the keep-alive mode and dim/blank thresholds in one call.
+     * mode: 0=Disabled, 1=KeepAlive, 2=DimScreen, 3=DimAndBlank.
+     * dimAfterSec / darkAfterSec: total seconds from timer start; darkAfterSec > dimAfterSec.
+     * If the SDR source is running the change takes effect immediately.
+     * Callable from native code via JNI.
+     */
+    fun setSleepTimerConfig(mode: Int, dimAfterSec: Int, darkAfterSec: Int) {
+        val newMode = SleepTimerManager.Mode.entries.getOrElse(mode) { SleepTimerManager.Mode.DIM_AND_BLANK }
+        runOnUiThread {
+            sleepTimer.dimAfterMs  = dimAfterSec.toLong()  * 1000L
+            sleepTimer.darkAfterMs = darkAfterSec.toLong() * 1000L
+            sleepTimer.setMode(newMode)
+        }
+    }
+
+    /**
      * Reset the sleep timer to Active phase.
      * Called from native code on touch-to-wake or phone resume.
      */

@@ -5,12 +5,14 @@ import android.os.Looper
 import android.util.Log
 
 /**
- * Manages a progressive sleep timer with three phases:
+ * Manages screen keep-alive behaviour in four modes:
  *
- *   Active  (0–3 min)  : Screen at system default brightness, rendering active.
- *   Dim     (3–8 min)  : Screen dimmed to near-minimum, rendering active.
- *   Dark    (8–60 min) : Screen brightness 0 (appears off), rendering paused.
- *   End     (60 min)   : FLAG_KEEP_SCREEN_ON cleared; system suspends normally.
+ *   DISABLED      : No override; system screen-timeout applies normally.
+ *   KEEP_ALIVE    : FLAG_KEEP_SCREEN_ON held; screen stays on at full brightness.
+ *   DIM_SCREEN    : Keep-alive + dims after [dimAfterMs]; touch restores brightness.
+ *   DIM_AND_BLANK : Keep-alive + dims after [dimAfterMs] + blanks after [darkAfterMs];
+ *                   touch restores brightness. After a further 52 min in the dark the
+ *                   keep-screen-on flag is released and the system suspends normally.
  *
  * Touch-to-wake: any touch during Dim or Dark resets the timer to Active.
  */
@@ -19,16 +21,38 @@ class SleepTimerManager(private val activity: MainActivity) {
     companion object {
         private const val TAG = "SleepTimer"
 
-        // Phase durations in milliseconds
-        private const val ACTIVE_DURATION_MS  =  3L * 60 * 1000   //  3 minutes
-        private const val DIM_DURATION_MS     =  5L * 60 * 1000   //  5 minutes (3+5 = 8 min total)
-        private const val DARK_DURATION_MS    = 52L * 60 * 1000   // 52 minutes (8+52 = 60 min total)
+        // How long the screen stays dark (DIM_AND_BLANK only) before keep-screen-on is released.
+        private const val DARK_DURATION_MS = 52L * 60 * 1000   // 52 min → total 60 min max
     }
 
+    // ── Configurable thresholds (total milliseconds from timer start) ────────────
+    // Defaults: dim after 3 min, screen off after 8 min.
+    var dimAfterMs:  Long = 3L * 60 * 1000
+    var darkAfterMs: Long = 8L * 60 * 1000
+
+    // ── Mode ─────────────────────────────────────────────────────────────────────
+    enum class Mode { DISABLED, KEEP_ALIVE, DIM_SCREEN, DIM_AND_BLANK }
+
+    var mode: Mode = Mode.DIM_AND_BLANK
+
+    /**
+     * Change the operating mode.  If the SDR source is currently running the
+     * timer is restarted immediately so the new behaviour takes effect at once.
+     */
+    fun setMode(newMode: Mode) {
+        Log.i(TAG, "Mode changed: $mode → $newMode")
+        mode = newMode
+        if (startRequested) start()
+    }
+
+    // ── Phase ─────────────────────────────────────────────────────────────────────
     enum class Phase { IDLE, ACTIVE, DIM, DARK }
 
     var currentPhase: Phase = Phase.IDLE
         private set
+
+    // True while the SDR source is running (even if mode == DISABLED and phase stays IDLE).
+    private var startRequested = false
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -42,6 +66,7 @@ class SleepTimerManager(private val activity: MainActivity) {
     private val enterDarkRunnable = Runnable {
         Log.i(TAG, "Entering DARK phase")
         currentPhase = Phase.DARK
+        activity.setSleepScreenDimmed(true)   // explicit — don't rely on DIM having set it
         activity.applySleepBrightness(0f)
         activity.setSleepRenderPaused(true)
         activity.setLowFrameRate()
@@ -58,35 +83,57 @@ class SleepTimerManager(private val activity: MainActivity) {
     }
 
     /**
-     * Start (or restart) the sleep timer from the Active phase.
+     * Start (or restart) the keep-alive logic from the Active phase.
+     * Always restores full brightness and clears any dimmed/paused state first,
+     * so it is safe to call when switching modes mid-session.
      */
     fun start() {
-        Log.i(TAG, "Starting sleep timer")
+        Log.i(TAG, "Starting keep-alive (mode=$mode)")
+        startRequested = true
         cancelAllCallbacks()
 
-        currentPhase = Phase.ACTIVE
-        activity.applyKeepScreenOn()
-        activity.applySleepBrightness(-1f)          // system default
+        // Unconditionally restore state so switching mode from DARK/DIM is clean.
+        activity.applySleepBrightness(-1f)
         activity.setSleepScreenDimmed(false)
         activity.setSleepRenderPaused(false)
         activity.restoreFrameRate()
 
-        handler.postDelayed(enterDimRunnable,  ACTIVE_DURATION_MS)
-        handler.postDelayed(enterDarkRunnable, ACTIVE_DURATION_MS + DIM_DURATION_MS)
-        handler.postDelayed(enterEndRunnable,  ACTIVE_DURATION_MS + DIM_DURATION_MS + DARK_DURATION_MS)
+        if (mode == Mode.DISABLED) {
+            currentPhase = Phase.IDLE
+            activity.clearKeepScreenOn()
+            return
+        }
+
+        currentPhase = Phase.ACTIVE
+        activity.applyKeepScreenOn()
+
+        when (mode) {
+            Mode.KEEP_ALIVE -> { /* screen stays on at full brightness indefinitely */ }
+            Mode.DIM_SCREEN -> {
+                handler.postDelayed(enterDimRunnable, dimAfterMs)
+            }
+            Mode.DIM_AND_BLANK -> {
+                handler.postDelayed(enterDimRunnable,  dimAfterMs)
+                handler.postDelayed(enterDarkRunnable, darkAfterMs)
+                handler.postDelayed(enterEndRunnable,  darkAfterMs + DARK_DURATION_MS)
+            }
+            else -> {}
+        }
     }
 
     /**
-     * Stop the sleep timer and restore everything to normal.
+     * Stop the keep-alive logic and restore everything to normal.
      */
     fun stop() {
-        Log.i(TAG, "Stopping sleep timer")
+        Log.i(TAG, "Stopping keep-alive")
+        startRequested = false
         cancelAllCallbacks()
         currentPhase = Phase.IDLE
         activity.applySleepBrightness(-1f)
         activity.clearKeepScreenOn()
         activity.setSleepScreenDimmed(false)
         activity.setSleepRenderPaused(false)
+        activity.restoreFrameRate()
     }
 
     /**
@@ -94,9 +141,9 @@ class SleepTimerManager(private val activity: MainActivity) {
      * Resets the timer back to the Active phase.
      */
     fun resetToActive() {
-        if (currentPhase == Phase.DIM || currentPhase == Phase.DARK || currentPhase == Phase.ACTIVE) {
+        if (currentPhase == Phase.DIM || currentPhase == Phase.DARK) {
             Log.i(TAG, "Resetting from ${currentPhase} phase to ACTIVE")
-            start()   // restart from scratch
+            start()
         }
     }
 

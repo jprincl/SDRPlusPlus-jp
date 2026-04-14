@@ -151,11 +151,9 @@ private:
         selectedAndroidDevice.clear();
         androidDevId = 0;
         androidUsbHandle.reset();
-        androidDevHasDevice = false;
         if (!backend::hasUsbDeviceAvailable(backend::QMX_VIDPIDS)) {
             return;
         }
-        androidDevHasDevice = true;
         androidDevices.push_back("QMX USB");
         androidDeviceListTxt += androidDevices.back();
         androidDeviceListTxt += '\0';
@@ -306,8 +304,6 @@ private:
             return;
         }
         options.androidUsb.fd = self->androidUsbHandle.fd();
-        options.androidUsb.vid = self->androidUsbHandle.vid();
-        options.androidUsb.pid = self->androidUsbHandle.pid();
 #endif
 
         self->sync.start(self->freq, self->sync.getSyncVfo());
@@ -611,7 +607,6 @@ private:
     std::string selectedAndroidDevice;
     int androidDevId = 0;
     backend::UsbDeviceLease androidUsbHandle;
-    bool androidDevHasDevice = false;
     int lastAndroidUsbHotplugGeneration = 0;
 #endif
 };

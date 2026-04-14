@@ -24,7 +24,6 @@ namespace backend {
     EGLDisplay _EglDisplay = EGL_NO_DISPLAY;
     EGLSurface _EglSurface = EGL_NO_SURFACE;
     EGLContext _EglContext = EGL_NO_CONTEXT;
-    bool _Initialized = false;
     char _LogTag[] = "SDR++";
     bool initialized = false;
     bool pauseRendering = false;
@@ -54,15 +53,17 @@ namespace backend {
             if (!app || !app->activity || !app->activity->vm) return;
             vm_ = app->activity->vm;
             jint ret = vm_->GetEnv((void**)&env, JNI_VERSION_1_6);
-            if (ret == JNI_ERR) return;
-            ret = vm_->AttachCurrentThread(&env, nullptr);
-            if (ret != JNI_OK) { env = nullptr; return; }
-            attached_ = true;
+            if (ret == JNI_EDETACHED) {
+                if (vm_->AttachCurrentThread(&env, nullptr) != JNI_OK) { env = nullptr; return; }
+                attached_ = true;  // only detach in destructor if we did the attach
+            } else if (ret != JNI_OK) {
+                return;  // JNI_EVERSION or other error
+            }
             clazz = env->GetObjectClass(app->activity->clazz);
         }
         ~JniSession() { if (attached_) vm_->DetachCurrentThread(); }
 
-        bool valid() const { return attached_ && clazz != nullptr; }
+        bool valid() const { return env != nullptr && clazz != nullptr; }
 
         JniSession(const JniSession&) = delete;
         JniSession& operator=(const JniSession&) = delete;
@@ -84,6 +85,14 @@ namespace backend {
     int startSleepTimer()       { return callActivityVoidMethod("startSleepTimer")   ? 0 : -1; }
     int stopSleepTimer()        { return callActivityVoidMethod("stopSleepTimer")     ? 0 : -1; }
     int resetSleepToActive()    { return callActivityVoidMethod("resetSleepToActive") ? 0 : -1; }
+
+    void setSleepTimerConfig(int mode, int dimAfterSec, int darkAfterSec) {
+        JniSession jni;
+        if (!jni.valid()) return;
+        jmethodID method = jni.env->GetMethodID(jni.clazz, "setSleepTimerConfig", "(III)V");
+        if (!method) return;
+        jni.env->CallVoidMethod(app->activity->clazz, method, (jint)mode, (jint)dimAfterSec, (jint)darkAfterSec);
+    }
 
     void doPartialInit() {
         std::string root = (std::string)core::args["root"];
@@ -121,8 +130,8 @@ namespace backend {
             break;
         case APP_CMD_RESUME:
             flog::warn("APP_CMD_RESUME");
-            // If the user woke the phone via power button / fingerprint,
-            // reset the sleep timer back to the Active phase.
+            // Fires on any activity resume (power-button wake, notification overlay dismiss, etc.).
+            // Reset the sleep timer so the screen is restored to full brightness.
             if (sleepScreenDimmed) {
                 resetSleepToActive();
             }
@@ -130,18 +139,30 @@ namespace backend {
         }
     }
 
+    // Set when a wake-tap ACTION_DOWN is consumed; keeps the rest of that gesture consumed
+    // even after sleepScreenDimmed is cleared by the async resetSleepToActive() call.
+    // Only accessed from the input-handler thread — no need for atomic.
+    static bool consumingWakeGesture = false;
+
     int32_t handleInputEvent(struct android_app* app, AInputEvent* inputEvent) {
-        // If the sleep timer has dimmed/darkened the screen, intercept touch to wake
-        if (sleepScreenDimmed) {
+        // If the sleep timer has dimmed/darkened the screen, intercept touch to wake.
+        // Also keep consuming until ACTION_UP once we started swallowing a gesture,
+        // because sleepScreenDimmed may be cleared asynchronously before ACTION_UP arrives.
+        if (sleepScreenDimmed || consumingWakeGesture) {
             int32_t type = AInputEvent_getType(inputEvent);
             if (type == AINPUT_EVENT_TYPE_MOTION) {
                 int32_t action = AMotionEvent_getAction(inputEvent) & AMOTION_EVENT_ACTION_MASK;
-                if (action == AMOTION_EVENT_ACTION_DOWN) {
+                if (action == AMOTION_EVENT_ACTION_DOWN && sleepScreenDimmed) {
                     flog::info("Sleep: touch detected, resetting to active");
+                    consumingWakeGesture = true;
                     resetSleepToActive();
                 }
+                else if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_CANCEL) {
+                    consumingWakeGesture = false;
+                }
+                return 1;  // consume motion events while screen is dimmed or dark
             }
-            return 1;  // consume all input while screen is dimmed or dark
+            return 0;  // let non-motion events (volume, back, etc.) pass to the default handler
         }
         return ImGui_ImplAndroid_HandleInputEvent(inputEvent);
     }

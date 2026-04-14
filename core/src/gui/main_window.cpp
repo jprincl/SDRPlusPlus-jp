@@ -20,6 +20,7 @@
 #include <gui/menus/vfo_color.h>
 #include <gui/menus/module_manager.h>
 #include <gui/menus/theme.h>
+#include <gui/menus/android.h>
 #include <gui/dialogs/credits.h>
 #include <filesystem>
 #include <signal_path/source.h>
@@ -77,6 +78,9 @@ void MainWindow::init() {
     gui::menu.registerEntry("Theme", thememenu::draw, NULL);
     gui::menu.registerEntry("VFO Color", vfo_color_menu::draw, NULL);
     gui::menu.registerEntry("Module Manager", module_manager_menu::draw, NULL);
+#ifdef __ANDROID__
+    gui::menu.registerEntry("System", androidmenu::draw, NULL);
+#endif
 
     gui::freqSelect.init();
 
@@ -169,6 +173,9 @@ void MainWindow::init() {
     displaymenu::init();
     vfo_color_menu::init();
     module_manager_menu::init();
+#ifdef __ANDROID__
+    androidmenu::init();
+#endif
 
     // TODO for 0.2.5
     // Fix gain not updated on startup, soapysdr

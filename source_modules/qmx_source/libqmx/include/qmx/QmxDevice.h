@@ -32,9 +32,6 @@ namespace qmx {
 
     struct AndroidUsbDeviceInfo {
         int fd = -1;
-        int vid = -1;
-        int pid = -1;
-        std::string path;
 
         bool valid() const { return fd >= 0; }
     };

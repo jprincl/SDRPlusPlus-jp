@@ -78,4 +78,7 @@ namespace backend {
     int startSleepTimer();
     int stopSleepTimer();
     int resetSleepToActive();
+    // mode: 0=Disabled, 1=KeepAlive, 2=DimScreen, 3=DimAndBlank
+    // dimAfterSec / darkAfterSec: total seconds from timer start; darkAfterSec > dimAfterSec.
+    void setSleepTimerConfig(int mode, int dimAfterSec, int darkAfterSec);
 }
