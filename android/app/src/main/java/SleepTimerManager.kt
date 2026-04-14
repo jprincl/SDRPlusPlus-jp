@@ -22,7 +22,7 @@ class SleepTimerManager(private val activity: MainActivity) {
         private const val TAG = "SleepTimer"
 
         // How long the screen stays dark (DIM_AND_BLANK only) before keep-screen-on is released.
-        private const val DARK_DURATION_MS = 52L * 60 * 1000   // 52 min → total 60 min max
+        private const val DARK_DURATION_MS = 60L * 60 * 1000  // 60 min max without user interaction before system can suspend
     }
 
     // ── Configurable thresholds (total milliseconds from timer start) ────────────
@@ -118,7 +118,7 @@ class SleepTimerManager(private val activity: MainActivity) {
             Mode.DIM_AND_BLANK -> {
                 handler.postDelayed(enterDimRunnable,  dimAfterMs)
                 handler.postDelayed(enterDarkRunnable, darkAfterMs)
-                handler.postDelayed(enterEndRunnable,  darkAfterMs + DARK_DURATION_MS)
+                handler.postDelayed(enterEndRunnable,  DARK_DURATION_MS)
             }
             else -> {}
         }
@@ -172,13 +172,33 @@ class SleepTimerManager(private val activity: MainActivity) {
     }
 
     /**
-     * Called on touch or phone wake during Dim or Dark phase.
-     * Resets the timer back to the Active phase.
+     * Called on touch during any running phase.
+     *
+     * - ACTIVE  : restart the dim/dark countdown without touching brightness or the wake lock.
+     * - DIM/DARK: full wake — restore brightness, cancel pending callbacks, restart from Active.
      */
     fun resetToActive() {
-        if (currentPhase == Phase.DIM || currentPhase == Phase.DARK) {
-            Log.i(TAG, "Resetting from ${currentPhase} phase to ACTIVE")
-            start()
+        when (currentPhase) {
+            Phase.DIM, Phase.DARK -> {
+                Log.i(TAG, "Resetting from $currentPhase phase to ACTIVE")
+                start()
+            }
+            Phase.ACTIVE -> {
+                // Just reschedule the pending runnables — brightness and wake lock are already correct.
+                cancelAllCallbacks()
+                when (mode) {
+                    Mode.DIM_SCREEN -> {
+                        handler.postDelayed(enterDimRunnable, dimAfterMs)
+                    }
+                    Mode.DIM_AND_BLANK -> {
+                        handler.postDelayed(enterDimRunnable,  dimAfterMs)
+                        handler.postDelayed(enterDarkRunnable, darkAfterMs)
+                        handler.postDelayed(enterEndRunnable,  darkAfterMs + DARK_DURATION_MS)
+                    }
+                    else -> {}
+                }
+            }
+            else -> {}
         }
     }
 

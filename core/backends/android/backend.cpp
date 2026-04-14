@@ -12,6 +12,7 @@
 #include <GLES3/gl3.h>
 #include <stdint.h>
 #include <atomic>
+#include <chrono>
 #include <gui/icons.h>
 #include <gui/style.h>
 #include <gui/menus/theme.h>
@@ -35,6 +36,9 @@ namespace backend {
     bool exited = false;
     static bool wasPlayingBeforeSuspend = false;
     static bool restartOnResume = true;
+    // Sleep-reset heartbeat state — accessed only from the app thread (same thread as render loop).
+    static bool sleepResetMotionPending = false;
+    static std::chrono::steady_clock::time_point sleepResetLastCall{};
 
     // Forward declarations
     int ShowSoftKeyboardInput();
@@ -86,11 +90,20 @@ namespace backend {
 
     void setRestartOnResume(bool value) { restartOnResume = value; }
 
-    int startSleepTimer()       { return callActivityVoidMethod("startSleepTimer")    ? 0 : -1; }
+    int startSleepTimer() {
+        sleepResetLastCall = std::chrono::steady_clock::now();
+        return callActivityVoidMethod("startSleepTimer") ? 0 : -1;
+    }
     int stopSleepTimer()        { return callActivityVoidMethod("stopSleepTimer")     ? 0 : -1; }
     int suspendSleepTimer()     { return callActivityVoidMethod("suspendSleepTimer")  ? 0 : -1; }
-    int resumeSleepTimer()      { return callActivityVoidMethod("resumeSleepTimer")   ? 0 : -1; }
-    int resetSleepToActive()    { return callActivityVoidMethod("resetSleepToActive") ? 0 : -1; }
+    int resumeSleepTimer() {
+        sleepResetLastCall = std::chrono::steady_clock::now();
+        return callActivityVoidMethod("resumeSleepTimer") ? 0 : -1;
+    }
+    int resetSleepToActive() {
+        sleepResetLastCall = std::chrono::steady_clock::now();
+        return callActivityVoidMethod("resetSleepToActive") ? 0 : -1;
+    }
 
     void setSleepTimerConfig(int mode, int dimAfterSec, int darkAfterSec) {
         JniSession jni;
@@ -115,14 +128,16 @@ namespace backend {
         case APP_CMD_SAVE_STATE:
             flog::warn("APP_CMD_SAVE_STATE");
             break;
-        case APP_CMD_INIT_WINDOW:
-            flog::warn("APP_CMD_INIT_WINDOW");
-            if (pauseRendering && !exited) {
-                doPartialInit();
-                pauseRendering = false;
+        case APP_CMD_PAUSE:
+            flog::warn("APP_CMD_PAUSE");
+            wasPlayingBeforeSuspend = gui::mainWindow.sdrIsRunning();
+            gui::mainWindow.setPlayState(false);
+            break;
+        case APP_CMD_RESUME:
+            flog::warn("APP_CMD_RESUME");
+            if (sleepScreenDimmed) {
+                resetSleepToActive();
             }
-            exited = false;
-            resumeSleepTimer();
             {
                 bool shouldRestart = wasPlayingBeforeSuspend && restartOnResume;
                 wasPlayingBeforeSuspend = false;
@@ -131,10 +146,17 @@ namespace backend {
                 }
             }
             break;
+        case APP_CMD_INIT_WINDOW:
+            flog::warn("APP_CMD_INIT_WINDOW");
+            if (pauseRendering && !exited) {
+                doPartialInit();
+                pauseRendering = false;
+            }
+            exited = false;
+            resumeSleepTimer();
+            break;
         case APP_CMD_TERM_WINDOW:
             flog::warn("APP_CMD_TERM_WINDOW");
-            wasPlayingBeforeSuspend = gui::mainWindow.sdrIsRunning();
-            gui::mainWindow.setPlayState(false);
             suspendSleepTimer();
             pauseRendering = true;
             backend::end();
@@ -144,9 +166,6 @@ namespace backend {
             break;
         case APP_CMD_LOST_FOCUS:
             flog::warn("APP_CMD_LOST_FOCUS");
-            break;
-        case APP_CMD_RESUME:
-            flog::warn("APP_CMD_RESUME");
             break;
         }
     }
@@ -160,9 +179,9 @@ namespace backend {
         // If the sleep timer has dimmed/darkened the screen, intercept touch to wake.
         // Also keep consuming until ACTION_UP once we started swallowing a gesture,
         // because sleepScreenDimmed may be cleared asynchronously before ACTION_UP arrives.
+        bool motion = AInputEvent_getType(inputEvent) == AINPUT_EVENT_TYPE_MOTION;
         if (sleepScreenDimmed || consumingWakeGesture) {
-            int32_t type = AInputEvent_getType(inputEvent);
-            if (type == AINPUT_EVENT_TYPE_MOTION) {
+            if (motion) {
                 int32_t action = AMotionEvent_getAction(inputEvent) & AMOTION_EVENT_ACTION_MASK;
                 if (action == AMOTION_EVENT_ACTION_DOWN && sleepScreenDimmed) {
                     flog::info("Sleep: touch detected, resetting to active");
@@ -176,6 +195,15 @@ namespace backend {
             }
             return 0;  // let non-motion events (volume, back, etc.) pass to the default handler
         }
+
+        // Flag any motion event so the render-loop timer can issue the JNI call.
+        // The actual resetSleepToActive() is throttled to once per second from renderLoop(),
+        // which gives trailing-edge semantics: the reset fires after the last event of a
+        // burst, not just on the first one.
+        if (motion) {
+            sleepResetMotionPending = true;
+        }
+
         return ImGui_ImplAndroid_HandleInputEvent(inputEvent);
     }
 
@@ -311,6 +339,18 @@ namespace backend {
 
             if (!pauseRendering && !sleepRenderPaused) {
                 sleepBlackFrameSent = false;
+
+                // Keep the sleep-dimming timer alive during user interaction.
+                // sleepResetMotionPending is set by handleInputEvent on any motion event.
+                // The flag is cleared here so the JNI call fires on the trailing edge of
+                // each gesture burst — even if the burst lasted less than one second.
+                if (sleepResetMotionPending && !sleepScreenDimmed) {
+                    auto now = std::chrono::steady_clock::now();
+                    if (now - sleepResetLastCall >= std::chrono::seconds(1)) {
+                        sleepResetMotionPending = false;
+                        resetSleepToActive();
+                    }
+                }
 
                 // Initiate a new frame
                 ImGuiIO& io = ImGui::GetIO();
