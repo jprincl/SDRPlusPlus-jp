@@ -33,6 +33,8 @@ namespace backend {
     std::atomic<bool> audioOutputOpenSLES{false};
     std::atomic<int> usbHotplugGeneration{0};
     bool exited = false;
+    static bool wasPlayingBeforeSuspend = false;
+    static bool restartOnResume = true;
 
     // Forward declarations
     int ShowSoftKeyboardInput();
@@ -82,8 +84,12 @@ namespace backend {
         return true;
     }
 
-    int startSleepTimer()       { return callActivityVoidMethod("startSleepTimer")   ? 0 : -1; }
+    void setRestartOnResume(bool value) { restartOnResume = value; }
+
+    int startSleepTimer()       { return callActivityVoidMethod("startSleepTimer")    ? 0 : -1; }
     int stopSleepTimer()        { return callActivityVoidMethod("stopSleepTimer")     ? 0 : -1; }
+    int suspendSleepTimer()     { return callActivityVoidMethod("suspendSleepTimer")  ? 0 : -1; }
+    int resumeSleepTimer()      { return callActivityVoidMethod("resumeSleepTimer")   ? 0 : -1; }
     int resetSleepToActive()    { return callActivityVoidMethod("resetSleepToActive") ? 0 : -1; }
 
     void setSleepTimerConfig(int mode, int dimAfterSec, int darkAfterSec) {
@@ -116,9 +122,20 @@ namespace backend {
                 pauseRendering = false;
             }
             exited = false;
+            resumeSleepTimer();
+            {
+                bool shouldRestart = wasPlayingBeforeSuspend && restartOnResume;
+                wasPlayingBeforeSuspend = false;
+                if (shouldRestart) {
+                    gui::mainWindow.setPlayState(true);
+                }
+            }
             break;
         case APP_CMD_TERM_WINDOW:
             flog::warn("APP_CMD_TERM_WINDOW");
+            wasPlayingBeforeSuspend = gui::mainWindow.sdrIsRunning();
+            gui::mainWindow.setPlayState(false);
+            suspendSleepTimer();
             pauseRendering = true;
             backend::end();
             break;
@@ -130,11 +147,6 @@ namespace backend {
             break;
         case APP_CMD_RESUME:
             flog::warn("APP_CMD_RESUME");
-            // Fires on any activity resume (power-button wake, notification overlay dismiss, etc.).
-            // Reset the sleep timer so the screen is restored to full brightness.
-            if (sleepScreenDimmed) {
-                resetSleepToActive();
-            }
             break;
         }
     }

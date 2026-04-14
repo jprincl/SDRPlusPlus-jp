@@ -522,6 +522,48 @@ class MainActivity : NativeActivity() {
         runOnUiThread { sleepTimer.stop() }
     }
 
+    /**
+     * Called when the app window is destroyed (app goes to background).
+     * Releases the wake lock immediately; the process will be suspended by Android anyway.
+     * Callable from native code via JNI.
+     */
+    fun suspendSleepTimer() {
+        runOnUiThread { sleepTimer.suspend() }
+    }
+
+    /**
+     * Called when the app window is recreated (app returns to foreground).
+     * Restarts the sleep timer from Active phase if the SDR source was running.
+     * Callable from native code via JNI.
+     */
+    fun resumeSleepTimer() {
+        runOnUiThread { sleepTimer.resume() }
+    }
+
+    /**
+     * Configure the keep-alive mode and dim/blank thresholds in one call.
+     * mode: 0=Disabled, 1=KeepAlive, 2=DimScreen, 3=DimAndBlank.
+     * dimAfterSec / darkAfterSec: total seconds from timer start; darkAfterSec > dimAfterSec.
+     * If the SDR source is running the change takes effect immediately.
+     * Callable from native code via JNI.
+     */
+    fun setSleepTimerConfig(mode: Int, dimAfterSec: Int, darkAfterSec: Int) {
+        val newMode = SleepTimerManager.Mode.entries.getOrElse(mode) { SleepTimerManager.Mode.DIM_AND_BLANK }
+        runOnUiThread {
+            sleepTimer.dimAfterMs  = dimAfterSec.toLong()  * 1000L
+            sleepTimer.darkAfterMs = darkAfterSec.toLong() * 1000L
+            sleepTimer.setMode(newMode)
+        }
+    }
+
+    /**
+     * Reset the sleep timer to Active phase.
+     * Called from native code on touch-to-wake or phone resume.
+     */
+    fun resetSleepToActive() {
+        runOnUiThread { sleepTimer.resetToActive() }
+    }
+
     /** Set screen brightness. -1f = system default, 0f = off, 0.01f = dim. */
     fun applySleepBrightness(brightness: Float) {
         runOnUiThread {
@@ -640,30 +682,6 @@ class MainActivity : NativeActivity() {
                 }
             }
         }
-    }
-
-    /**
-     * Configure the keep-alive mode and dim/blank thresholds in one call.
-     * mode: 0=Disabled, 1=KeepAlive, 2=DimScreen, 3=DimAndBlank.
-     * dimAfterSec / darkAfterSec: total seconds from timer start; darkAfterSec > dimAfterSec.
-     * If the SDR source is running the change takes effect immediately.
-     * Callable from native code via JNI.
-     */
-    fun setSleepTimerConfig(mode: Int, dimAfterSec: Int, darkAfterSec: Int) {
-        val newMode = SleepTimerManager.Mode.entries.getOrElse(mode) { SleepTimerManager.Mode.DIM_AND_BLANK }
-        runOnUiThread {
-            sleepTimer.dimAfterMs  = dimAfterSec.toLong()  * 1000L
-            sleepTimer.darkAfterMs = darkAfterSec.toLong() * 1000L
-            sleepTimer.setMode(newMode)
-        }
-    }
-
-    /**
-     * Reset the sleep timer to Active phase.
-     * Called from native code on touch-to-wake or phone resume.
-     */
-    fun resetSleepToActive() {
-        runOnUiThread { sleepTimer.resetToActive() }
     }
 
     fun showSoftInput() {

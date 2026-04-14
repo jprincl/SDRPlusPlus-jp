@@ -42,7 +42,7 @@ class SleepTimerManager(private val activity: MainActivity) {
     fun setMode(newMode: Mode) {
         Log.i(TAG, "Mode changed: $mode → $newMode")
         mode = newMode
-        if (startRequested) start()
+        if (startRequested && !suspended) start()
     }
 
     // ── Phase ─────────────────────────────────────────────────────────────────────
@@ -53,6 +53,8 @@ class SleepTimerManager(private val activity: MainActivity) {
 
     // True while the SDR source is running (even if mode == DISABLED and phase stays IDLE).
     private var startRequested = false
+    // True while the app window is gone (backgrounded). startRequested may still be true.
+    private var suspended = false
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -122,11 +124,43 @@ class SleepTimerManager(private val activity: MainActivity) {
     }
 
     /**
+     * Called when the app window goes away (Home button, task switch).
+     * Releases the wake lock and cancels callbacks immediately — Android will
+     * suspend the process anyway so holding the wake lock is pointless.
+     * startRequested is preserved so resume() can restart the timer when the
+     * window returns.
+     */
+    fun suspend() {
+        if (!startRequested) return
+        Log.i(TAG, "Suspending keep-alive (window gone)")
+        suspended = true
+        cancelAllCallbacks()
+        currentPhase = Phase.IDLE
+        activity.applySleepBrightness(-1f)
+        activity.setSleepScreenDimmed(false)
+        activity.setSleepRenderPaused(false)
+        activity.restoreFrameRate()
+        activity.clearKeepScreenOn()
+    }
+
+    /**
+     * Called when the app window returns (app brought back to foreground).
+     * Restarts the timer from the Active phase if the SDR source is running.
+     */
+    fun resume() {
+        if (!startRequested) return
+        Log.i(TAG, "Resuming keep-alive (window back)")
+        suspended = false
+        start()
+    }
+
+    /**
      * Stop the keep-alive logic and restore everything to normal.
      */
     fun stop() {
         Log.i(TAG, "Stopping keep-alive")
         startRequested = false
+        suspended = false
         cancelAllCallbacks()
         currentPhase = Phase.IDLE
         activity.applySleepBrightness(-1f)

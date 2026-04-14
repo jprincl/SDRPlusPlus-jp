@@ -1,6 +1,7 @@
 #ifdef __ANDROID__
 #include <gui/menus/android.h>
 #include <imgui.h>
+#include <gui/style.h>
 #include <core.h>
 #include <gui/gui.h>
 #include <android_backend.h>
@@ -12,6 +13,7 @@ namespace androidmenu {
     static const char* SLEEP_MODE_ITEMS = "Disabled\0Keep Alive\0Dim Screen\0Dim and Blank\0";
     static const int   SLEEP_MODE_COUNT = 4;
 
+    bool restartOnResume = true;  // restart SDR when app returns to foreground
     int sleepMode     = 3;   // default: Dim and Blank
     int screenDimMin  = 3;   // total minutes from start until screen dims
     int screenDarkMin = 8;   // total minutes from start until screen goes dark (> screenDimMin)
@@ -21,6 +23,7 @@ namespace androidmenu {
     }
 
     void init() {
+        restartOnResume = core::configManager.conf.value("restartOnResume", true);
         sleepMode     = core::configManager.conf.value("sleepMode",    3);
         screenDimMin  = core::configManager.conf.value("sleepDimMin",  3);
         screenDarkMin = core::configManager.conf.value("sleepDarkMin", 8);
@@ -30,11 +33,20 @@ namespace androidmenu {
         screenDimMin  = std::max(1, screenDimMin);
         screenDarkMin = std::max(screenDimMin + 1, screenDarkMin);
 
+        backend::setRestartOnResume(restartOnResume);
         applyConfig();
     }
 
     void draw(void* ctx) {
         float menuWidth = ImGui::GetContentRegionAvail().x;
+
+        // ── Background behaviour ──────────────────────────────────────────────────
+        if (ImGui::Checkbox("Restart on Resume##android_restart_resume", &restartOnResume)) {
+            backend::setRestartOnResume(restartOnResume);
+            core::configManager.acquire();
+            core::configManager.conf["restartOnResume"] = restartOnResume;
+            core::configManager.release(true);
+        }
 
         // ── Keep-alive mode ───────────────────────────────────────────────────────
         ImGui::LeftLabel("Keep Alive");

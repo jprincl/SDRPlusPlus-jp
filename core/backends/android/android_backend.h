@@ -77,8 +77,12 @@ namespace backend {
     // Sleep timer control (calls into MainActivity via JNI)
     int startSleepTimer();
     int stopSleepTimer();
+    int suspendSleepTimer();   // window gone — release wake lock, keep startRequested
+    int resumeSleepTimer();    // window back  — restart if SDR was running
     int resetSleepToActive();
     // mode: 0=Disabled, 1=KeepAlive, 2=DimScreen, 3=DimAndBlank
     // dimAfterSec / darkAfterSec: total seconds from timer start; darkAfterSec > dimAfterSec.
     void setSleepTimerConfig(int mode, int dimAfterSec, int darkAfterSec);
+    // Whether to restart the SDR source automatically when the app returns to the foreground.
+    void setRestartOnResume(bool value);
 }
