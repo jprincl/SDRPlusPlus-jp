@@ -347,6 +347,8 @@ void MainWindow::draw() {
 
     // To Bar
     // ImGui::BeginChild("TopBarChild", ImVec2(0, 49.0f * style::uiScale), false, ImGuiWindowFlags_HorizontalScrollbar);
+    float topBarWidth = ImGui::GetWindowSize().x;
+
     ImVec2 btnSize(30 * style::uiScale, 30 * style::uiScale);
     ImGui::PushID(ImGui::GetID("sdrpp_menu_btn"));
     if (ImGui::ImageButton(icons::MENU, btnSize, ImVec2(0, 0), ImVec2(1, 1), 5, ImVec4(0, 0, 0, 0), textCol) || ImGui::IsKeyPressed(ImGuiKey_Menu, false)) {
@@ -386,7 +388,20 @@ void MainWindow::draw() {
     ImGui::SameLine();
     float origY = ImGui::GetCursorPosY();
 
-    sigpath::sinkManager.showVolumeSlider(gui::waterfall.selectedVFO, "##_sdrpp_main_volume_", 248 * style::uiScale, btnSize.x, 5, true);
+    // Compute how much space the fixed elements to the right of the volume slider
+    // will need, then give volume whatever is left — down to a minimum of 100dp.
+    float volumeWidth;
+    {
+        float itemSpacing  = ImGui::GetStyle().ItemSpacing.x;
+        float tuningCost   = btnSize.x + 2 * 5 * style::uiScale + itemSpacing; // btn + padding + gap
+        float freqCost     = gui::freqSelect.getWidth() + itemSpacing;
+        float snrMinWidth  = ImGui::GetSNRMeterMinWidth();
+        float snrOffset    = 87.0f * style::uiScale;
+        float rightReserve = snrMinWidth + snrOffset;
+        float available = topBarWidth - ImGui::GetCursorPosX() - freqCost - tuningCost - rightReserve;
+        volumeWidth = std::clamp(available, 100.0f * style::uiScale, 248.0f * style::uiScale);
+    }
+    sigpath::sinkManager.showVolumeSlider(gui::waterfall.selectedVFO, "##_sdrpp_main_volume_", volumeWidth, btnSize.x, 5, true);
 
     ImGui::SameLine();
 
@@ -422,9 +437,13 @@ void MainWindow::draw() {
 
     ImGui::SameLine();
 
-    int snrOffset = 87.0f * style::uiScale;
-    int snrWidth = std::clamp<int>(ImGui::GetWindowSize().x - ImGui::GetCursorPosX() - snrOffset, 100.0f * style::uiScale, 300.0f * style::uiScale);
-    int snrPos = std::max<int>(ImGui::GetWindowSize().x - (snrWidth + snrOffset), ImGui::GetCursorPosX());
+    float snrOffset = 87.0f * style::uiScale;
+    float snrMinWidth = ImGui::GetSNRMeterMinWidth();
+    float snrMaxWidth = std::max(300.0f * style::uiScale, snrMinWidth);
+
+    float snrAvailWidth = topBarWidth - ImGui::GetCursorPosX() - snrOffset;
+    float snrWidth = std::clamp(snrAvailWidth, snrMinWidth, snrMaxWidth);
+    float snrPos = std::max(topBarWidth - (snrWidth + snrOffset), ImGui::GetCursorPosX());
 
     ImGui::SetCursorPosX(snrPos);
     ImGui::SetCursorPosY(origY + (5.0f * style::uiScale));

@@ -8,6 +8,7 @@ public:
     FrequencySelect();
     void init();
     void draw();
+    float getWidth() const;
     void setFrequency(int64_t freq);
 
     uint64_t frequency;
@@ -41,4 +42,5 @@ private:
     bool lastLimitFreq = false;
 
     char buf[100];
+    float cachedWidth_ = 0.0f;
 };

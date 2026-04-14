@@ -62,13 +62,13 @@ public:
         stop();
     }
 
-    void start() {
+    void start() override {
         std::lock_guard<std::mutex> lck(stateMtx);
         if (running) { return; }
         running = openAndStartStreamLocked();
     }
 
-    void stop() {
+    void stop() override {
         {
             std::lock_guard<std::mutex> lck(stateMtx);
             stopLocked(true);
@@ -76,7 +76,7 @@ public:
         joinRestartThread();
     }
 
-    void menuHandler() {
+    void menuHandler() override {
         float menuWidth = ImGui::GetContentRegionAvail().x;
 
         ImGui::Checkbox(("Debug##_audio_sink_dbg_" + _streamName).c_str(), &showDebug);

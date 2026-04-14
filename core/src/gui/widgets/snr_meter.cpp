@@ -7,7 +7,30 @@
 #endif
 #include <imgui/imgui_internal.h>
 
-namespace ImGui {
+namespace {
+    // Recompute only when the font pointer changes (e.g. after a style reload).
+    static ImFont* cachedFont = nullptr;
+    static float   cachedWidth = 0.0f;
+};
+
+namespace ImGui {    
+    float GetSNRMeterMinWidth() {
+        ImFont* currentFont = ImGui::GetFont();
+        if (currentFont != cachedFont) {
+            cachedFont = currentFont;
+            float maxLabelWidth = 0.0f;
+            char buf[32];
+            // 10 tick labels (0, 10, 20, … 90) over 9 intervals; minimum width
+            // so that each interval is at least as wide as the widest label.
+            for (int i = 0; i < 10; i++) {
+                sprintf(buf, "%d", i * 10);
+                maxLabelWidth = std::max(maxLabelWidth, ImGui::CalcTextSize(buf).x);
+            }
+            cachedWidth = maxLabelWidth * 9.0f + 8.0f * style::uiScale;
+        }
+        return cachedWidth;
+    }
+
     void SNRMeter(float val, const ImVec2& size_arg = ImVec2(0, 0)) {
         ImGuiWindow* window = GetCurrentWindow();
         ImGuiStyle& style = GImGui->Style;

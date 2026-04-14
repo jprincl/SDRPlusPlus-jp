@@ -249,6 +249,8 @@ void SinkManager::showVolumeSlider(std::string name, std::string prefix, float w
 
     float ypos = ImGui::GetCursorPosY();
     float sliderOffset = 8.0f * style::uiScale;
+    float minSliderWidth = 80.0f * style::uiScale;
+    width = std::max(width, height + sliderOffset + minSliderWidth);
 
     if (streams.find(name) == streams.end() || name == "") {
         float dummy = 0.0f;
@@ -257,7 +259,7 @@ void SinkManager::showVolumeSlider(std::string name, std::string prefix, float w
         ImGui::ImageButton(icons::MUTED, ImVec2(height, height), ImVec2(0, 0), ImVec2(1, 1), btnBorder, ImVec4(0, 0, 0, 0), ImGui::GetStyleColorVec4(ImGuiCol_Text));
         ImGui::PopID();
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(width - height - sliderOffset);
+        ImGui::SetNextItemWidth(std::max(width - height - sliderOffset, minSliderWidth));
         ImGui::SetCursorPosY(ypos + ((height - sliderHeight) / 2.0f) + btnBorder);
         ImGui::SliderFloat((prefix + name).c_str(), &dummy, 0.0f, 1.0f, "");
         style::endDisabled();
@@ -290,7 +292,7 @@ void SinkManager::showVolumeSlider(std::string name, std::string prefix, float w
 
     ImGui::SameLine();
 
-    ImGui::SetNextItemWidth(width - height - sliderOffset);
+    ImGui::SetNextItemWidth(std::max(width - height - sliderOffset, minSliderWidth));
     ImGui::SetCursorPosY(ypos + ((height - sliderHeight) / 2.0f) + btnBorder);
     if (ImGui::SliderFloat((prefix + name).c_str(), &stream->guiVolume, 0.0f, 1.0f, "")) {
         stream->setVolume(stream->guiVolume);

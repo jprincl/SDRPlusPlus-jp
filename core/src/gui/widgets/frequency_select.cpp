@@ -29,7 +29,6 @@ void FrequencySelect::onPosChange() {
     int digitHeight = digitSz.y;
     int digitWidth = digitSz.x;
     int commaOffset = 0;
-    int xOffset = 0;
     for (int i = firstDigit; i < 12; i++) {
         int pos = i - firstDigit;
         digitTopMins[i] = ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset, widgetPos.y);
@@ -42,6 +41,9 @@ void FrequencySelect::onPosChange() {
             commaOffset += commaSz.x;
         }
     }
+    // commaOffset now holds the total accumulated comma width — reuse it for the
+    // width cache rather than recomputing with a separate PushFont/CalcTextSize pair.
+    cachedWidth_ = (12 - firstDigit) * digitWidth + commaOffset + 17.0f * style::uiScale;
 }
 
 void FrequencySelect::incrementDigit(int i) {
@@ -89,6 +91,10 @@ void FrequencySelect::moveCursorToDigit(int i) {
     backend::getMouseScreenPos(xpos, ypos);
     double nxpos = (digitTopMaxs[i].x + digitTopMins[i].x) / 2.0;
     backend::setMouseScreenPos(nxpos, ypos);
+}
+
+float FrequencySelect::getWidth() const {
+    return cachedWidth_;
 }
 
 void FrequencySelect::draw() {
