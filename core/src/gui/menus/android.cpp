@@ -41,7 +41,7 @@ namespace androidmenu {
         float menuWidth = ImGui::GetContentRegionAvail().x;
 
         // ── Background behaviour ──────────────────────────────────────────────────
-        if (ImGui::Checkbox("Restart on Resume##android_restart_resume", &restartOnResume)) {
+        if (ImGui::Checkbox("Restart Radio on Resume##android_restart_resume", &restartOnResume)) {
             backend::setRestartOnResume(restartOnResume);
             core::configManager.acquire();
             core::configManager.conf["restartOnResume"] = restartOnResume;

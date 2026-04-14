@@ -34,6 +34,7 @@ class SleepTimerManager(private val activity: MainActivity) {
     enum class Mode { DISABLED, KEEP_ALIVE, DIM_SCREEN, DIM_AND_BLANK }
 
     var mode: Mode = Mode.DIM_AND_BLANK
+        private set
 
     /**
      * Change the operating mode.  If the SDR source is currently running the

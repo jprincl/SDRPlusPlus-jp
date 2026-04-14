@@ -298,6 +298,7 @@ class MainActivity : NativeActivity() {
          * Returns -1 if not found or permission denied.
          * This can be called from JNI/native code.
          */
+        @JvmStatic
         fun getOpenUsbDeviceHandleByVidPid(context: Context, vid: Int, pid: Int): String? {
             val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return null
             val devList = usbManager.deviceList
