@@ -40,7 +40,7 @@ class SleepTimerManager(private val activity: MainActivity) {
      * Change the operating mode.  If the SDR source is currently running the
      * timer is restarted immediately so the new behaviour takes effect at once.
      */
-    fun setMode(newMode: Mode) {
+    fun updateMode(newMode: Mode) {
         Log.i(TAG, "Mode changed: $mode → $newMode")
         mode = newMode
         if (startRequested && !suspended) start()

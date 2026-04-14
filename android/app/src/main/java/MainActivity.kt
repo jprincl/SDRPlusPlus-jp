@@ -553,7 +553,7 @@ class MainActivity : NativeActivity() {
         runOnUiThread {
             sleepTimer.dimAfterMs  = dimAfterSec.toLong()  * 1000L
             sleepTimer.darkAfterMs = darkAfterSec.toLong() * 1000L
-            sleepTimer.setMode(newMode)
+            sleepTimer.updateMode(newMode)
         }
     }
 
