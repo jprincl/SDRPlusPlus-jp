@@ -148,9 +148,7 @@ public:
 
         hackrf_device_list_free(_devList);
 #else
-        int vid, pid;
-        devFd = backend::getDeviceFD(vid, pid, backend::HACKRF_VIDPIDS);
-        if (devFd < 0) { return; }
+        if (!backend::hasUsbDeviceAvailable(backend::HACKRF_VIDPIDS)) { return; }
         std::string fakeName = "HackRF USB";
         devList.push_back("fake_serial");
         devListTxt += fakeName;
@@ -277,10 +275,17 @@ private:
 #ifndef __ANDROID__
         hackrf_error err = (hackrf_error)hackrf_open_by_serial(_this->selectedSerial.c_str(), &_this->openDev);
 #else
-        hackrf_error err = (hackrf_error)hackrf_open_by_fd(_this->devFd, &_this->openDev);
+        if (!_this->androidUsbHandle.acquire(backend::HACKRF_VIDPIDS)) {
+            flog::error("Tried to start HackRF source without a valid USB handle");
+            return;
+        }
+        hackrf_error err = (hackrf_error)hackrf_open_by_fd(_this->androidUsbHandle.fd(), &_this->openDev);
 #endif
         if (err != HACKRF_SUCCESS) {
             flog::error("Could not open HackRF {0}: {1}", _this->selectedSerial, hackrf_error_name(err));
+#ifdef __ANDROID__
+            _this->androidUsbHandle.reset();
+#endif
             return;
         }
 
@@ -310,6 +315,9 @@ private:
             flog::error("Could not close HackRF {0}: {1}", _this->selectedSerial, hackrf_error_name(err));
         }
         _this->stream.clearWriteStop();
+#ifdef __ANDROID__
+        _this->androidUsbHandle.reset();
+#endif
         flog::info("HackRFSourceModule '{0}': Stop!", _this->name);
     }
 
@@ -439,7 +447,7 @@ private:
     float vga = 0;
 
 #ifdef __ANDROID__
-    int devFd = -1;
+    backend::UsbDeviceLease androidUsbHandle;
     int lastAndroidUsbHotplugGeneration = 0;
 #endif
 

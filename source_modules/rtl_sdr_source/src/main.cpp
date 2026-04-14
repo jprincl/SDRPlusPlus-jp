@@ -145,9 +145,7 @@ public:
 #else
         // Check for device connection
         devCount = 0;
-        int vid, pid;
-        devFd = backend::getDeviceFD(vid, pid, backend::RTL_SDR_VIDPIDS);
-        if (devFd < 0) { return; }
+        if (!backend::hasUsbDeviceAvailable(backend::RTL_SDR_VIDPIDS)) { return; }
 
         // Generate fake device info
         devCount = 1;
@@ -180,10 +178,17 @@ public:
     void selectById(int id) {
         selectedDevName = devNames[id];
 
+#ifdef __ANDROID__
+        backend::UsbDeviceLease usbHandle(backend::RTL_SDR_VIDPIDS);
+        if (!usbHandle.valid()) {
+            selectedDevName.clear();
+            return;
+        }
+#endif
 #ifndef __ANDROID__
         int oret = rtlsdr_open(&openDev, id);
 #else
-        int oret = rtlsdr_open_sys_dev(&openDev, devFd);
+        int oret = rtlsdr_open_sys_dev(&openDev, usbHandle.fd());
 #endif
         
         if (oret < 0) {
@@ -326,11 +331,18 @@ private:
 #ifndef __ANDROID__
         int oret = rtlsdr_open(&_this->openDev, _this->devId);
 #else
-        int oret = rtlsdr_open_sys_dev(&_this->openDev, _this->devFd);
+        if (!_this->androidUsbHandle.acquire(backend::RTL_SDR_VIDPIDS)) {
+            flog::error("Tried to start RTL-SDR source without a valid USB handle");
+            return;
+        }
+        int oret = rtlsdr_open_sys_dev(&_this->openDev, _this->androidUsbHandle.fd());
 #endif
 
         if (oret < 0) {
             flog::error("Could not open RTL-SDR");
+#ifdef __ANDROID__
+            _this->androidUsbHandle.reset();
+#endif
             return;
         }
 
@@ -370,6 +382,9 @@ private:
         if (_this->workerThread.joinable()) { _this->workerThread.join(); }
         _this->stream.clearWriteStop();
         rtlsdr_close(_this->openDev);
+#ifdef __ANDROID__
+        _this->androidUsbHandle.reset();
+#endif
         flog::info("RTLSDRSourceModule '{0}': Stop!", _this->name);
     }
 
@@ -597,7 +612,7 @@ private:
     bool serverMode = false;
 
 #ifdef __ANDROID__
-    int devFd = -1;
+    backend::UsbDeviceLease androidUsbHandle;
     int lastAndroidUsbHotplugGeneration = 0;
 #endif
 

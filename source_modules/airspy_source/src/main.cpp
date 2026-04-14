@@ -78,10 +78,9 @@ public:
     }
 
     void refresh() {
-#ifndef __ANDROID__
         devList.clear();
         devListTxt = "";
-
+#ifndef __ANDROID__
         uint64_t serials[256];
         int n = airspy_list_devices(serials, 256);
 
@@ -94,9 +93,7 @@ public:
         }
 #else
         // Check for device presence
-        int vid, pid;
-        devFd = backend::getDeviceFD(vid, pid, backend::AIRSPY_VIDPIDS);
-        if (devFd < 0) { return; }
+        if (!backend::hasUsbDeviceAvailable(backend::AIRSPY_VIDPIDS)) { return; }
 
         // Get device info
         std::string fakeName = "Airspy USB";
@@ -130,12 +127,20 @@ public:
     }
 
     void selectBySerial(uint64_t serial) {
+#ifdef __ANDROID__
+        backend::UsbDeviceLease usbHandle(backend::AIRSPY_VIDPIDS);
+        if (!usbHandle.valid()) {
+            selectedSerial = 0;
+            selectedSerStr.clear();
+            return;
+        }
+#endif
         airspy_device* dev;
         try {
 #ifndef __ANDROID__
             int err = airspy_open_sn(&dev, serial);
 #else
-            int err = airspy_open_fd(&dev, devFd);
+            int err = airspy_open_fd(&dev, usbHandle.fd());
 #endif
             if (err != 0) {
                 char buf[1024];
@@ -149,6 +154,7 @@ public:
             char buf[1024];
             sprintf(buf, "%016" PRIX64, serial);
             flog::error("Could not open Airspy {}", buf);
+            return;
         }
         selectedSerial = serial;
 
@@ -304,12 +310,19 @@ private:
 #ifndef __ANDROID__
         int err = airspy_open_sn(&_this->openDev, _this->selectedSerial);
 #else
-        int err = airspy_open_fd(&_this->openDev, _this->devFd);
+        if (!_this->androidUsbHandle.acquire(backend::AIRSPY_VIDPIDS)) {
+            flog::error("Tried to start Airspy source without a valid USB handle");
+            return;
+        }
+        int err = airspy_open_fd(&_this->openDev, _this->androidUsbHandle.fd());
 #endif
         if (err != 0) {
             char buf[1024];
             sprintf(buf, "%016" PRIX64, _this->selectedSerial);
             flog::error("Could not open Airspy {0}", buf);
+#ifdef __ANDROID__
+            _this->androidUsbHandle.reset();
+#endif
             return;
         }
 
@@ -359,6 +372,9 @@ private:
         _this->stream.stopWriter();
         airspy_close(_this->openDev);
         _this->stream.clearWriteStop();
+#ifdef __ANDROID__
+        _this->androidUsbHandle.reset();
+#endif
         flog::info("AirspySourceModule '{0}': Stop!", _this->name);
     }
 
@@ -639,7 +655,7 @@ private:
     bool mixerAgc = false;
 
 #ifdef __ANDROID__
-    int devFd = 0;
+    backend::UsbDeviceLease androidUsbHandle;
     int lastAndroidUsbHotplugGeneration = 0;
 #endif
 

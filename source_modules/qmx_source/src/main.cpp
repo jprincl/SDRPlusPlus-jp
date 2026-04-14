@@ -150,16 +150,11 @@ private:
         androidDeviceListTxt.clear();
         selectedAndroidDevice.clear();
         androidDevId = 0;
-        androidUsbHandle = {};
+        androidUsbHandle.reset();
         androidDevHasDevice = false;
-
-        auto handle = backend::getUsbDeviceHandle(backend::QMX_VIDPIDS);
-        if (!handle.valid()) {
+        if (!backend::hasUsbDeviceAvailable(backend::QMX_VIDPIDS)) {
             return;
         }
-
-        // Release immediately; a fresh handle will be acquired in start().
-        backend::releaseUsbDeviceHandle(handle);
         androidDevHasDevice = true;
         androidDevices.push_back("QMX USB");
         androidDeviceListTxt += androidDevices.back();
@@ -306,14 +301,13 @@ private:
             return;
         }
         // Acquire a fresh USB handle for each start.
-        self->androidUsbHandle = backend::getUsbDeviceHandle(backend::QMX_VIDPIDS);
-        if (!self->androidUsbHandle.valid()) {
+        if (!self->androidUsbHandle.acquire(backend::QMX_VIDPIDS)) {
             flog::error("QMXSourceModule: Failed to acquire USB device handle");
             return;
         }
-        options.androidUsb.fd = self->androidUsbHandle.fd;
-        options.androidUsb.vid = self->androidUsbHandle.vid;
-        options.androidUsb.pid = self->androidUsbHandle.pid;
+        options.androidUsb.fd = self->androidUsbHandle.fd();
+        options.androidUsb.vid = self->androidUsbHandle.vid();
+        options.androidUsb.pid = self->androidUsbHandle.pid();
 #endif
 
         self->sync.start(self->freq, self->sync.getSyncVfo());
@@ -322,8 +316,7 @@ private:
         if (!self->device.start(options, &QMXSourceModule::sampleHandler, self, &QMXSourceModule::statusHandler, self, &error)) {
             flog::error("QMXSourceModule: {}", error);
 #ifdef __ANDROID__
-            backend::releaseUsbDeviceHandle(self->androidUsbHandle);
-            self->androidUsbHandle = {};
+            self->androidUsbHandle.reset();
 #endif
             return;
         }
@@ -346,8 +339,7 @@ private:
         self->sync.stop();
 
 #ifdef __ANDROID__
-        backend::releaseUsbDeviceHandle(self->androidUsbHandle);
-        self->androidUsbHandle = {};
+        self->androidUsbHandle.reset();
 #endif
 
         flog::info("QMXSourceModule '{}': Stop!", self->name);
@@ -618,7 +610,7 @@ private:
     std::string androidDeviceListTxt;
     std::string selectedAndroidDevice;
     int androidDevId = 0;
-    backend::UsbDeviceHandle androidUsbHandle;
+    backend::UsbDeviceLease androidUsbHandle;
     bool androidDevHasDevice = false;
     int lastAndroidUsbHotplugGeneration = 0;
 #endif

@@ -35,9 +35,11 @@ namespace backend {
     std::atomic<int> usbHotplugGeneration{0};
     bool exited = false;
 
-    // Forward declaration
+    // Forward declarations
     int ShowSoftKeyboardInput();
     int PollUnicodeChars();
+    static UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids);
+    static void releaseUsbDeviceHandle(const UsbDeviceHandle& handle);
 
     int startSleepTimer() {
         if (!app || !app->activity || !app->activity->vm) return -1;
@@ -81,28 +83,6 @@ namespace backend {
         java_env->CallVoidMethod(app->activity->clazz, method);
         java_vm->DetachCurrentThread();
         return 0;
-    }
-
-    bool isSleepTimerRunning() {
-        if (!app || !app->activity || !app->activity->vm) return false;
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
-
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR) return false;
-
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK) return false;
-
-        jclass clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (clazz == NULL) { java_vm->DetachCurrentThread(); return false; }
-
-        jmethodID method = java_env->GetMethodID(clazz, "isSleepTimerRunning", "()Z");
-        if (method == NULL) { java_vm->DetachCurrentThread(); return false; }
-
-        jboolean result = java_env->CallBooleanMethod(app->activity->clazz, method);
-        java_vm->DetachCurrentThread();
-        return (bool)result;
     }
 
     int resetSleepToActive() {
@@ -416,53 +396,6 @@ namespace backend {
         return 0;
     }
 
-    int getDeviceFD(int& vid, int& pid, const std::vector<DevVIDPID>& allowedVidPids) {
-        JavaVM* java_vm = app->activity->vm;
-        JNIEnv* java_env = NULL;
-
-        jint jni_return = java_vm->GetEnv((void**)&java_env, JNI_VERSION_1_6);
-        if (jni_return == JNI_ERR)
-            return -1;
-
-        jni_return = java_vm->AttachCurrentThread(&java_env, NULL);
-        if (jni_return != JNI_OK)
-            return -1;
-
-        jclass native_activity_clazz = java_env->GetObjectClass(app->activity->clazz);
-        if (native_activity_clazz == NULL)
-            return -1;
-
-        // Find the static method getDeviceFDByVidPid(Context, int, int): int
-        jmethodID get_fd_method = java_env->GetStaticMethodID(
-            native_activity_clazz,
-            "getDeviceFDByVidPid",
-            "(Landroid/content/Context;II)I"
-        );
-        if (!get_fd_method)
-            return -1;
-
-        // For each allowed VID/PID, try to get the FD
-        jobject context_obj = app->activity->clazz; // NativeActivity is a Context
-        for (const auto& vp : allowedVidPids) {
-            jint fd = java_env->CallStaticIntMethod(
-                native_activity_clazz,
-                get_fd_method,
-                context_obj,
-                (jint)vp.vid,
-                (jint)vp.pid
-            );
-            if (fd > 0) {
-                vid = vp.vid;
-                pid = vp.pid;
-                java_vm->DetachCurrentThread();
-                return fd;
-            }
-        }
-
-        java_vm->DetachCurrentThread();
-        return -1;
-    }
-
     static int getPreferredAudioDeviceId(const char* methodName) {
         if (!app || !app->activity || !app->activity->vm) {
             return 0;
@@ -507,10 +440,6 @@ namespace backend {
         return getPreferredAudioDeviceId("getPreferredAudioOutputDeviceId");
     }
 
-    int getPreferredAudioInputDeviceId() {
-        return getPreferredAudioDeviceId("getPreferredAudioInputDeviceId");
-    }
-
     void setAudioOutputUsesOpenSLES(bool usesOpenSLES) {
         audioOutputOpenSLES.store(usesOpenSLES, std::memory_order_relaxed);
     }
@@ -519,7 +448,30 @@ namespace backend {
         return audioOutputOpenSLES.load(std::memory_order_relaxed);
     }
 
-    UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids) {
+    UsbDeviceLease::UsbDeviceLease(const std::vector<DevVIDPID>& allowedVidPids) {
+        acquire(allowedVidPids);
+    }
+
+    UsbDeviceLease::~UsbDeviceLease() {
+        reset();
+    }
+
+    bool UsbDeviceLease::acquire(const std::vector<DevVIDPID>& allowedVidPids) {
+        reset();
+        handle = getUsbDeviceHandle(allowedVidPids);
+        return handle.valid();
+    }
+
+    void UsbDeviceLease::reset() {
+        if (!handle.valid()) {
+            handle = {};
+            return;
+        }
+        releaseUsbDeviceHandle(handle);
+        handle = {};
+    }
+
+    static UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids) {
         UsbDeviceHandle handle;
 
         JavaVM* java_vm = app->activity->vm;
@@ -578,7 +530,7 @@ namespace backend {
         return handle;
     }
 
-    void releaseUsbDeviceHandle(const UsbDeviceHandle& handle) {
+    static void releaseUsbDeviceHandle(const UsbDeviceHandle& handle) {
         if (handle.fd < 0)
             return;
 
@@ -607,6 +559,11 @@ namespace backend {
 
         java_env->CallStaticVoidMethod(native_activity_clazz, method, (jint)handle.fd);
         java_vm->DetachCurrentThread();
+    }
+
+    bool hasUsbDeviceAvailable(const std::vector<DevVIDPID>& allowedVidPids) {
+        UsbDeviceLease handle(allowedVidPids);
+        return handle.valid();
     }
 
     // Unfortunately, the native KeyEvent implementation has no getUnicodeChar() function.

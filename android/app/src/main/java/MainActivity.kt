@@ -298,30 +298,6 @@ class MainActivity : NativeActivity() {
          * Returns -1 if not found or permission denied.
          * This can be called from JNI/native code.
          */
-        @JvmStatic
-        fun getDeviceFDByVidPid(context: Context, vid: Int, pid: Int): Int {
-            val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return -1
-            val devList = usbManager.deviceList
-            for ((_, dev) in devList) {
-                if (dev.vendorId == vid && dev.productId == pid) {
-                    if (!usbManager.hasPermission(dev)) {
-                        (context as? MainActivity)?.requestUsbPermission(dev)
-                        return -1
-                    }
-                    val existingFd = getRetainedUsbConnectionFd(dev)
-                    if (existingFd != null) {
-                        return existingFd
-                    }
-                    val conn = usbManager.openDevice(dev)
-                    if (conn != null) {
-                        return retainUsbConnection(dev, conn)
-                    }
-                }
-            }
-            return -1
-        }
-
-        @JvmStatic
         fun getOpenUsbDeviceHandleByVidPid(context: Context, vid: Int, pid: Int): String? {
             val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return null
             val devList = usbManager.deviceList
@@ -354,11 +330,6 @@ class MainActivity : NativeActivity() {
         @JvmStatic
         fun getPreferredAudioOutputDeviceId(context: Context): Int {
             return getPreferredAudioDeviceId(context, AudioManager.GET_DEVICES_OUTPUTS)
-        }
-
-        @JvmStatic
-        fun getPreferredAudioInputDeviceId(context: Context): Int {
-            return getPreferredAudioDeviceId(context, AudioManager.GET_DEVICES_INPUTS)
         }
     }
 

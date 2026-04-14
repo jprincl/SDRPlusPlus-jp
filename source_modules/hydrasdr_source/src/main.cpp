@@ -137,9 +137,7 @@ public:
         devices.clear();
 
         // Check for device presence
-        int vid, pid;
-        devFd = backend::getDeviceFD(vid, pid, backend::HYDRASDR_VIDPIDS);
-        if (devFd < 0) { return; }
+        if (!backend::hasUsbDeviceAvailable(backend::HYDRASDR_VIDPIDS)) { return; }
 
         // Get device info
         std::string fakeName = "HydraSDR USB";
@@ -187,12 +185,20 @@ public:
     }
 
     void selectBySerial(uint64_t serial) {
+#ifdef __ANDROID__
+        backend::UsbDeviceLease usbHandle(backend::HYDRASDR_VIDPIDS);
+        if (!usbHandle.valid()) {
+            selectedSerial = 0;
+            selectedSerStr.clear();
+            return;
+        }
+#endif
         hydrasdr_device* dev;
         try {
 #ifndef __ANDROID__
             int err = hydrasdr_open_sn(&dev, serial);
 #else
-            int err = hydrasdr_open_fd(&dev, devFd);
+            int err = hydrasdr_open_fd(&dev, usbHandle.fd());
 #endif
             if (err != 0) {
                 char buf[1024];
@@ -553,11 +559,11 @@ private:
         if (_this->running) { return; }
 #ifdef __ANDROID__
         _this->refreshAndroidSelectionIfNeeded();
-        if (_this->devFd < 0) {
-            flog::error("Tried to start HydraSDR source with invalid fd");
+        if (!_this->androidUsbHandle.acquire(backend::HYDRASDR_VIDPIDS)) {
+            flog::error("Tried to start HydraSDR source without a valid USB handle");
             return;
         }
-        int err = hydrasdr_open_fd(&_this->openDev, _this->devFd);
+        int err = hydrasdr_open_fd(&_this->openDev, _this->androidUsbHandle.fd());
 #else
         if (_this->selectedSerial == 0) {
             flog::error("Tried to start HydraSDR source with null serial");
@@ -569,6 +575,9 @@ private:
             char buf[1024];
             snprintf(buf, sizeof(buf), "%016" PRIX64, _this->selectedSerial);
             flog::error("Could not open HydraSDR {0}", buf);
+#ifdef __ANDROID__
+            _this->androidUsbHandle.reset();
+#endif
             return;
         }
 
@@ -608,6 +617,9 @@ private:
         _this->stream.stopWriter();
         hydrasdr_close(_this->openDev);
         _this->stream.clearWriteStop();
+#ifdef __ANDROID__
+        _this->androidUsbHandle.reset();
+#endif
         flog::info("HydraSDRSourceModule '{0}': Stop!", _this->name);
     }
 
@@ -1213,7 +1225,7 @@ private:
     bool filterAgc = false;
 
 #ifdef __ANDROID__
-    int devFd = 0;
+    backend::UsbDeviceLease androidUsbHandle;
     int lastAndroidUsbHotplugGeneration = 0;
 #endif
 

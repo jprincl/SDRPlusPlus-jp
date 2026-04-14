@@ -2,6 +2,7 @@
 #include <atomic>
 #include <stdint.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace backend {
@@ -21,6 +22,41 @@ namespace backend {
         }
     };
 
+    class UsbDeviceLease {
+    public:
+        UsbDeviceLease() = default;
+        explicit UsbDeviceLease(const std::vector<DevVIDPID>& allowedVidPids);
+        ~UsbDeviceLease();
+
+        UsbDeviceLease(const UsbDeviceLease&) = delete;
+        UsbDeviceLease& operator=(const UsbDeviceLease&) = delete;
+
+        UsbDeviceLease(UsbDeviceLease&& other) noexcept
+            : handle(std::move(other.handle)) {
+            other.handle = {};
+        }
+
+        UsbDeviceLease& operator=(UsbDeviceLease&& other) noexcept {
+            if (this != &other) {
+                reset();
+                handle = std::move(other.handle);
+                other.handle = {};
+            }
+            return *this;
+        }
+
+        bool acquire(const std::vector<DevVIDPID>& allowedVidPids);
+        void reset();
+
+        bool valid() const { return handle.valid(); }
+        int fd() const { return handle.fd; }
+        int vid() const { return handle.vid; }
+        int pid() const { return handle.pid; }
+
+    private:
+        UsbDeviceHandle handle;
+    };
+
     extern const std::vector<DevVIDPID> AIRSPY_VIDPIDS;
     extern const std::vector<DevVIDPID> AIRSPYHF_VIDPIDS;
     extern const std::vector<DevVIDPID> HACKRF_VIDPIDS;
@@ -29,15 +65,12 @@ namespace backend {
     extern const std::vector<DevVIDPID> RTL_SDR_VIDPIDS;
     extern std::atomic<int> usbHotplugGeneration;
 
-    int getDeviceFD(int& vid, int& pid, const std::vector<DevVIDPID>& allowedVidPids);
     int getPreferredAudioOutputDeviceId();
-    int getPreferredAudioInputDeviceId();
     // Sticky flag to indicate that OpenGL ES is used on old Android devices
     // instead of a modern lower latency AAudio.
     void setAudioOutputUsesOpenSLES(bool usesOpenSLES);
     bool audioOutputUsesOpenSLES();
-    UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids);
-    void releaseUsbDeviceHandle(const UsbDeviceHandle& handle);
+    bool hasUsbDeviceAvailable(const std::vector<DevVIDPID>& allowedVidPids);
 
     // Sleep timer control (calls into MainActivity via JNI)
     int startSleepTimer();
