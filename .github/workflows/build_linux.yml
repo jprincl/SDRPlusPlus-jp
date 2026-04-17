@@ -1,0 +1,51 @@
+name: Build Linux
+
+on:
+    workflow_call:
+        inputs:
+            base_image:
+                required: true
+                type: string
+            runner:
+                required: true
+                type: string
+            artifact:
+                required: true
+                type: string
+            volk_package:
+                required: false
+                type: string
+                default: 'libvolk2-dev'
+            extra_apt:
+                required: false
+                type: string
+                default: ''
+
+jobs:
+    build:
+        runs-on: ${{ inputs.runner }}
+
+        steps:
+        - uses: actions/checkout@v4
+
+        - name: Create Docker Image
+          run: docker build --build-arg BASE_IMAGE=${{ inputs.base_image }} -f $GITHUB_WORKSPACE/docker_builds/Dockerfile $GITHUB_WORKSPACE/docker_builds --tag sdrpp_build
+
+        - name: Run Container
+          run: |
+            docker run --name build \
+              -v $GITHUB_WORKSPACE:/root/SDRPlusPlus \
+              --env BUILD_NO="-$GITHUB_RUN_NUMBER" \
+              --env VOLK_PACKAGE="${{ inputs.volk_package }}" \
+              --env EXTRA_APT="${{ inputs.extra_apt }}" \
+              sdrpp_build /root/do_build.sh
+
+        - name: Recover Deb Archive
+          working-directory: ${{ runner.workspace }}
+          run: docker cp build:/root/SDRPlusPlus/sdrpp_debian_amd64.deb ./
+
+        - name: Save Deb Archive
+          uses: actions/upload-artifact@v4
+          with:
+              name: ${{ inputs.artifact }}
+              path: ${{ runner.workspace }}/sdrpp_debian_amd64.deb
