@@ -168,4 +168,7 @@ set(CORE_FILES ${RUNTIME_OUTPUT_DIRECTORY} PARENT_SCOPE)
 # cmake .. "-DCMAKE_TOOLCHAIN_FILE=C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
 # Install directives
+if (${CMAKE_SYSTEM_NAME} MATCHES "Linux|FreeBSD")
+    set_target_properties(sdrpp_core PROPERTIES OUTPUT_NAME "sdrpp_iak_core")
+endif ()
 install(TARGETS sdrpp_core DESTINATION lib)
