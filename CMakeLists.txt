@@ -400,11 +400,11 @@ endif ()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
     target_link_libraries(sdrpp PUBLIC pthread)
-    add_custom_target(do_always ALL cp \"$<TARGET_FILE_DIR:sdrpp_core>/libsdrpp_core.so\" \"$<TARGET_FILE_DIR:sdrpp>\")
+    add_custom_target(do_always ALL cp \"$<TARGET_FILE:sdrpp_core>\" \"$<TARGET_FILE_DIR:sdrpp>\")
 endif ()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    add_custom_target(do_always ALL cp \"$<TARGET_FILE_DIR:sdrpp_core>/libsdrpp_core.so\" \"$<TARGET_FILE_DIR:sdrpp>\")
+    add_custom_target(do_always ALL cp \"$<TARGET_FILE:sdrpp_core>\" \"$<TARGET_FILE_DIR:sdrpp>\")
 endif ()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
