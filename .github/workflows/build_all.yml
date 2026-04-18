@@ -198,7 +198,7 @@ jobs:
         - name: Save Archive
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-${{ needs.get_version.outputs.version_full }}-windows-x64
+              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-windows-x64
               path: ${{runner.workspace}}/sdrpp_windows_x64.zip
 
     build_macos_intel:
@@ -259,7 +259,7 @@ jobs:
         - name: Save Archive
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-${{ needs.get_version.outputs.version_full }}-macos-intel
+              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-macos-intel
               path: ${{runner.workspace}}/sdrpp_macos_intel.zip
 
     build_macos_arm:
@@ -320,7 +320,7 @@ jobs:
         - name: Save Archive
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-${{ needs.get_version.outputs.version_full }}-macos-arm
+              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-macos-arm
               path: ${{runner.workspace}}/sdrpp_macos_arm.zip
 
     build_linux:
@@ -403,7 +403,7 @@ jobs:
         with:
             base_image: ${{ matrix.base_image }}
             runner: ${{ matrix.runner }}
-            artifact: sdrpp-${{ needs.get_version.outputs.version_full }}-${{ matrix.artifact }}
+            artifact: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-${{ matrix.artifact }}
             volk_package: ${{ matrix.volk_package }}
             extra_apt: ${{ matrix.extra_apt }}
 
@@ -434,13 +434,13 @@ jobs:
         - name: Save ARM Debug APK
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-${{ needs.get_version.outputs.version_full }}-android-arm-debug
+              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-android-arm-debug
               path: ${{runner.workspace}}/sdrpp_arm_debug.apk
 
         - name: Save x86 Debug APK
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-${{ needs.get_version.outputs.version_full }}-android-x86-debug
+              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-android-x86-debug
               path: ${{runner.workspace}}/sdrpp_x86_debug.apk
 
         - name: Decode Keystore
@@ -483,14 +483,14 @@ jobs:
           if: steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-${{ needs.get_version.outputs.version_full }}-android-arm-release
+              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-android-arm-release
               path: ${{runner.workspace}}/sdrpp_arm_release.apk
 
         - name: Save x86 Release APK
           if: steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-${{ needs.get_version.outputs.version_full }}-android-x86-release
+              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-android-x86-release
               path: ${{runner.workspace}}/sdrpp_x86_release.apk
 
     create_full_archive:
@@ -513,31 +513,31 @@ jobs:
             VER: ${{ needs.get_version.outputs.version_full }}
           run: |
             mkdir sdrpp_all
-            mv sdrpp-${VER}-windows-x64/sdrpp_windows_x64.zip                                 sdrpp_all/sdrpp-${VER}-windows-x64.zip
-            mv sdrpp-${VER}-macos-intel/sdrpp_macos_intel.zip                                 sdrpp_all/sdrpp-${VER}-macos-intel.zip
-            mv sdrpp-${VER}-macos-arm/sdrpp_macos_arm.zip                                     sdrpp_all/sdrpp-${VER}-macos-arm.zip
-            mv sdrpp-${VER}-debian-bullseye-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-${VER}-debian-bullseye-amd64.deb
-            mv sdrpp-${VER}-debian-bullseye-aarch64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-${VER}-debian-bullseye-aarch64.deb
-            mv sdrpp-${VER}-debian-bookworm-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-${VER}-debian-bookworm-amd64.deb
-            mv sdrpp-${VER}-debian-bookworm-aarch64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-${VER}-debian-bookworm-aarch64.deb
-            mv sdrpp-${VER}-debian-trixie-amd64/sdrpp_debian_amd64.deb                        sdrpp_all/sdrpp-${VER}-debian-trixie-amd64.deb
-            mv sdrpp-${VER}-debian-trixie-aarch64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-${VER}-debian-trixie-aarch64.deb
-            mv sdrpp-${VER}-debian-sid-amd64/sdrpp_debian_amd64.deb                           sdrpp_all/sdrpp-${VER}-debian-sid-amd64.deb
-            mv sdrpp-${VER}-debian-sid-aarch64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-${VER}-debian-sid-aarch64.deb
-            mv sdrpp-${VER}-ubuntu-focal-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-${VER}-ubuntu-focal-amd64.deb
-            mv sdrpp-${VER}-ubuntu-focal-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-${VER}-ubuntu-focal-aarch64.deb
-            mv sdrpp-${VER}-ubuntu-jammy-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-${VER}-ubuntu-jammy-amd64.deb
-            mv sdrpp-${VER}-ubuntu-jammy-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-${VER}-ubuntu-jammy-aarch64.deb
-            mv sdrpp-${VER}-ubuntu-noble-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-${VER}-ubuntu-noble-amd64.deb
-            mv sdrpp-${VER}-ubuntu-noble-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-${VER}-ubuntu-noble-aarch64.deb
-            mv sdrpp-${VER}-android-arm-debug/sdrpp_arm_debug.apk                             sdrpp_all/sdrpp-${VER}-android-arm-debug.apk
-            mv sdrpp-${VER}-android-x86-debug/sdrpp_x86_debug.apk                             sdrpp_all/sdrpp-${VER}-android-x86-debug.apk
-            [ -d sdrpp-${VER}-android-arm-release ] && mv sdrpp-${VER}-android-arm-release/sdrpp_arm_release.apk sdrpp_all/sdrpp-${VER}-android-arm-release.apk || true
-            [ -d sdrpp-${VER}-android-x86-release ] && mv sdrpp-${VER}-android-x86-release/sdrpp_x86_release.apk sdrpp_all/sdrpp-${VER}-android-x86-release.apk || true
+            mv sdrpp-iak-${VER}-windows-x64/sdrpp_windows_x64.zip                                 sdrpp_all/sdrpp-iak-${VER}-windows-x64.zip
+            mv sdrpp-iak-${VER}-macos-intel/sdrpp_macos_intel.zip                                 sdrpp_all/sdrpp-iak-${VER}-macos-intel.zip
+            mv sdrpp-iak-${VER}-macos-arm/sdrpp_macos_arm.zip                                     sdrpp_all/sdrpp-iak-${VER}-macos-arm.zip
+            mv sdrpp-iak-${VER}-debian-bullseye-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-amd64.deb
+            mv sdrpp-iak-${VER}-debian-bullseye-aarch64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-aarch64.deb
+            mv sdrpp-iak-${VER}-debian-bookworm-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bookworm-amd64.deb
+            mv sdrpp-iak-${VER}-debian-bookworm-aarch64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-iak-${VER}-debian-bookworm-aarch64.deb
+            mv sdrpp-iak-${VER}-debian-trixie-amd64/sdrpp_debian_amd64.deb                        sdrpp_all/sdrpp-iak-${VER}-debian-trixie-amd64.deb
+            mv sdrpp-iak-${VER}-debian-trixie-aarch64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-trixie-aarch64.deb
+            mv sdrpp-iak-${VER}-debian-sid-amd64/sdrpp_debian_amd64.deb                           sdrpp_all/sdrpp-iak-${VER}-debian-sid-amd64.deb
+            mv sdrpp-iak-${VER}-debian-sid-aarch64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-iak-${VER}-debian-sid-aarch64.deb
+            mv sdrpp-iak-${VER}-ubuntu-focal-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-focal-amd64.deb
+            mv sdrpp-iak-${VER}-ubuntu-focal-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-focal-aarch64.deb
+            mv sdrpp-iak-${VER}-ubuntu-jammy-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-jammy-amd64.deb
+            mv sdrpp-iak-${VER}-ubuntu-jammy-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-jammy-aarch64.deb
+            mv sdrpp-iak-${VER}-ubuntu-noble-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-noble-amd64.deb
+            mv sdrpp-iak-${VER}-ubuntu-noble-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-noble-aarch64.deb
+            mv sdrpp-iak-${VER}-android-arm-debug/sdrpp_arm_debug.apk                             sdrpp_all/sdrpp-iak-${VER}-android-arm-debug.apk
+            mv sdrpp-iak-${VER}-android-x86-debug/sdrpp_x86_debug.apk                             sdrpp_all/sdrpp-iak-${VER}-android-x86-debug.apk
+            [ -d sdrpp-iak-${VER}-android-arm-release ] && mv sdrpp-iak-${VER}-android-arm-release/sdrpp_arm_release.apk sdrpp_all/sdrpp-iak-${VER}-android-arm-release.apk || true
+            [ -d sdrpp-iak-${VER}-android-x86-release ] && mv sdrpp-iak-${VER}-android-x86-release/sdrpp_x86_release.apk sdrpp_all/sdrpp-iak-${VER}-android-x86-release.apk || true
 
         - uses: actions/upload-artifact@v4
           with:
-            name: sdrpp_all
+            name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-all
             path: sdrpp_all/
 
     update_nightly_release:
@@ -565,13 +565,13 @@ jobs:
 
             # Remove assets from the previous build that are no longer produced
             gh release view nightly -R ${{github.repository}} --json assets --jq '.assets[].name' | while read -r asset; do
-              if [ -n "$asset" ] && [ ! -f "sdrpp_all/$asset" ]; then
+              if [ -n "$asset" ] && [ ! -f "sdrpp-iak-${VER}-all/$asset" ]; then
                 gh release delete-asset nightly "$asset" -R ${{github.repository}} --yes
               fi
             done
 
             # Upload artifacts (--clobber overwrites existing files with the same name)
-            gh release upload nightly sdrpp_all/* -R ${{github.repository}} --clobber
+            gh release upload nightly sdrpp-iak-${VER}-all/* -R ${{github.repository}} --clobber
 
     create_release:
         needs: [get_version, validate_tag, create_full_archive]
@@ -585,6 +585,7 @@ jobs:
         - name: Publish GitHub Release
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            VER: ${{ needs.get_version.outputs.version_full }}
           run: |
             # Mark alpha/beta/rc tags as pre-releases on GitHub.
             PRERELEASE_FLAG=""
@@ -592,7 +593,7 @@ jobs:
               PRERELEASE_FLAG="--prerelease"
             fi
             gh release create "${{ github.ref_name }}" \
-              sdrpp_all/* \
+              sdrpp-iak-${VER}-all/* \
               --title "SDR++ ${{ github.ref_name }}" \
               --generate-notes \
               $PRERELEASE_FLAG \
