@@ -25,15 +25,31 @@ jobs:
         runs-on: ubuntu-latest
         outputs:
             version: ${{ steps.read.outputs.version }}
-            short_sha: ${{ steps.read.outputs.short_sha }}
+            version_full: ${{ steps.read.outputs.version_full }}
         steps:
         - uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
         - name: Read version
           id: read
           run: |
-            version=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' core/src/version.h | tr -d '"')
+            version=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9]*)?"' core/src/version.h | tr -d '"')
             echo "version=$version" >> $GITHUB_OUTPUT
-            echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+            describe=$(git describe --tags --long --match "v[0-9]*.[0-9]*.[0-9]*" 2>/dev/null || true)
+            if [ -n "$describe" ]; then
+              build_info=$(echo "$describe" | grep -oE '[0-9]+-g[0-9a-f]+$')
+              count=$(echo "$build_info" | grep -oE '^[0-9]+')
+            else
+              count=$(git rev-list --count HEAD)
+              hash=$(git rev-parse --short HEAD)
+              build_info="${count}-g${hash}"
+            fi
+            if [ "$count" = "0" ]; then
+              version_full="$version"
+            else
+              version_full="${version}+${build_info}"
+            fi
+            echo "version_full=$version_full" >> $GITHUB_OUTPUT
 
     validate_tag:
         # On tag pushes, verify the tag matches the version in version.h before building anything.
@@ -488,31 +504,30 @@ jobs:
 
         - name: Create Archive
           env:
-            VER: ${{ needs.get_version.outputs.version }}
-            SHA: ${{ needs.get_version.outputs.short_sha }}
+            VER: ${{ needs.get_version.outputs.version_full }}
           run: |
             mkdir sdrpp_all
-            mv sdrpp_windows_x64/sdrpp_windows_x64.zip                             sdrpp_all/sdrpp_v${VER}_${SHA}_windows_x64.zip
-            mv sdrpp_macos_intel/sdrpp_macos_intel.zip                             sdrpp_all/sdrpp_v${VER}_${SHA}_macos_intel.zip
-            mv sdrpp_macos_arm/sdrpp_macos_arm.zip                                 sdrpp_all/sdrpp_v${VER}_${SHA}_macos_arm.zip
-            mv sdrpp_debian_bullseye_amd64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp_v${VER}_${SHA}_debian_bullseye_amd64.deb
-            mv sdrpp_debian_bullseye_aarch64/sdrpp_debian_amd64.deb                sdrpp_all/sdrpp_v${VER}_${SHA}_debian_bullseye_aarch64.deb
-            mv sdrpp_debian_bookworm_amd64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp_v${VER}_${SHA}_debian_bookworm_amd64.deb
-            mv sdrpp_debian_bookworm_aarch64/sdrpp_debian_amd64.deb                sdrpp_all/sdrpp_v${VER}_${SHA}_debian_bookworm_aarch64.deb
-            mv sdrpp_debian_trixie_amd64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp_v${VER}_${SHA}_debian_trixie_amd64.deb
-            mv sdrpp_debian_trixie_aarch64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp_v${VER}_${SHA}_debian_trixie_aarch64.deb
-            mv sdrpp_debian_sid_amd64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp_v${VER}_${SHA}_debian_sid_amd64.deb
-            mv sdrpp_debian_sid_aarch64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp_v${VER}_${SHA}_debian_sid_aarch64.deb
-            mv sdrpp_ubuntu_focal_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_focal_amd64.deb
-            mv sdrpp_ubuntu_focal_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_focal_aarch64.deb
-            mv sdrpp_ubuntu_jammy_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_jammy_amd64.deb
-            mv sdrpp_ubuntu_jammy_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_jammy_aarch64.deb
-            mv sdrpp_ubuntu_noble_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_noble_amd64.deb
-            mv sdrpp_ubuntu_noble_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_noble_aarch64.deb
-            mv sdrpp_android_arm_debug/sdrpp_arm_debug.apk                         sdrpp_all/sdrpp_v${VER}_${SHA}_android_arm_debug.apk
-            mv sdrpp_android_x86_debug/sdrpp_x86_debug.apk                         sdrpp_all/sdrpp_v${VER}_${SHA}_android_x86_debug.apk
-            [ -d sdrpp_android_arm_release ] && mv sdrpp_android_arm_release/sdrpp_arm_release.apk sdrpp_all/sdrpp_v${VER}_${SHA}_android_arm_release.apk || true
-            [ -d sdrpp_android_x86_release ] && mv sdrpp_android_x86_release/sdrpp_x86_release.apk sdrpp_all/sdrpp_v${VER}_${SHA}_android_x86_release.apk || true
+            mv sdrpp_windows_x64/sdrpp_windows_x64.zip                             sdrpp_all/sdrpp-${VER}-windows-x64.zip
+            mv sdrpp_macos_intel/sdrpp_macos_intel.zip                             sdrpp_all/sdrpp-${VER}-macos-intel.zip
+            mv sdrpp_macos_arm/sdrpp_macos_arm.zip                                 sdrpp_all/sdrpp-${VER}-macos-arm.zip
+            mv sdrpp_debian_bullseye_amd64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp-${VER}-debian-bullseye-amd64.deb
+            mv sdrpp_debian_bullseye_aarch64/sdrpp_debian_amd64.deb                sdrpp_all/sdrpp-${VER}-debian-bullseye-aarch64.deb
+            mv sdrpp_debian_bookworm_amd64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp-${VER}-debian-bookworm-amd64.deb
+            mv sdrpp_debian_bookworm_aarch64/sdrpp_debian_amd64.deb                sdrpp_all/sdrpp-${VER}-debian-bookworm-aarch64.deb
+            mv sdrpp_debian_trixie_amd64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-${VER}-debian-trixie-amd64.deb
+            mv sdrpp_debian_trixie_aarch64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp-${VER}-debian-trixie-aarch64.deb
+            mv sdrpp_debian_sid_amd64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-${VER}-debian-sid-amd64.deb
+            mv sdrpp_debian_sid_aarch64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp-${VER}-debian-sid-aarch64.deb
+            mv sdrpp_ubuntu_focal_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp-${VER}-ubuntu-focal-amd64.deb
+            mv sdrpp_ubuntu_focal_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp-${VER}-ubuntu-focal-aarch64.deb
+            mv sdrpp_ubuntu_jammy_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp-${VER}-ubuntu-jammy-amd64.deb
+            mv sdrpp_ubuntu_jammy_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp-${VER}-ubuntu-jammy-aarch64.deb
+            mv sdrpp_ubuntu_noble_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp-${VER}-ubuntu-noble-amd64.deb
+            mv sdrpp_ubuntu_noble_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp-${VER}-ubuntu-noble-aarch64.deb
+            mv sdrpp_android_arm_debug/sdrpp_arm_debug.apk                         sdrpp_all/sdrpp-${VER}-android-arm-debug.apk
+            mv sdrpp_android_x86_debug/sdrpp_x86_debug.apk                         sdrpp_all/sdrpp-${VER}-android-x86-debug.apk
+            [ -d sdrpp_android_arm_release ] && mv sdrpp_android_arm_release/sdrpp_arm_release.apk sdrpp_all/sdrpp-${VER}-android-arm-release.apk || true
+            [ -d sdrpp_android_x86_release ] && mv sdrpp_android_x86_release/sdrpp_x86_release.apk sdrpp_all/sdrpp-${VER}-android-x86-release.apk || true
 
         - uses: actions/upload-artifact@v4
           with:
@@ -531,8 +546,7 @@ jobs:
         - name: Create or Update Nightly Release
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            VER: ${{ needs.get_version.outputs.version }}
-            SHA: ${{ needs.get_version.outputs.short_sha }}
+            VER: ${{ needs.get_version.outputs.version_full }}
           run: |
             NOTES="Nightly build — v${VER} (commit ${{ github.sha }}) built $(date -u '+%Y-%m-%d %H:%M UTC')"
 
@@ -566,10 +580,16 @@ jobs:
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           run: |
+            # Mark alpha/beta/rc tags as pre-releases on GitHub.
+            PRERELEASE_FLAG=""
+            if echo "${{ github.ref_name }}" | grep -qE '\-(alpha|beta|rc)[0-9]*$'; then
+              PRERELEASE_FLAG="--prerelease"
+            fi
             gh release create "${{ github.ref_name }}" \
               sdrpp_all/* \
               --title "SDR++ ${{ github.ref_name }}" \
               --generate-notes \
+              $PRERELEASE_FLAG \
               --repo ${{ github.repository }}
 
     check_spelling:

@@ -22,7 +22,7 @@ cp -R root/res/* $BUNDLE/Contents/Resources/
 bundle_create_icns root/res/icons/sdrpp.macos.png $BUNDLE/Contents/Resources/sdrpp
 
 # Read the authoritative version from version.h
-APP_VERSION=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' "$(dirname "$0")/core/src/version.h" | tr -d '"')
+APP_VERSION=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9]*)?"' "$(dirname "$0")/core/src/version.h" | tr -d '"')
 if [ -z "$APP_VERSION" ]; then
     echo "ERROR: could not parse version from core/src/version.h" >&2
     exit 1
