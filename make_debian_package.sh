@@ -8,13 +8,21 @@ if [ -z "$APP_VERSION" ]; then
     exit 1
 fi
 
-# Build number: git commit count (works locally and in CI)
+# Determine the Debian version string.
+# - Tagged release commit (e.g. v1.2.1): use the bare version "1.2.1" so package
+#   manager databases show exactly what was released.
+# - Everything else (nightly, local): append the git commit count as a build number,
+#   e.g. "1.2.1-347", so successive nightlies are ordered correctly by apt.
 git -C "$SCRIPT_DIR" config --global --add safe.directory "$SCRIPT_DIR" 2>/dev/null || true
-BUILD_COUNT=$(git -C "$SCRIPT_DIR" rev-list --count HEAD 2>/dev/null || echo "")
-if [ -n "$BUILD_COUNT" ]; then
-    DEB_VERSION="${APP_VERSION}-${BUILD_COUNT}"
-else
+if git -C "$SCRIPT_DIR" describe --exact-match HEAD 2>/dev/null | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
     DEB_VERSION="${APP_VERSION}"
+else
+    BUILD_COUNT=$(git -C "$SCRIPT_DIR" rev-list --count HEAD 2>/dev/null || echo "")
+    if [ -n "$BUILD_COUNT" ]; then
+        DEB_VERSION="${APP_VERSION}-${BUILD_COUNT}"
+    else
+        DEB_VERSION="${APP_VERSION}"
+    fi
 fi
 
 # Create directory structure
