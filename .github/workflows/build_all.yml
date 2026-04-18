@@ -71,6 +71,7 @@ jobs:
             echo "Tag ${TAG} matches version.h — OK"
 
     build_windows:
+        needs: [get_version]
         runs-on: windows-latest
 
         steps:
@@ -197,10 +198,11 @@ jobs:
         - name: Save Archive
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_windows_x64
+              name: sdrpp-${{ needs.get_version.outputs.version_full }}-windows-x64
               path: ${{runner.workspace}}/sdrpp_windows_x64.zip
 
     build_macos_intel:
+        needs: [get_version]
         runs-on: macos-15-intel
 
         steps:
@@ -257,10 +259,11 @@ jobs:
         - name: Save Archive
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_macos_intel
+              name: sdrpp-${{ needs.get_version.outputs.version_full }}-macos-intel
               path: ${{runner.workspace}}/sdrpp_macos_intel.zip
 
     build_macos_arm:
+        needs: [get_version]
         runs-on: macos-15
 
         steps:
@@ -317,7 +320,7 @@ jobs:
         - name: Save Archive
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_macos_arm
+              name: sdrpp-${{ needs.get_version.outputs.version_full }}-macos-arm
               path: ${{runner.workspace}}/sdrpp_macos_arm.zip
 
     build_linux:
@@ -327,83 +330,85 @@ jobs:
                 include:
                     - base_image: debian:bullseye
                       runner: ubuntu-latest
-                      artifact: sdrpp_debian_bullseye_amd64
+                      artifact: debian-bullseye-amd64
                       volk_package: libvolk2-dev
                       extra_apt: ''
                     - base_image: debian:bullseye
                       runner: ubuntu-24.04-arm
-                      artifact: sdrpp_debian_bullseye_aarch64
+                      artifact: debian-bullseye-aarch64
                       volk_package: libvolk2-dev
                       extra_apt: ''
                     - base_image: debian:bookworm
                       runner: ubuntu-latest
-                      artifact: sdrpp_debian_bookworm_amd64
+                      artifact: debian-bookworm-amd64
                       volk_package: libvolk2-dev
                       extra_apt: ''
                     - base_image: debian:bookworm
                       runner: ubuntu-24.04-arm
-                      artifact: sdrpp_debian_bookworm_aarch64
+                      artifact: debian-bookworm-aarch64
                       volk_package: libvolk2-dev
                       extra_apt: ''
                     - base_image: debian:trixie
                       runner: ubuntu-latest
-                      artifact: sdrpp_debian_trixie_amd64
+                      artifact: debian-trixie-amd64
                       volk_package: libvolk-dev
                       extra_apt: ''
                     - base_image: debian:trixie
                       runner: ubuntu-24.04-arm
-                      artifact: sdrpp_debian_trixie_aarch64
+                      artifact: debian-trixie-aarch64
                       volk_package: libvolk-dev
                       extra_apt: ''
                     - base_image: debian:sid
                       runner: ubuntu-latest
-                      artifact: sdrpp_debian_sid_amd64
+                      artifact: debian-sid-amd64
                       volk_package: libvolk-dev
                       extra_apt: ca-certificates
                     - base_image: debian:sid
                       runner: ubuntu-24.04-arm
-                      artifact: sdrpp_debian_sid_aarch64
+                      artifact: debian-sid-aarch64
                       volk_package: libvolk-dev
                       extra_apt: ca-certificates
                     - base_image: ubuntu:focal
                       runner: ubuntu-latest
-                      artifact: sdrpp_ubuntu_focal_amd64
+                      artifact: ubuntu-focal-amd64
                       volk_package: libvolk2-dev
                       extra_apt: ''
                     - base_image: ubuntu:focal
                       runner: ubuntu-24.04-arm
-                      artifact: sdrpp_ubuntu_focal_aarch64
+                      artifact: ubuntu-focal-aarch64
                       volk_package: libvolk2-dev
                       extra_apt: ''
                     - base_image: ubuntu:jammy
                       runner: ubuntu-latest
-                      artifact: sdrpp_ubuntu_jammy_amd64
+                      artifact: ubuntu-jammy-amd64
                       volk_package: libvolk2-dev
                       extra_apt: ''
                     - base_image: ubuntu:jammy
                       runner: ubuntu-24.04-arm
-                      artifact: sdrpp_ubuntu_jammy_aarch64
+                      artifact: ubuntu-jammy-aarch64
                       volk_package: libvolk2-dev
                       extra_apt: ''
                     - base_image: ubuntu:noble
                       runner: ubuntu-latest
-                      artifact: sdrpp_ubuntu_noble_amd64
+                      artifact: ubuntu-noble-amd64
                       volk_package: libvolk-dev
                       extra_apt: ''
                     - base_image: ubuntu:noble
                       runner: ubuntu-24.04-arm
-                      artifact: sdrpp_ubuntu_noble_aarch64
+                      artifact: ubuntu-noble-aarch64
                       volk_package: libvolk-dev
                       extra_apt: ''
+        needs: [get_version]
         uses: ./.github/workflows/build_linux.yml
         with:
             base_image: ${{ matrix.base_image }}
             runner: ${{ matrix.runner }}
-            artifact: ${{ matrix.artifact }}
+            artifact: sdrpp-${{ needs.get_version.outputs.version_full }}-${{ matrix.artifact }}
             volk_package: ${{ matrix.volk_package }}
             extra_apt: ${{ matrix.extra_apt }}
 
     build_android:
+        needs: [get_version]
         runs-on: ubuntu-latest
 
         steps:
@@ -429,13 +434,13 @@ jobs:
         - name: Save ARM Debug APK
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_android_arm_debug
+              name: sdrpp-${{ needs.get_version.outputs.version_full }}-android-arm-debug
               path: ${{runner.workspace}}/sdrpp_arm_debug.apk
 
         - name: Save x86 Debug APK
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_android_x86_debug
+              name: sdrpp-${{ needs.get_version.outputs.version_full }}-android-x86-debug
               path: ${{runner.workspace}}/sdrpp_x86_debug.apk
 
         - name: Decode Keystore
@@ -478,14 +483,14 @@ jobs:
           if: steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_android_arm_release
+              name: sdrpp-${{ needs.get_version.outputs.version_full }}-android-arm-release
               path: ${{runner.workspace}}/sdrpp_arm_release.apk
 
         - name: Save x86 Release APK
           if: steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp_android_x86_release
+              name: sdrpp-${{ needs.get_version.outputs.version_full }}-android-x86-release
               path: ${{runner.workspace}}/sdrpp_x86_release.apk
 
     create_full_archive:
@@ -508,27 +513,27 @@ jobs:
             VER: ${{ needs.get_version.outputs.version_full }}
           run: |
             mkdir sdrpp_all
-            mv sdrpp_windows_x64/sdrpp_windows_x64.zip                             sdrpp_all/sdrpp-${VER}-windows-x64.zip
-            mv sdrpp_macos_intel/sdrpp_macos_intel.zip                             sdrpp_all/sdrpp-${VER}-macos-intel.zip
-            mv sdrpp_macos_arm/sdrpp_macos_arm.zip                                 sdrpp_all/sdrpp-${VER}-macos-arm.zip
-            mv sdrpp_debian_bullseye_amd64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp-${VER}-debian-bullseye-amd64.deb
-            mv sdrpp_debian_bullseye_aarch64/sdrpp_debian_amd64.deb                sdrpp_all/sdrpp-${VER}-debian-bullseye-aarch64.deb
-            mv sdrpp_debian_bookworm_amd64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp-${VER}-debian-bookworm-amd64.deb
-            mv sdrpp_debian_bookworm_aarch64/sdrpp_debian_amd64.deb                sdrpp_all/sdrpp-${VER}-debian-bookworm-aarch64.deb
-            mv sdrpp_debian_trixie_amd64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-${VER}-debian-trixie-amd64.deb
-            mv sdrpp_debian_trixie_aarch64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp-${VER}-debian-trixie-aarch64.deb
-            mv sdrpp_debian_sid_amd64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-${VER}-debian-sid-amd64.deb
-            mv sdrpp_debian_sid_aarch64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp-${VER}-debian-sid-aarch64.deb
-            mv sdrpp_ubuntu_focal_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp-${VER}-ubuntu-focal-amd64.deb
-            mv sdrpp_ubuntu_focal_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp-${VER}-ubuntu-focal-aarch64.deb
-            mv sdrpp_ubuntu_jammy_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp-${VER}-ubuntu-jammy-amd64.deb
-            mv sdrpp_ubuntu_jammy_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp-${VER}-ubuntu-jammy-aarch64.deb
-            mv sdrpp_ubuntu_noble_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp-${VER}-ubuntu-noble-amd64.deb
-            mv sdrpp_ubuntu_noble_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp-${VER}-ubuntu-noble-aarch64.deb
-            mv sdrpp_android_arm_debug/sdrpp_arm_debug.apk                         sdrpp_all/sdrpp-${VER}-android-arm-debug.apk
-            mv sdrpp_android_x86_debug/sdrpp_x86_debug.apk                         sdrpp_all/sdrpp-${VER}-android-x86-debug.apk
-            [ -d sdrpp_android_arm_release ] && mv sdrpp_android_arm_release/sdrpp_arm_release.apk sdrpp_all/sdrpp-${VER}-android-arm-release.apk || true
-            [ -d sdrpp_android_x86_release ] && mv sdrpp_android_x86_release/sdrpp_x86_release.apk sdrpp_all/sdrpp-${VER}-android-x86-release.apk || true
+            mv sdrpp-${VER}-windows-x64/sdrpp_windows_x64.zip                                 sdrpp_all/sdrpp-${VER}-windows-x64.zip
+            mv sdrpp-${VER}-macos-intel/sdrpp_macos_intel.zip                                 sdrpp_all/sdrpp-${VER}-macos-intel.zip
+            mv sdrpp-${VER}-macos-arm/sdrpp_macos_arm.zip                                     sdrpp_all/sdrpp-${VER}-macos-arm.zip
+            mv sdrpp-${VER}-debian-bullseye-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-${VER}-debian-bullseye-amd64.deb
+            mv sdrpp-${VER}-debian-bullseye-aarch64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-${VER}-debian-bullseye-aarch64.deb
+            mv sdrpp-${VER}-debian-bookworm-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-${VER}-debian-bookworm-amd64.deb
+            mv sdrpp-${VER}-debian-bookworm-aarch64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-${VER}-debian-bookworm-aarch64.deb
+            mv sdrpp-${VER}-debian-trixie-amd64/sdrpp_debian_amd64.deb                        sdrpp_all/sdrpp-${VER}-debian-trixie-amd64.deb
+            mv sdrpp-${VER}-debian-trixie-aarch64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-${VER}-debian-trixie-aarch64.deb
+            mv sdrpp-${VER}-debian-sid-amd64/sdrpp_debian_amd64.deb                           sdrpp_all/sdrpp-${VER}-debian-sid-amd64.deb
+            mv sdrpp-${VER}-debian-sid-aarch64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-${VER}-debian-sid-aarch64.deb
+            mv sdrpp-${VER}-ubuntu-focal-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-${VER}-ubuntu-focal-amd64.deb
+            mv sdrpp-${VER}-ubuntu-focal-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-${VER}-ubuntu-focal-aarch64.deb
+            mv sdrpp-${VER}-ubuntu-jammy-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-${VER}-ubuntu-jammy-amd64.deb
+            mv sdrpp-${VER}-ubuntu-jammy-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-${VER}-ubuntu-jammy-aarch64.deb
+            mv sdrpp-${VER}-ubuntu-noble-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-${VER}-ubuntu-noble-amd64.deb
+            mv sdrpp-${VER}-ubuntu-noble-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-${VER}-ubuntu-noble-aarch64.deb
+            mv sdrpp-${VER}-android-arm-debug/sdrpp_arm_debug.apk                             sdrpp_all/sdrpp-${VER}-android-arm-debug.apk
+            mv sdrpp-${VER}-android-x86-debug/sdrpp_x86_debug.apk                             sdrpp_all/sdrpp-${VER}-android-x86-debug.apk
+            [ -d sdrpp-${VER}-android-arm-release ] && mv sdrpp-${VER}-android-arm-release/sdrpp_arm_release.apk sdrpp_all/sdrpp-${VER}-android-arm-release.apk || true
+            [ -d sdrpp-${VER}-android-x86-release ] && mv sdrpp-${VER}-android-x86-release/sdrpp_x86_release.apk sdrpp_all/sdrpp-${VER}-android-x86-release.apk || true
 
         - uses: actions/upload-artifact@v4
           with:
