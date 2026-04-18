@@ -35,7 +35,6 @@ jobs:
           run: |
             docker run --name build \
               -v $GITHUB_WORKSPACE:/root/SDRPlusPlus \
-              --env BUILD_NO="-$GITHUB_RUN_NUMBER" \
               --env VOLK_PACKAGE="${{ inputs.volk_package }}" \
               --env EXTRA_APT="${{ inputs.extra_apt }}" \
               sdrpp_build /root/do_build.sh

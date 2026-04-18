@@ -19,6 +19,20 @@ env:
     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
+    get_version:
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.read.outputs.version }}
+            short_sha: ${{ steps.read.outputs.short_sha }}
+        steps:
+        - uses: actions/checkout@v4
+        - name: Read version
+          id: read
+          run: |
+            version=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' core/src/version.h | tr -d '"')
+            echo "version=$version" >> $GITHUB_OUTPUT
+            echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
     build_windows:
         runs-on: windows-latest
 
@@ -133,7 +147,7 @@ jobs:
 
         - name: Prepare CMake
           working-directory: ${{runner.workspace}}/build
-          run: cmake -DCOPY_MSVC_REDISTRIBUTABLES=ON "$Env:GITHUB_WORKSPACE" "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_PERSEUS_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_SOURCE=ON
+          run: cmake -DCOPY_MSVC_REDISTRIBUTABLES=ON "$Env:GITHUB_WORKSPACE" "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_PERSEUS_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON
 
         - name: Build
           working-directory: ${{runner.workspace}}/build
@@ -193,7 +207,7 @@ jobs:
 
         - name: Prepare CMake
           working-directory: ${{runner.workspace}}/build
-          run: cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 $GITHUB_WORKSPACE -DOPT_BUILD_PLUTOSDR_SOURCE=ON -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_AUDIO_SINK=OFF -DOPT_BUILD_PORTAUDIO_SINK=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_PERSEUS_SOURCE=ON -DOPT_BUILD_AUDIO_SOURCE=OFF -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON  -DOPT_BUILD_HYDRASDR_SOURCE=ON -DUSE_BUNDLE_DEFAULTS=ON -DCMAKE_BUILD_TYPE=Release
+          run: cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 $GITHUB_WORKSPACE -DOPT_BUILD_PLUTOSDR_SOURCE=ON -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_AUDIO_SINK=OFF -DOPT_BUILD_PORTAUDIO_SINK=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_PERSEUS_SOURCE=ON -DOPT_BUILD_AUDIO_SOURCE=OFF -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON  -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON -DUSE_BUNDLE_DEFAULTS=ON -DCMAKE_BUILD_TYPE=Release
 
         - name: Build
           working-directory: ${{runner.workspace}}/build
@@ -253,7 +267,7 @@ jobs:
 
         - name: Prepare CMake
           working-directory: ${{runner.workspace}}/build
-          run: cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 $GITHUB_WORKSPACE -DOPT_BUILD_PLUTOSDR_SOURCE=ON -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_AUDIO_SINK=OFF -DOPT_BUILD_PORTAUDIO_SINK=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=OFF -DOPT_BUILD_PERSEUS_SOURCE=OFF -DOPT_BUILD_AUDIO_SOURCE=OFF -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_SOURCE=ON -DUSE_BUNDLE_DEFAULTS=ON -DCMAKE_BUILD_TYPE=Release
+          run: cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 $GITHUB_WORKSPACE -DOPT_BUILD_PLUTOSDR_SOURCE=ON -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_AUDIO_SINK=OFF -DOPT_BUILD_PORTAUDIO_SINK=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=OFF -DOPT_BUILD_PERSEUS_SOURCE=OFF -DOPT_BUILD_AUDIO_SOURCE=OFF -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON -DUSE_BUNDLE_DEFAULTS=ON -DCMAKE_BUILD_TYPE=Release
 
         - name: Build
           working-directory: ${{runner.workspace}}/build
@@ -439,6 +453,7 @@ jobs:
 
     create_full_archive:
         needs: [
+          'get_version',
           'build_windows',
           'build_macos_intel',
           'build_macos_arm',
@@ -452,29 +467,32 @@ jobs:
           uses: actions/download-artifact@v4
 
         - name: Create Archive
-          run: >
-            mkdir sdrpp_all && 
-            mv sdrpp_windows_x64/sdrpp_windows_x64.zip sdrpp_all/ && 
-            mv sdrpp_macos_intel/sdrpp_macos_intel.zip sdrpp_all/ && 
-            mv sdrpp_macos_arm/sdrpp_macos_arm.zip sdrpp_all/ && 
-            mv sdrpp_debian_bullseye_amd64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_debian_bullseye_amd64.deb &&
-            mv sdrpp_debian_bullseye_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_debian_bullseye_aarch64.deb &&
-            mv sdrpp_debian_bookworm_amd64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_debian_bookworm_amd64.deb && 
-            mv sdrpp_debian_bookworm_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_debian_bookworm_aarch64.deb && 
-            mv sdrpp_debian_trixie_amd64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_debian_trixie_amd64.deb && 
-            mv sdrpp_debian_trixie_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_debian_trixie_aarch64.deb && 
-            mv sdrpp_debian_sid_amd64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_debian_sid_amd64.deb && 
-            mv sdrpp_debian_sid_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_debian_sid_aarch64.deb && 
-            mv sdrpp_ubuntu_focal_amd64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_focal_amd64.deb &&
-            mv sdrpp_ubuntu_focal_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_focal_aarch64.deb &&
-            mv sdrpp_ubuntu_jammy_amd64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_jammy_amd64.deb &&
-            mv sdrpp_ubuntu_jammy_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_jammy_aarch64.deb &&
-            mv sdrpp_ubuntu_noble_amd64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_noble_amd64.deb &&
-            mv sdrpp_ubuntu_noble_aarch64/sdrpp_debian_amd64.deb sdrpp_all/sdrpp_ubuntu_noble_aarch64.deb &&
-            mv sdrpp_android_arm_debug/sdrpp_arm_debug.apk sdrpp_all/sdrpp_arm_debug.apk &&
-            mv sdrpp_android_x86_debug/sdrpp_x86_debug.apk sdrpp_all/sdrpp_x86_debug.apk &&
-            ([ -d sdrpp_android_arm_release ] && mv sdrpp_android_arm_release/sdrpp_arm_release.apk sdrpp_all/sdrpp_arm_release.apk || true) &&
-            ([ -d sdrpp_android_x86_release ] && mv sdrpp_android_x86_release/sdrpp_x86_release.apk sdrpp_all/sdrpp_x86_release.apk || true)
+          env:
+            VER: ${{ needs.get_version.outputs.version }}
+            SHA: ${{ needs.get_version.outputs.short_sha }}
+          run: |
+            mkdir sdrpp_all
+            mv sdrpp_windows_x64/sdrpp_windows_x64.zip                             sdrpp_all/sdrpp_v${VER}_${SHA}_windows_x64.zip
+            mv sdrpp_macos_intel/sdrpp_macos_intel.zip                             sdrpp_all/sdrpp_v${VER}_${SHA}_macos_intel.zip
+            mv sdrpp_macos_arm/sdrpp_macos_arm.zip                                 sdrpp_all/sdrpp_v${VER}_${SHA}_macos_arm.zip
+            mv sdrpp_debian_bullseye_amd64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp_v${VER}_${SHA}_debian_bullseye_amd64.deb
+            mv sdrpp_debian_bullseye_aarch64/sdrpp_debian_amd64.deb                sdrpp_all/sdrpp_v${VER}_${SHA}_debian_bullseye_aarch64.deb
+            mv sdrpp_debian_bookworm_amd64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp_v${VER}_${SHA}_debian_bookworm_amd64.deb
+            mv sdrpp_debian_bookworm_aarch64/sdrpp_debian_amd64.deb                sdrpp_all/sdrpp_v${VER}_${SHA}_debian_bookworm_aarch64.deb
+            mv sdrpp_debian_trixie_amd64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp_v${VER}_${SHA}_debian_trixie_amd64.deb
+            mv sdrpp_debian_trixie_aarch64/sdrpp_debian_amd64.deb                  sdrpp_all/sdrpp_v${VER}_${SHA}_debian_trixie_aarch64.deb
+            mv sdrpp_debian_sid_amd64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp_v${VER}_${SHA}_debian_sid_amd64.deb
+            mv sdrpp_debian_sid_aarch64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp_v${VER}_${SHA}_debian_sid_aarch64.deb
+            mv sdrpp_ubuntu_focal_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_focal_amd64.deb
+            mv sdrpp_ubuntu_focal_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_focal_aarch64.deb
+            mv sdrpp_ubuntu_jammy_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_jammy_amd64.deb
+            mv sdrpp_ubuntu_jammy_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_jammy_aarch64.deb
+            mv sdrpp_ubuntu_noble_amd64/sdrpp_debian_amd64.deb                     sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_noble_amd64.deb
+            mv sdrpp_ubuntu_noble_aarch64/sdrpp_debian_amd64.deb                   sdrpp_all/sdrpp_v${VER}_${SHA}_ubuntu_noble_aarch64.deb
+            mv sdrpp_android_arm_debug/sdrpp_arm_debug.apk                         sdrpp_all/sdrpp_v${VER}_${SHA}_android_arm_debug.apk
+            mv sdrpp_android_x86_debug/sdrpp_x86_debug.apk                         sdrpp_all/sdrpp_v${VER}_${SHA}_android_x86_debug.apk
+            [ -d sdrpp_android_arm_release ] && mv sdrpp_android_arm_release/sdrpp_arm_release.apk sdrpp_all/sdrpp_v${VER}_${SHA}_android_arm_release.apk || true
+            [ -d sdrpp_android_x86_release ] && mv sdrpp_android_x86_release/sdrpp_x86_release.apk sdrpp_all/sdrpp_v${VER}_${SHA}_android_x86_release.apk || true
 
         - uses: actions/upload-artifact@v4
           with:
@@ -482,29 +500,37 @@ jobs:
             path: sdrpp_all/
 
     update_nightly_release:
-        needs: [create_full_archive]
+        needs: [get_version, create_full_archive]
         runs-on: ubuntu-latest
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
 
         steps:
         - name: Download All Builds
           uses: actions/download-artifact@v4
-          
+
         - name: Create or Update Nightly Release
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            VER: ${{ needs.get_version.outputs.version }}
+            SHA: ${{ needs.get_version.outputs.short_sha }}
           run: |
-            # Check if nightly release exists, create if not
-            gh release view nightly -R ${{github.repository}} 2>/dev/null || gh release create nightly -R ${{github.repository}} --title "Nightly Build" --notes "Automated nightly build from CI - Built from commit ${{ github.sha }}" --prerelease
-            
-            # Keep the nightly release assets in sync with the current build output.
+            NOTES="Nightly build — v${VER} (commit ${{ github.sha }}) built $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+            # Create the release if it does not exist yet
+            gh release view nightly -R ${{github.repository}} 2>/dev/null || \
+              gh release create nightly -R ${{github.repository}} --title "Nightly Build" --notes "$NOTES" --prerelease
+
+            # Always refresh the release notes so they reflect the latest commit
+            gh release edit nightly -R ${{github.repository}} --notes "$NOTES"
+
+            # Remove assets from the previous build that are no longer produced
             gh release view nightly -R ${{github.repository}} --json assets --jq '.assets[].name' | while read -r asset; do
               if [ -n "$asset" ] && [ ! -f "sdrpp_all/$asset" ]; then
                 gh release delete-asset nightly "$asset" -R ${{github.repository}} --yes
               fi
             done
 
-            # Upload artifacts (--clobber overwrites existing files)
+            # Upload artifacts (--clobber overwrites existing files with the same name)
             gh release upload nightly sdrpp_all/* -R ${{github.repository}} --clobber
 
     check_spelling:

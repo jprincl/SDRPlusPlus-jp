@@ -57,6 +57,9 @@ make -j2
 make install
 cd ../../
 
+# Allow git commands on the volume-mounted repo (git ≥ 2.35.2 safe.directory check)
+git config --global --add safe.directory /root/SDRPlusPlus
+
 cd SDRPlusPlus
 mkdir build && cd build
 cmake .. -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON \

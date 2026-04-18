@@ -21,8 +21,15 @@ cp -R root/res/* $BUNDLE/Contents/Resources/
 # Create the icon file
 bundle_create_icns root/res/icons/sdrpp.macos.png $BUNDLE/Contents/Resources/sdrpp
 
+# Read the authoritative version from version.h
+APP_VERSION=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' "$(dirname "$0")/core/src/version.h" | tr -d '"')
+if [ -z "$APP_VERSION" ]; then
+    echo "ERROR: could not parse version from core/src/version.h" >&2
+    exit 1
+fi
+
 # Create the property list
-bundle_create_plist sdrpp SDR++ org.sdrpp.sdrpp 1.2.1 sdrp sdrpp sdrpp $BUNDLE/Contents/Info.plist
+bundle_create_plist sdrpp SDR++ org.ok1iak.sdrpp $APP_VERSION sdrp sdrpp sdrpp $BUNDLE/Contents/Info.plist
 
 # ========================= Install binaries =========================
 
