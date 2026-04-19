@@ -2,6 +2,10 @@
 #include <imgui.h>
 #include <string>
 #include <module.h>
+#include <functional>
+#include <algorithm>
+#include <cmath>
+#include <stdint.h>
 
 namespace style {
     SDRPP_EXPORT ImFont* baseFont;
@@ -9,8 +13,49 @@ namespace style {
     SDRPP_EXPORT ImFont* hugeFont;
     SDRPP_EXPORT float uiScale;
 
+    void setUIScale(float scale);
+    uint64_t scaleEpoch();
+
+    inline float dp(float logical) {
+        return logical * uiScale;
+    }
+
+    inline ImVec2 dp(float x, float y) {
+        return ImVec2(dp(x), dp(y));
+    }
+
+    inline int scale(float logical) {
+        return (int)std::round(dp(logical));
+    }
+
+    inline int scaleOrPhysical(float logicalOrPhysical, float physicalThresholdLogical) {
+        if (uiScale > 1.0f && logicalOrPhysical >= dp(physicalThresholdLogical)) {
+            return (int)std::round(logicalOrPhysical);
+        }
+        return scale(logicalOrPhysical);
+    }
+
+    inline int unscale(float physical) {
+        return (int)std::round(physical / uiScale);
+    }
+
+    inline int rescale(int physical, float oldScale) {
+        return (int)std::round((float)physical * uiScale / oldScale);
+    }
+
+    inline int clampSplit(float desired, float available, float minBefore, float minAfter) {
+        float minBeforePx = dp(minBefore);
+        float maxBeforePx = available - dp(minAfter);
+        if (maxBeforePx < minBeforePx) {
+            return (int)std::round(std::max(0.0f, maxBeforePx));
+        }
+        return (int)std::round(std::clamp(desired, minBeforePx, maxBeforePx));
+    }
+
     bool setDefaultStyle(std::string resDir);
     bool loadFonts(std::string resDir);
+    void applyScaledStyle(const std::function<void()>& resetStyle);
+    void migrateLogicalDimension(nlohmann::json& conf, const char* valueKey, const char* markerKey, float minLogical, const std::function<bool(float)>& valueLooksPhysical);
     void beginDisabled();
     void endDisabled();
     void testtt();
@@ -19,4 +64,6 @@ namespace style {
 namespace ImGui {
     void LeftLabel(const char* text);
     void FillWidth();
+    void SetNextItemRemainingWidth();
+    void LeftLabelFill(const char* text);
 }

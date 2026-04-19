@@ -23,10 +23,7 @@ namespace thememenu {
             selectedThemeName = "Dark";
         }
         themeId = std::distance(themeNames.begin(), it);
-        applyTheme();
-
-        // Apply scaling
-        ImGui::GetStyle().ScaleAllSizes(style::uiScale);
+        style::applyScaledStyle(applyTheme);
 
         themeNamesTxt = "";
         for (auto name : themeNames) {
@@ -37,12 +34,10 @@ namespace thememenu {
 
      void applyTheme() {
          gui::themeManager.applyTheme(themeNames[themeId]);
-     }
+    }
 
     void draw(void* ctx) {
-        float menuWidth = ImGui::GetContentRegionAvail().x;
-        ImGui::LeftLabel("Theme");
-        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::LeftLabelFill("Theme");
         if (ImGui::Combo("##theme_select_combo", &themeId, themeNamesTxt.c_str())) {
             applyTheme();
             core::configManager.acquire();

@@ -240,18 +240,14 @@ namespace sourcemenu {
         bool open = true;
         gui::mainWindow.lockWaterfallControls = true;
 
-        float menuWidth = ImGui::GetContentRegionAvail().x;
-
         const char* id = "Add offset##sdrpp_add_offset_dialog_";
         ImGui::OpenPopup(id);
 
         if (ImGui::BeginPopup(id, ImGuiWindowFlags_NoResize)) {
-            ImGui::LeftLabel("Name");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+            ImGui::LeftLabelFill("Name");
             ImGui::InputText("##sdrpp_add_offset_name", newOffsetName, 1023);
 
-            ImGui::LeftLabel("Offset");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+            ImGui::LeftLabelFill("Offset");
             ImGui::InputDouble("##sdrpp_add_offset_offset", &newOffset);
 
             bool nameExists = offsets.nameExists(newOffsetName);

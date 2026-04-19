@@ -28,6 +28,8 @@
 #include <gui/colormaps.h>
 #include <gui/widgets/snr_meter.h>
 #include <gui/tuner.h>
+#include <algorithm>
+#include <cmath>
 
 void MainWindow::init() {
     LoadingScreen::show("Initializing UI");
@@ -204,10 +206,16 @@ void MainWindow::init() {
     gui::waterfall.centerFreqMoved = false;
     gui::waterfall.selectFirstVFO();
 
-    menuWidth = core::configManager.conf["menuWidth"];
+    {
+        float raw = core::configManager.conf["menuWidth"].get<float>();
+        // Current configs store logical units and are scaled here. Some test
+        // builds wrote already-scaled physical widths without a version marker;
+        // keep those as physical so they do not get multiplied again.
+        menuWidth = style::scaleOrPhysical(raw, 250.0f);
+    }
     newWidth = menuWidth;
 
-    fftHeight = core::configManager.conf["fftHeight"];
+    fftHeight = style::scale(core::configManager.conf["fftHeight"].get<float>());
     gui::waterfall.setFFTHeight(fftHeight);
 
     tuningMode = core::configManager.conf["centerTuning"] ? tuner::TUNER_MODE_CENTER : tuner::TUNER_MODE_NORMAL;
@@ -240,6 +248,19 @@ float* MainWindow::acquireFFTBuffer(void* ctx) {
 
 void MainWindow::releaseFFTBuffer(void* ctx) {
     gui::waterfall.pushFFT();
+}
+
+void MainWindow::onContentScaleChanged(float oldScale) {
+    // style::uiScale already holds the new scale when this is called.
+    // Rescale physical splitter positions proportionally, then persist logical values.
+    menuWidth = style::rescale(menuWidth, oldScale);
+    newWidth = menuWidth;
+    fftHeight = style::rescale(fftHeight, oldScale);
+    gui::waterfall.setFFTHeight(fftHeight);
+    core::configManager.acquire();
+    core::configManager.conf["menuWidth"] = style::unscale(menuWidth);
+    core::configManager.conf["fftHeight"] = style::unscale(fftHeight);
+    core::configManager.release(true);
 }
 
 void MainWindow::vfoAddedHandler(VFOManager::VFO* vfo, void* ctx) {
@@ -332,7 +353,7 @@ void MainWindow::draw() {
     if (fftHeight != _fftHeight) {
         fftHeight = _fftHeight;
         core::configManager.acquire();
-        core::configManager.conf["fftHeight"] = fftHeight;
+        core::configManager.conf["fftHeight"] = style::unscale(fftHeight);
         core::configManager.release(true);
     }
 
@@ -474,16 +495,27 @@ void MainWindow::draw() {
     // Handle menu resize
     ImVec2 winSize = ImGui::GetWindowSize();
     ImVec2 mousePos = ImGui::GetMousePos();
+    if (showMenu && !grabbingMenu) {
+        int clampedMenuWidth = style::clampSplit(menuWidth, winSize.x, 250.0f, 250.0f);
+        if (clampedMenuWidth != menuWidth) {
+            menuWidth = clampedMenuWidth;
+            newWidth = clampedMenuWidth;
+        }
+    }
     if (!lockWaterfallControls && showMenu) {
         float curY = ImGui::GetCursorPosY();
         bool click = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
         if (grabbingMenu) {
             newWidth = mousePos.x;
-            newWidth = std::clamp<float>(newWidth, 250.0f * style::uiScale, winSize.x - 250.0f * style::uiScale);
+            newWidth = style::clampSplit(newWidth, winSize.x, 250.0f, 250.0f);
             ImGui::GetForegroundDrawList()->AddLine(ImVec2(newWidth, curY), ImVec2(newWidth, winSize.y - 10), ImGui::GetColorU32(ImGuiCol_SeparatorActive));
         }
-        if (mousePos.x >= newWidth - (2.0f * style::uiScale) && mousePos.x <= newWidth + (2.0f * style::uiScale) && mousePos.y > curY) {
+        float separatorHitRadius = (2.0f * style::uiScale);
+#ifdef ANDROID
+        separatorHitRadius = (20.0f * style::uiScale);
+#endif
+        if (mousePos.x >= newWidth - separatorHitRadius && mousePos.x <= newWidth + separatorHitRadius && mousePos.y > curY) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
             if (click) {
                 grabbingMenu = true;
@@ -496,7 +528,7 @@ void MainWindow::draw() {
             grabbingMenu = false;
             menuWidth = newWidth;
             core::configManager.acquire();
-            core::configManager.conf["menuWidth"] = menuWidth;
+            core::configManager.conf["menuWidth"] = style::unscale(menuWidth);
             core::configManager.release(true);
         }
     }

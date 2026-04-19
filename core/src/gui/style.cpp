@@ -4,6 +4,7 @@
 #include <config.h>
 #include <utils/flog.h>
 #include <filesystem>
+#include <cmath>
 
 namespace style {
     ImFont* baseFont;
@@ -18,6 +19,17 @@ namespace style {
 #else
     float uiScale = 3.0f;
 #endif
+    uint64_t _scaleEpoch = 0;
+
+    void setUIScale(float scale) {
+        if (std::fabs(uiScale - scale) < 0.0001f) { return; }
+        uiScale = scale;
+        _scaleEpoch++;
+    }
+
+    uint64_t scaleEpoch() {
+        return _scaleEpoch;
+    }
 
     bool loadFonts(std::string resDir) {
         ImFontAtlas* fonts = ImGui::GetIO().Fonts;
@@ -52,6 +64,22 @@ namespace style {
         return true;
     }
 
+    void applyScaledStyle(const std::function<void()>& resetStyle) {
+        resetStyle();
+        ImGui::GetStyle().ScaleAllSizes(uiScale);
+    }
+
+    void migrateLogicalDimension(nlohmann::json& conf, const char* valueKey, const char* markerKey, float minLogical, const std::function<bool(float)>& valueLooksPhysical) {
+        if (conf.value(markerKey, false)) { return; }
+
+        float value = conf[valueKey].get<float>();
+        if (valueLooksPhysical(value)) {
+            value = (float)unscale(value);
+        }
+        conf[valueKey] = (int)std::round(std::max(value, minLogical));
+        conf[markerKey] = true;
+    }
+
     void beginDisabled() {
         ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
         auto& style = ImGui::GetStyle();
@@ -84,5 +112,14 @@ namespace ImGui {
 
     void FillWidth() {
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+    }
+
+    void SetNextItemRemainingWidth() {
+        FillWidth();
+    }
+
+    void LeftLabelFill(const char* text) {
+        LeftLabel(text);
+        FillWidth();
     }
 }

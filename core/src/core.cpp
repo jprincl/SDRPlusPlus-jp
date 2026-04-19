@@ -11,6 +11,8 @@
 #include <stb_image.h>
 #include <config.h>
 #include <core.h>
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <gui/menus/theme.h>
 #include <backend.h>
@@ -123,6 +125,7 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["snrSmoothingSpeed"] = 20;
     defConfig["fastFFT"] = false;
     defConfig["fftHeight"] = 300;
+    defConfig["fftHeightLogical"] = true;
     defConfig["fftRate"] = 20;
     defConfig["fftSize"] = 65536;
     defConfig["fftWindow"] = 2;
@@ -160,6 +163,7 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["menuElements"][7]["open"] = true;
 
     defConfig["menuWidth"] = 300;
+    defConfig["menuWidthLogical"] = true;
     defConfig["min"] = -120.0;
 
     // Module instances
@@ -360,7 +364,14 @@ int sdrpp_main(int argc, char* argv[]) {
     }
 
     // Load UI scaling
-    style::uiScale = core::configManager.conf["uiScale"];
+    style::setUIScale(core::configManager.conf["uiScale"]);
+
+    style::migrateLogicalDimension(core::configManager.conf, "menuWidth", "menuWidthLogical", 250.0f, [](float value) {
+        return style::uiScale > 1.0f && value > 300.0f;
+    });
+    style::migrateLogicalDimension(core::configManager.conf, "fftHeight", "fftHeightLogical", 150.0f, [](float value) {
+        return style::uiScale > 1.0f && value >= 300.0f * style::uiScale;
+    });
 
     core::configManager.release(true);
 
@@ -388,10 +399,10 @@ int sdrpp_main(int argc, char* argv[]) {
     if (firstStart) {
         float detected = backend::getContentScale();
         float autoScale = std::clamp(std::round(detected), 1.0f, 4.0f);
-        style::uiScale = autoScale;
+        style::setUIScale(autoScale);
         core::configManager.acquire();
         core::configManager.conf["uiScale"]   = autoScale;
-        core::configManager.conf["menuWidth"] = (int)(300.0f * autoScale);
+        core::configManager.conf["menuWidth"] = 300; // logical (scale-independent) default
         core::configManager.release(true);
         flog::info("First start: detected content scale {:.2f}, using uiScale={:.0f}", detected, autoScale);
     }

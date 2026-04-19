@@ -26,7 +26,7 @@ namespace ImGui {
                 sprintf(buf, "%d", i * 10);
                 maxLabelWidth = std::max(maxLabelWidth, ImGui::CalcTextSize(buf).x);
             }
-            cachedWidth = maxLabelWidth * 9.0f + 8.0f * style::uiScale;
+            cachedWidth = maxLabelWidth * 9.0f + style::dp(8.0f);
         }
         return cachedWidth;
     }
@@ -51,15 +51,16 @@ namespace ImGui {
         float it = size.x / 9;
         char buf[32];
 
-        window->DrawList->AddRectFilled(min + ImVec2(0, 1), min + ImVec2(roundf((float)val * ratio), 10 * style::uiScale), IM_COL32(0, 136, 255, 255));
-        window->DrawList->AddLine(min, min + ImVec2(0, (10.0f * style::uiScale) - 1), text, style::uiScale);
-        window->DrawList->AddLine(min + ImVec2(0, (10.0f * style::uiScale) - 1), min + ImVec2(size.x + 1, (10.0f * style::uiScale) - 1), text, style::uiScale);
+        float barHeight = style::dp(10.0f);
+        window->DrawList->AddRectFilled(min + ImVec2(0, 1), min + ImVec2(roundf((float)val * ratio), barHeight), IM_COL32(0, 136, 255, 255));
+        window->DrawList->AddLine(min, min + ImVec2(0, barHeight - 1), text, style::uiScale);
+        window->DrawList->AddLine(min + ImVec2(0, barHeight - 1), min + ImVec2(size.x + 1, barHeight - 1), text, style::uiScale);
 
         for (int i = 0; i < 10; i++) {
-            window->DrawList->AddLine(min + ImVec2(roundf((float)i * it), (10.0f * style::uiScale) - 1), min + ImVec2(roundf((float)i * it), (15.0f * style::uiScale) - 1), text, style::uiScale);
+            window->DrawList->AddLine(min + ImVec2(roundf((float)i * it), barHeight - 1), min + ImVec2(roundf((float)i * it), style::dp(15.0f) - 1), text, style::uiScale);
             sprintf(buf, "%d", i * 10);
             ImVec2 sz = ImGui::CalcTextSize(buf);
-            window->DrawList->AddText(min + ImVec2(roundf(((float)i * it) - (sz.x / 2.0)) + 1, 16.0f * style::uiScale), text, buf);
+            window->DrawList->AddText(min + ImVec2(roundf(((float)i * it) - (sz.x / 2.0)) + 1, style::dp(16.0f)), text, buf);
         }
     }
 }

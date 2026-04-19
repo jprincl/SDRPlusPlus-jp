@@ -260,7 +260,11 @@ namespace ImGui {
         bool mouseClicked = ImGui::ButtonBehavior(ImRect(fftAreaMin, wfMax), GetID("WaterfallID"), &mouseHovered, &mouseHeld,
                                                   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_PressedOnClick);
 
-        mouseInFFTResize = (dragOrigin.x > widgetPos.x && dragOrigin.x < widgetPos.x + widgetSize.x && dragOrigin.y >= widgetPos.y + newFFTAreaHeight - (2.0f * style::uiScale) && dragOrigin.y <= widgetPos.y + newFFTAreaHeight + (2.0f * style::uiScale));
+        float separatorHitRadius = (2.0f * style::uiScale);
+#ifdef ANDROID
+        separatorHitRadius = (20.0f * style::uiScale);
+#endif
+        mouseInFFTResize = (dragOrigin.x > widgetPos.x && dragOrigin.x < widgetPos.x + widgetSize.x && dragOrigin.y >= widgetPos.y + newFFTAreaHeight - separatorHitRadius && dragOrigin.y <= widgetPos.y + newFFTAreaHeight + separatorHitRadius);
         mouseInFreq = IS_IN_AREA(dragOrigin, freqAreaMin, freqAreaMax);
         mouseInFFT = IS_IN_AREA(dragOrigin, fftAreaMin, fftAreaMax);
         mouseInWaterfall = IS_IN_AREA(dragOrigin, wfMin, wfMax);
@@ -350,7 +354,7 @@ namespace ImGui {
         if (fftResizeSelect) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
             newFFTAreaHeight = mousePos.y - widgetPos.y;
-            newFFTAreaHeight = std::clamp<float>(newFFTAreaHeight, 150, widgetSize.y - 50);
+            newFFTAreaHeight = style::clampSplit(newFFTAreaHeight, widgetSize.y, 150.0f, 50.0f);
             ImGui::GetForegroundDrawList()->AddLine(ImVec2(widgetPos.x, newFFTAreaHeight + widgetPos.y), ImVec2(widgetEndPos.x, newFFTAreaHeight + widgetPos.y),
                                                     ImGui::GetColorU32(ImGuiCol_SeparatorActive), style::uiScale);
             return;
@@ -407,10 +411,21 @@ namespace ImGui {
             return;
         }
 
-        // Ctrl+scroll (or synthesized pinch-to-zoom) → zoom the view bandwidth.
-        // Positive wheel = fingers apart / scroll up = zoom in (narrower view).
-        if (mouseWheel != 0.0f && ImGui::GetIO().KeyCtrl && (mouseInFFT || mouseInWaterfall || mouseInFreq)) {
-            double newBw = viewBandwidth * std::pow(0.9, (double)mouseWheel);
+        // Pinch-to-zoom from the Android gesture recognizer arrives on the
+        // horizontal wheel axis (MouseWheelH) to avoid Ctrl key-state timing
+        // issues.  Desktop Ctrl+scroll also zooms via the vertical axis.
+        // Positive value = fingers apart / scroll up = zoom in (narrower view).
+        float zoomWheel = 0.0f;
+#ifdef __ANDROID__
+        float mouseWheelH = ImGui::GetIO().MouseWheelH;
+        if (mouseWheelH != 0.0f && (mouseInFFT || mouseInWaterfall || mouseInFreq))
+            zoomWheel = mouseWheelH;
+        else
+#endif
+        if (mouseWheel != 0.0f && ImGui::GetIO().KeyCtrl && (mouseInFFT || mouseInWaterfall || mouseInFreq))
+            zoomWheel = mouseWheel;
+        if (zoomWheel != 0.0f) {
+            double newBw = viewBandwidth * std::pow(0.9, (double)zoomWheel);
             newBw = std::clamp(newBw, wholeBandwidth / 200.0, wholeBandwidth);
             setViewBandwidth(newBw);
             return;
@@ -727,16 +742,16 @@ namespace ImGui {
         std::lock_guard<std::recursive_mutex> lck(latestFFTMtx);
         std::lock_guard<std::mutex> lck2(smoothingBufMtx);
         // return if widget is too small
-        if (widgetSize.x < 100 || widgetSize.y < 100) {
+        if (widgetSize.x < style::dp(100.0f) || widgetSize.y < style::dp(100.0f)) {
             return;
         }
 
         int lastWaterfallHeight = waterfallHeight;
 
         if (waterfallVisible) {
-            FFTAreaHeight = std::min<int>(FFTAreaHeight, widgetSize.y - (50.0f * style::uiScale));
-            newFFTAreaHeight = FFTAreaHeight;
-            fftHeight = FFTAreaHeight - (50.0f * style::uiScale);
+            int effectiveFFTAreaHeight = style::clampSplit(FFTAreaHeight, widgetSize.y, 150.0f, 50.0f);
+            newFFTAreaHeight = effectiveFFTAreaHeight;
+            fftHeight = effectiveFFTAreaHeight - (50.0f * style::uiScale);
             waterfallHeight = widgetSize.y - fftHeight - (50.0f * style::uiScale) - 2;
         }
         else {

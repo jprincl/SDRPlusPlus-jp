@@ -15,6 +15,9 @@
 #endif
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 #define MOD_EXPORT           extern "C" __declspec(dllexport)
 #define SDRPP_MOD_EXTENTSION ".dll"

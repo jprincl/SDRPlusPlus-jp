@@ -37,9 +37,9 @@ namespace module_manager_menu {
         float cellWidth = lheight - (2.0f * cellpad.y);
         float hdiff = cellpad.x - cellpad.y;
         ImVec2 btnSize = ImVec2(lheight, lheight - 1);
-        ImVec2 textOff = ImVec2(3.0f * style::uiScale, -5.0f * style::uiScale);
+        ImVec2 textOff = style::dp(3.0f, -5.0f);
 
-        if (ImGui::BeginTable("Module Manager Table", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 200.0f * style::uiScale))) {
+        if (ImGui::BeginTable("Module Manager Table", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, style::dp(200.0f)))) {
             ImGui::TableSetupColumn("Name");
             ImGui::TableSetupColumn("Type");
             ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, cellWidth);

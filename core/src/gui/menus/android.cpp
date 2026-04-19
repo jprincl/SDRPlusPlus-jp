@@ -38,8 +38,6 @@ namespace androidmenu {
     }
 
     void draw(void* ctx) {
-        float menuWidth = ImGui::GetContentRegionAvail().x;
-
         // ── Background behaviour ──────────────────────────────────────────────────
         if (ImGui::Checkbox("Restart Radio on Resume##android_restart_resume", &restartOnResume)) {
             backend::setRestartOnResume(restartOnResume);
@@ -49,8 +47,7 @@ namespace androidmenu {
         }
 
         // ── Keep-alive mode ───────────────────────────────────────────────────────
-        ImGui::LeftLabel("Keep Alive");
-        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::LeftLabelFill("Keep Alive");
         if (ImGui::Combo("##android_sleep_mode", &sleepMode, SLEEP_MODE_ITEMS)) {
             sleepMode = std::clamp(sleepMode, 0, SLEEP_MODE_COUNT - 1);
             applyConfig();
@@ -63,8 +60,7 @@ namespace androidmenu {
         if (sleepMode >= 2) {
             bool changed = false;
 
-            ImGui::LeftLabel("Dim screen after (min)");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+            ImGui::LeftLabelFill("Dim screen after (min)");
             if (ImGui::InputInt("##android_dim_min", &screenDimMin, 1, 5)) {
                 screenDimMin  = std::max(1, screenDimMin);
                 screenDarkMin = std::max(screenDimMin + 1, screenDarkMin);
@@ -73,8 +69,7 @@ namespace androidmenu {
 
             // ── Blank threshold (DIM_AND_BLANK=3 only) ───────────────────────────
             if (sleepMode >= 3) {
-                ImGui::LeftLabel("Screen off after (min)");
-                ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+                ImGui::LeftLabelFill("Screen off after (min)");
                 if (ImGui::InputInt("##android_dark_min", &screenDarkMin, 1, 5)) {
                     screenDarkMin = std::max(screenDimMin + 1, screenDarkMin);
                     changed = true;

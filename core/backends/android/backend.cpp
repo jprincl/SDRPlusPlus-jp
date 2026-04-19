@@ -121,8 +121,7 @@ namespace backend {
         backend::init();
         style::loadFonts(root + "/res"); // TODO: Don't hardcode, use config
         icons::load(root + "/res");
-        thememenu::applyTheme();
-        ImGui::GetStyle().ScaleAllSizes(style::uiScale);
+        style::applyScaledStyle(thememenu::applyTheme);
         gui::mainWindow.setFirstMenuRender();
     }
 
@@ -224,18 +223,19 @@ namespace backend {
 
                 // Move the ImGui cursor to the pinch centroid so that the
                 // waterfall's mouseIn* hit-tests resolve to the right region.
-                float cx = (p[0][0] + p[1][0]) * 0.5f;
-                float cy = (p[0][1] + p[1][1]) * 0.5f;
                 ImGuiIO& io = ImGui::GetIO();
-                io.AddMousePosEvent(cx, cy);
+                io.AddMousePosEvent((p[0][0] + p[1][0]) * 0.5f,
+                                    (p[0][1] + p[1][1]) * 0.5f);
 
-                // Inject Ctrl+scroll so the waterfall zoom handler fires.
-                // Positive delta (fingers apart) → positive wheel → zoom in.
-                // Sensitivity: ~60 px of finger travel = 1 scroll unit.
+                // Carry zoom via the horizontal wheel axis.  Using H-wheel (X)
+                // instead of Ctrl+V-wheel avoids any key-state timing dependency:
+                // MouseWheelH is accumulated per-frame independently of KeyCtrl,
+                // so it is safe even when MOVE and POINTER_UP land in the same
+                // pre-frame input batch.
+                // Positive delta (fingers apart) = zoom in = positive wheel.
+                // Sensitivity: ~60 px of finger separation = 1 scroll unit.
                 if (fabsf(delta) > 0.5f) {
-                    io.AddKeyEvent(ImGuiKey_ModCtrl, true);
-                    io.AddMouseWheelEvent(0.0f, delta / 60.0f);
-                    io.AddKeyEvent(ImGuiKey_ModCtrl, false);
+                    io.AddMouseWheelEvent(delta / 60.0f, 0.0f);
                 }
                 return 1;
             }

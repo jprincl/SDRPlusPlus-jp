@@ -11,11 +11,12 @@ namespace credits {
     ImVec2 imageSize(128.0f, 128.0f);
 
     void init() {
-        imageSize = ImVec2(128.0f * style::uiScale, 128.0f * style::uiScale);
+        imageSize = style::dp(128.0f, 128.0f);
     }
 
     void show() {
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
+        imageSize = style::dp(128.0f, 128.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, style::dp(20.0f, 20.0f));
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
         ImVec2 dispSize = ImGui::GetIO().DisplaySize;
         ImVec2 center = ImVec2(dispSize.x / 2.0f, dispSize.y / 2.0f);

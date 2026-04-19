@@ -154,6 +154,9 @@
 #ifdef GHC_EXPAND_IMPL
 
 #ifdef GHC_OS_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 // additional includes
 #include <shellapi.h>

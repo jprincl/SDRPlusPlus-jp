@@ -127,7 +127,6 @@ namespace displaymenu {
     }
 
     void draw(void* ctx) {
-        float menuWidth = ImGui::GetContentRegionAvail().x;
         if (ImGui::Checkbox("Show Waterfall##_sdrpp", &showWaterfall)) {
             setWaterfallShown(showWaterfall);
         }
@@ -201,8 +200,7 @@ namespace displaymenu {
             restartRequired = true;
         }
 
-        ImGui::LeftLabel("FFT Framerate");
-        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::LeftLabelFill("FFT Framerate");
         if (ImGui::InputInt("##sdrpp_fft_rate", &fftRate, 1, 10)) {
             fftRate = std::max<int>(1, fftRate);
             sigpath::iqFrontEnd.setFFTRate(fftRate);
@@ -212,8 +210,7 @@ namespace displaymenu {
             core::configManager.release(true);
         }
 
-        ImGui::LeftLabel("FFT Size");
-        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::LeftLabelFill("FFT Size");
         if (ImGui::Combo("##sdrpp_fft_size", &fftSizeId, fftSizes.txt)) {
             sigpath::iqFrontEnd.setFFTSize(fftSizes.value(fftSizeId));
             core::configManager.acquire();
@@ -221,8 +218,7 @@ namespace displaymenu {
             core::configManager.release(true);
         }
 
-        ImGui::LeftLabel("FFT Window");
-        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::LeftLabelFill("FFT Window");
         if (ImGui::Combo("##sdrpp_fft_window", &selectedWindow, "Rectangular\0Blackman\0Nuttall\0")) {
             sigpath::iqFrontEnd.setFFTWindow(fftWindowList[selectedWindow]);
             core::configManager.acquire();
@@ -231,8 +227,7 @@ namespace displaymenu {
         }
 
         if (colorMapNames.size() > 0) {
-            ImGui::LeftLabel("Color Map");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+            ImGui::LeftLabelFill("Color Map");
             if (ImGui::Combo("##_sdrpp_color_map_sel", &colorMapId, colorMapNamesTxt.c_str())) {
                 colormaps::Map map = colormaps::maps[colorMapNames[colorMapId]];
                 gui::waterfall.updatePalletteFromArray(map.map, map.entryCount);

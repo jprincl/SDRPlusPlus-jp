@@ -40,6 +40,7 @@ private:
     // Cached maxFreq and limitFreq to detect a change of layout.
     uint64_t lastMaxFreq = 0;
     bool lastLimitFreq = false;
+    uint64_t lastScaleEpoch = 0;
 
     char buf[100];
     float cachedWidth_ = 0.0f;

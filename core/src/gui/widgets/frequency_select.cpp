@@ -128,8 +128,10 @@ void FrequencySelect::draw() {
             digits[i] = 0;
     }
 
-    if (widgetPos.x != lastWidgetPos.x || widgetPos.y != lastWidgetPos.y || firstDigitChanged) {
+    uint64_t currentScaleEpoch = style::scaleEpoch();
+    if (widgetPos.x != lastWidgetPos.x || widgetPos.y != lastWidgetPos.y || firstDigitChanged || currentScaleEpoch != lastScaleEpoch) {
         lastWidgetPos = widgetPos;
+        lastScaleEpoch = currentScaleEpoch;
         onPosChange();
     }
 

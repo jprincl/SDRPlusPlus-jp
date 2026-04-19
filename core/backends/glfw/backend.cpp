@@ -8,9 +8,12 @@
 #include <version.h>
 #include <core.h>
 #include <filesystem>
+#include <atomic>
 #include <stb_image.h>
 #include <stb_image_resize.h>
 #include <gui/gui.h>
+#include <gui/style.h>
+#include <gui/menus/theme.h>
 
 namespace backend {
     const char* OPENGL_VERSIONS_GLSL[] = {
@@ -49,6 +52,8 @@ namespace backend {
     GLFWwindow* window;
     GLFWmonitor* monitor;
     float detectedContentScale = 1.0f;
+    std::atomic<float> pendingContentScale{0.0f};
+    std::string storedResDir;
 
     static void glfw_error_callback(int error, const char* description) {
         flog::error("Glfw Error {0}: {1}", error, description);
@@ -63,7 +68,36 @@ namespace backend {
         }
     }
 
+    static void onWindowContentScaleChanged(GLFWwindow* w, float xscale, float yscale) {
+        pendingContentScale.store(xscale);
+    }
+
+    static void applyContentScale(float newScale) {
+        float oldScale = style::uiScale;
+        if (newScale == oldScale) { return; }
+        flog::info("Content scale changed: {:.2f} -> {:.2f}", oldScale, newScale);
+
+        // Update global scale first — loadFonts and ScaleAllSizes both read it
+        style::setUIScale(newScale);
+
+        // Reset ImGui style to theme defaults then apply fresh absolute scaling
+        style::applyScaledStyle(thememenu::applyTheme);
+
+        // Rebuild font atlas at new sizes
+        ImGui::GetIO().Fonts->Clear();
+        style::loadFonts(storedResDir);
+        ImGui_ImplOpenGL3_DestroyFontsTexture();
+        ImGui_ImplOpenGL3_CreateFontsTexture();
+
+        // Rescale the menu panel and persist both values
+        gui::mainWindow.onContentScaleChanged(oldScale);
+        core::configManager.acquire();
+        core::configManager.conf["uiScale"] = newScale;
+        core::configManager.release(true);
+    }
+
     int init(std::string resDir) {
+        storedResDir = resDir;
         // Load config
         core::configManager.acquire();
         winWidth = core::configManager.conf["windowSize"]["w"];
@@ -76,16 +110,6 @@ namespace backend {
         glfwSetErrorCallback(glfw_error_callback);
         if (!glfwInit()) {
             return 1;
-        }
-
-        // Detect OS display scaling before creating a window
-        {
-            GLFWmonitor* primary = glfwGetPrimaryMonitor();
-            if (primary) {
-                float xscale = 1.0f, yscale = 1.0f;
-                glfwGetMonitorContentScale(primary, &xscale, &yscale);
-                detectedContentScale = xscale;
-            }
         }
 
     #ifdef __APPLE__
@@ -127,6 +151,13 @@ namespace backend {
         }
 
     #endif
+
+        // Query the content scale of the display the window actually landed on
+        if (window) {
+            float xscale = 1.0f, yscale = 1.0f;
+            glfwGetWindowContentScale(window, &xscale, &yscale);
+            detectedContentScale = xscale;
+        }
 
         // Load app icon
         if (!std::filesystem::is_regular_file(resDir + "/icons/sdrpp.png")) {
@@ -187,6 +218,7 @@ namespace backend {
 
         // Setup Platform/Renderer bindings
         ImGui_ImplGlfw_InitForOpenGL(window, true);
+        glfwSetWindowContentScaleCallback(window, onWindowContentScaleChanged);
 
         if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
             // If init fail, try to fall back on GLSL 1.2
@@ -251,6 +283,13 @@ namespace backend {
         // Main loop
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+
+            // Apply a pending content scale change (fired when window moves between displays)
+            float pending = pendingContentScale.exchange(0.0f);
+            if (pending > 0.0f) {
+                float snapped = std::clamp(std::round(pending), 1.0f, 4.0f);
+                applyContentScale(snapped);
+            }
 
             beginFrame();
             

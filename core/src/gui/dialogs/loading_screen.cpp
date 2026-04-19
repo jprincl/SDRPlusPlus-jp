@@ -11,16 +11,17 @@ namespace LoadingScreen {
     ImVec2 imageSize(128.0f, 128.0f);
 
     void init() {
-        imageSize = ImVec2(128.0f * style::uiScale, 128.0f * style::uiScale);
+        imageSize = style::dp(128.0f, 128.0f);
     }
 
     void show(std::string msg) {
         backend::beginFrame();
+        imageSize = style::dp(128.0f, 128.0f);
 
         ImGui::Begin("Main", NULL, WINDOW_FLAGS);
 
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, style::dp(20.0f, 20.0f));
         ImGui::OpenPopup("Credits");
         ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         ImGui::BeginPopupModal("Credits", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground);
@@ -32,7 +33,7 @@ namespace LoadingScreen {
         ImGui::Image(icons::LOGO, imageSize);
 
         ImVec2 origPos = ImGui::GetCursorPos();
-        ImGui::SetCursorPosY(origPos.y + 50);
+        ImGui::SetCursorPosY(origPos.y + style::dp(50.0f));
         ImGui::Text("%s", msg.c_str());
         ImGui::SetCursorPos(origPos);
 
