@@ -8,7 +8,7 @@ public:
     FrequencySelect();
     void init();
     void draw();
-    float getWidth() const;
+    float getWidth();
     void setFrequency(int64_t freq);
 
     uint64_t frequency;

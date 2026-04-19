@@ -65,6 +65,7 @@ namespace style {
     }
 
     void applyScaledStyle(const std::function<void()>& resetStyle) {
+        ImGui::GetStyle() = ImGuiStyle();
         resetStyle();
         ImGui::GetStyle().ScaleAllSizes(uiScale);
     }

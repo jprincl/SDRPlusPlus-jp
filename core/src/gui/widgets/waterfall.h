@@ -241,6 +241,7 @@ namespace ImGui {
 
         ImVec2 lastWidgetPos;
         ImVec2 lastWidgetSize;
+        uint64_t lastScaleEpoch = 0;
 
         ImGuiWindow* window;
 

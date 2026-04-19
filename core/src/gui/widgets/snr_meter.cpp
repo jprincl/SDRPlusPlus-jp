@@ -8,16 +8,21 @@
 #include <imgui/imgui_internal.h>
 
 namespace {
-    // Recompute only when the font pointer changes (e.g. after a style reload).
-    static ImFont* cachedFont = nullptr;
-    static float   cachedWidth = 0.0f;
+    // Key the cache on the font pointer AND the scale epoch: a font atlas
+    // rebuild can reuse the same pointer address, and style::dp() feeds the
+    // cached width even when the font pointer is unchanged.
+    static ImFont*  cachedFont = nullptr;
+    static uint64_t cachedEpoch = UINT64_MAX;
+    static float    cachedWidth = 0.0f;
 };
 
-namespace ImGui {    
+namespace ImGui {
     float GetSNRMeterMinWidth() {
         ImFont* currentFont = ImGui::GetFont();
-        if (currentFont != cachedFont) {
+        uint64_t currentEpoch = style::scaleEpoch();
+        if (currentFont != cachedFont || currentEpoch != cachedEpoch) {
             cachedFont = currentFont;
+            cachedEpoch = currentEpoch;
             float maxLabelWidth = 0.0f;
             char buf[32];
             // 10 tick labels (0, 10, 20, … 90) over 9 intervals; minimum width

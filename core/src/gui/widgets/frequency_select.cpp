@@ -93,7 +93,24 @@ void FrequencySelect::moveCursorToDigit(int i) {
     backend::setMouseScreenPos(nxpos, ypos);
 }
 
-float FrequencySelect::getWidth() const {
+float FrequencySelect::getWidth() {
+    // getWidth() is called during top-bar layout before draw() runs, so it
+    // must refresh the cache itself when the scale changes — otherwise the
+    // first scaled frame reserves space using old-scale digit widths.
+    uint64_t currentScaleEpoch = style::scaleEpoch();
+    if (currentScaleEpoch != lastScaleEpoch || cachedWidth_ == 0.0f) {
+        ImGui::PushFont(style::bigFont);
+        float digitWidth = ImGui::CalcTextSize("0").x;
+        float commaWidth = ImGui::CalcTextSize(".").x;
+        ImGui::PopFont();
+        int commaCount = 0;
+        for (int i = firstDigit; i < 11; i++) {
+            if ((i + 1) % 3 == 0) { commaCount++; }
+        }
+        cachedWidth_ = (12 - firstDigit) * digitWidth + commaCount * commaWidth + 17.0f * style::uiScale;
+        // Don't update lastScaleEpoch here — draw() still needs to see the
+        // change to recompute the digit position arrays.
+    }
     return cachedWidth_;
 }
 

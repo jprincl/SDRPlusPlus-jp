@@ -1,6 +1,7 @@
 #include <gui/main_window.h>
 #include <gui/gui.h>
 #include "imgui.h"
+#include <imgui_internal.h>
 #include <stdio.h>
 #include <thread>
 #include <complex>
@@ -30,6 +31,26 @@
 #include <gui/tuner.h>
 #include <algorithm>
 #include <cmath>
+
+namespace {
+    void invalidateChildLayoutCache(ImGuiWindow* parent, const char* childName) {
+        if (parent == NULL) { return; }
+
+        ImGuiID childId = parent->GetID(childName);
+        ImGuiContext& g = *GImGui;
+        for (int i = 0; i < g.Windows.Size; i++) {
+            ImGuiWindow* child = g.Windows[i];
+            if (child == NULL || child->ParentWindow != parent || child->ChildId != childId) { continue; }
+
+            child->ContentSize = ImVec2(0, 0);
+            child->ContentSizeIdeal = ImVec2(0, 0);
+            child->ScrollbarSizes = ImVec2(0, 0);
+            child->ScrollbarX = false;
+            child->ScrollbarY = false;
+            return;
+        }
+    }
+}
 
 void MainWindow::init() {
     LoadingScreen::show("Initializing UI");
@@ -289,6 +310,25 @@ void MainWindow::draw() {
     ImGui::Begin("Main", NULL, WINDOW_FLAGS);
     ImVec4 textCol = ImGui::GetStyleColorVec4(ImGuiCol_Text);
 
+    // On a scale change, child windows still carry the previous
+    // frame's ContentSize/ScrollbarSizes. ImGui uses those to decide
+    // scrollbar visibility for the current frame, so after a scale change
+    // FillWidth()/GetContentRegionAvail() inside the left panel and the
+    // waterfall-controls column are off by ScrollbarSize for a frame.
+    // Clear those values so ImGui re-evaluates from the current frame.
+    {
+        static uint64_t lastLayoutScaleEpoch = 0;
+        uint64_t currentLayoutEpoch = style::scaleEpoch();
+        if (currentLayoutEpoch != lastLayoutScaleEpoch) {
+            lastLayoutScaleEpoch = currentLayoutEpoch;
+            const char* names[] = { "Left Column", "Waterfall", "WaterfallControls" };
+            ImGuiWindow* mainWindow = ImGui::GetCurrentWindow();
+            for (const char* name : names) {
+                invalidateChildLayoutCache(mainWindow, name);
+            }
+        }
+    }
+
     ImGui::WaterfallVFO* vfo = NULL;
     if (gui::waterfall.selectedVFO != "") {
         vfo = gui::waterfall.vfos[gui::waterfall.selectedVFO];
@@ -509,7 +549,7 @@ void MainWindow::draw() {
         if (grabbingMenu) {
             newWidth = mousePos.x;
             newWidth = style::clampSplit(newWidth, winSize.x, 250.0f, 250.0f);
-            ImGui::GetForegroundDrawList()->AddLine(ImVec2(newWidth, curY), ImVec2(newWidth, winSize.y - 10), ImGui::GetColorU32(ImGuiCol_SeparatorActive));
+            ImGui::GetForegroundDrawList()->AddLine(ImVec2(newWidth, curY), ImVec2(newWidth, winSize.y - style::dp(10.0f)), ImGui::GetColorU32(ImGuiCol_SeparatorActive));
         }
         float separatorHitRadius = (2.0f * style::uiScale);
 #ifdef ANDROID

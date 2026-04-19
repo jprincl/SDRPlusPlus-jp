@@ -820,8 +820,14 @@ namespace ImGui {
         wfMin = ImVec2(fftAreaMin.x, freqAreaMax.y + 1);
         wfMax = ImVec2(fftAreaMin.x + dataWidth, wfMin.y + waterfallHeight);
 
-        maxHSteps = dataWidth / (ImGui::CalcTextSize("000.000").x + 10);
-        maxVSteps = fftHeight / (ImGui::CalcTextSize("000.000").y);
+        // Use style::baseFont directly — GImGui->Font is stale when onResize() is called
+        // from setFFTHeight() during a scale change (before NewFrame() restores it).
+        {
+            float tw = style::baseFont->CalcTextSizeA(style::baseFont->FontSize, FLT_MAX, 0.0f, "000.000").x;
+            float th = style::baseFont->CalcTextSizeA(style::baseFont->FontSize, FLT_MAX, 0.0f, "000.000").y;
+            maxHSteps = dataWidth / (tw + style::dp(10.0f));
+            maxVSteps = fftHeight / th;
+        }
 
         range = findBestRange(viewBandwidth, maxHSteps);
         vRange = findBestRange(fftMax - fftMin, maxVSteps);
@@ -850,8 +856,14 @@ namespace ImGui {
             lastWidgetPos = widgetPos;
             onPositionChange();
         }
-        if (widgetSize.x != lastWidgetSize.x || widgetSize.y != lastWidgetSize.y) {
+        // Force a layout recompute on scale changes: onContentScaleChanged()
+        // triggers setFFTHeight() -> onResize() pre-frame with stale widgetPos,
+        // and draw()'s size check can miss transitions where the widget pixel
+        // size happens to stay the same across a scale change.
+        uint64_t currentScaleEpoch = style::scaleEpoch();
+        if (widgetSize.x != lastWidgetSize.x || widgetSize.y != lastWidgetSize.y || currentScaleEpoch != lastScaleEpoch) {
             lastWidgetSize = widgetSize;
+            lastScaleEpoch = currentScaleEpoch;
             onResize();
         }
 
@@ -1147,10 +1159,11 @@ namespace ImGui {
             vfo->wfRectMax = ImVec2(vfo->rectMax.x, wfMax.y);
             vfo->wfLineMin = ImVec2(vfo->lineMin.x, wfMin.y - 1);
             vfo->wfLineMax = ImVec2(vfo->lineMax.x, wfMax.y - 1);
-            vfo->wfLbwSelMin = ImVec2(vfo->wfRectMin.x - 2, vfo->wfRectMin.y);
-            vfo->wfLbwSelMax = ImVec2(vfo->wfRectMin.x + 2, vfo->wfRectMax.y);
-            vfo->wfRbwSelMin = ImVec2(vfo->wfRectMax.x - 2, vfo->wfRectMin.y);
-            vfo->wfRbwSelMax = ImVec2(vfo->wfRectMax.x + 2, vfo->wfRectMax.y);
+            float wfGrip = style::dp(2.0f);
+            vfo->wfLbwSelMin = ImVec2(vfo->wfRectMin.x - wfGrip, vfo->wfRectMin.y);
+            vfo->wfLbwSelMax = ImVec2(vfo->wfRectMin.x + wfGrip, vfo->wfRectMax.y);
+            vfo->wfRbwSelMin = ImVec2(vfo->wfRectMax.x - wfGrip, vfo->wfRectMin.y);
+            vfo->wfRbwSelMax = ImVec2(vfo->wfRectMax.x + wfGrip, vfo->wfRectMax.y);
             vfo->redrawRequired = false;
         }
     }
