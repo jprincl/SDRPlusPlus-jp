@@ -2,6 +2,7 @@
 #include <imgui.h>
 #include <gui/gui.h>
 #include <core.h>
+#include <backend.h>
 #include <gui/colormaps.h>
 #include <gui/gui.h>
 #include <gui/main_window.h>
@@ -20,8 +21,7 @@ namespace displaymenu {
     int selectedWindow = 0;
     int fftRate = 20;
     int fftSizeId = 0;
-    int uiScaleId = 0;
-    bool restartRequired = false;
+    int uiScaleFactorId = 0;
     bool fftHold = false;
     int fftHoldSpeed = 60;
     bool fftSmoothing = false;
@@ -30,7 +30,7 @@ namespace displaymenu {
     int snrSmoothingSpeed = 20;
 
     OptionList<int, int> fftSizes;
-    OptionList<float, float> uiScales;
+    OptionList<float, float> uiScaleFactors;
 
     const IQFrontEnd::FFTWindow fftWindowList[] = {
         IQFrontEnd::FFTWindow::RECTANGULAR,
@@ -104,12 +104,15 @@ namespace displaymenu {
         gui::waterfall.setSNRSmoothing(snrSmoothing);
         updateFFTSpeeds();
 
-        // Define and load UI scales
-        uiScales.define(1.0f, "100%", 1.0f);
-        uiScales.define(2.0f, "200%", 2.0f);
-        uiScales.define(3.0f, "300%", 3.0f);
-        uiScales.define(4.0f, "400%", 4.0f);
-        uiScaleId = uiScales.valueId(style::uiScale);
+        // Define and load UI scale factor options
+        uiScaleFactors.define(0.50f, "50%",  0.50f);
+        uiScaleFactors.define(0.75f, "75%",  0.75f);
+        uiScaleFactors.define(1.00f, "100%", 1.00f);
+        uiScaleFactors.define(1.50f, "150%", 1.50f);
+        uiScaleFactors.define(2.00f, "200%", 2.00f);
+        float factor = core::configManager.conf["uiScaleFactor"];
+        uiScaleFactorId = uiScaleFactors.valueId(factor);
+        if (uiScaleFactorId < 0) { uiScaleFactorId = uiScaleFactors.valueId(1.00f); }
     }
 
     void setWaterfallShown(bool shown) {
@@ -191,13 +194,10 @@ namespace displaymenu {
             core::configManager.release(true);
         }
 
-        ImGui::LeftLabel("High-DPI Scaling");
+        ImGui::LeftLabel("UI Scale Adjustment");
         ImGui::FillWidth();
-        if (ImGui::Combo("##sdrpp_ui_scale", &uiScaleId, uiScales.txt)) {
-            core::configManager.acquire();
-            core::configManager.conf["uiScale"] = uiScales[uiScaleId];
-            core::configManager.release(true);
-            restartRequired = true;
+        if (ImGui::Combo("##sdrpp_ui_scale", &uiScaleFactorId, uiScaleFactors.txt)) {
+            backend::setUserScaleFactor(uiScaleFactors[uiScaleFactorId]);
         }
 
         ImGui::LeftLabelFill("FFT Framerate");
@@ -239,8 +239,5 @@ namespace displaymenu {
             ImGui::Text("Color map Author: %s", colorMapAuthor.c_str());
         }
 
-        if (restartRequired) {
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Restart required.");
-        }
     }
 }

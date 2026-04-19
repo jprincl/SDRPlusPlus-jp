@@ -234,11 +234,7 @@ int sdrpp_main(int argc, char* argv[]) {
 
     // Themes
     defConfig["theme"] = "Dark";
-#ifdef __ANDROID__
-    defConfig["uiScale"] = 3.0f;
-#else
-    defConfig["uiScale"] = 1.0f;
-#endif
+    defConfig["uiScaleFactor"] = 1.0f;
 
     defConfig["modules"] = json::array();
 
@@ -363,8 +359,11 @@ int sdrpp_main(int argc, char* argv[]) {
         core::configManager.conf["moduleInstances"][_name] = newMod;
     }
 
-    // Load UI scaling
-    style::setUIScale(core::configManager.conf["uiScale"]);
+    // Load UI scale factor; detected scale is not known yet (backend not initialized),
+    // so set a temporary scale using the factor alone. The correct effective scale is
+    // applied after backend::init() below, before any font loading.
+    float uiScaleFactor = core::configManager.conf["uiScaleFactor"];
+    style::setUIScale(uiScaleFactor);
 
     style::migrateLogicalDimension(core::configManager.conf, "menuWidth", "menuWidthLogical", 250.0f, [](float value) {
         return style::uiScale > 1.0f && value > 300.0f;
@@ -393,18 +392,19 @@ int sdrpp_main(int argc, char* argv[]) {
     int biRes = backend::init(resDir);
     if (biRes < 0) { return biRes; }
 
-    // On first start, auto-detect the OS display scaling and derive uiScale and menuWidth from it.
-    // This must happen after backend init (GLFW/EGL available for DPI query) but before font
-    // loading, which is the first consumer of style::uiScale.
+    // Apply the correct effective scale now that the backend (GLFW) can report the actual
+    // OS display scale. detectedScale is kept in memory only — not persisted to config.
+    {
+        float detected  = backend::getContentScale();
+        float effective = std::clamp(detected * uiScaleFactor, 1.0f, 4.0f);
+        style::setUIScale(effective);
+        flog::info("UI scale: detected={:.2f}, factor={:.2f}, effective={:.2f}", detected, uiScaleFactor, effective);
+    }
+
     if (firstStart) {
-        float detected = backend::getContentScale();
-        float autoScale = std::clamp(std::round(detected), 1.0f, 4.0f);
-        style::setUIScale(autoScale);
         core::configManager.acquire();
-        core::configManager.conf["uiScale"]   = autoScale;
-        core::configManager.conf["menuWidth"] = 300; // logical (scale-independent) default
+        core::configManager.conf["menuWidth"] = 300;
         core::configManager.release(true);
-        flog::info("First start: detected content scale {:.2f}, using uiScale={:.0f}", detected, autoScale);
     }
 
     // Initialize SmGui in normal mode

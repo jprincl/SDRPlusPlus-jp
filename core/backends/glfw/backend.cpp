@@ -52,7 +52,9 @@ namespace backend {
     GLFWwindow* window;
     GLFWmonitor* monitor;
     float detectedContentScale = 1.0f;
+    float userScaleFactor = 1.0f;
     std::atomic<float> pendingContentScale{0.0f};
+    float pendingUserScaleFactor = 0.0f;
     std::string storedResDir;
 
     static void glfw_error_callback(int error, const char* description) {
@@ -72,27 +74,32 @@ namespace backend {
         pendingContentScale.store(xscale);
     }
 
-    static void applyContentScale(float newScale) {
+    static void doApplyScale(float newDetected, float newFactor) {
+        float effective = std::clamp(newDetected * newFactor, 1.0f, 4.0f);
         float oldScale = style::uiScale;
-        if (newScale == oldScale) { return; }
-        flog::info("Content scale changed: {:.2f} -> {:.2f}", oldScale, newScale);
-
-        // Update global scale first — loadFonts and ScaleAllSizes both read it
-        style::setUIScale(newScale);
-
-        // Reset ImGui style to theme defaults then apply fresh absolute scaling
+        if (std::fabs(effective - oldScale) < 0.0001f && newDetected == detectedContentScale) { return; }
+        flog::info("Scale: {:.3f} -> {:.3f} (detected={:.2f}, factor={:.2f})", oldScale, effective, newDetected, newFactor);
+        detectedContentScale = newDetected;
+        userScaleFactor = newFactor;
+        style::setUIScale(effective);
         style::applyScaledStyle(thememenu::applyTheme);
-
-        // Rebuild font atlas at new sizes
         ImGui::GetIO().Fonts->Clear();
         style::loadFonts(storedResDir);
         ImGui_ImplOpenGL3_DestroyFontsTexture();
         ImGui_ImplOpenGL3_CreateFontsTexture();
-
-        // Rescale the menu panel and persist both values
         gui::mainWindow.onContentScaleChanged(oldScale);
+    }
+
+    static void applyContentScale(float newDetected) {
+        doApplyScale(newDetected, userScaleFactor);
+    }
+
+    void setUserScaleFactor(float newFactor) {
+        // Defer the actual apply to the top of the render loop (before beginFrame/NewFrame),
+        // because this is called from within ImGui draw callbacks where the font atlas is locked.
+        pendingUserScaleFactor = newFactor;
         core::configManager.acquire();
-        core::configManager.conf["uiScale"] = newScale;
+        core::configManager.conf["uiScaleFactor"] = newFactor;
         core::configManager.release(true);
     }
 
@@ -104,6 +111,7 @@ namespace backend {
         winHeight = core::configManager.conf["windowSize"]["h"];
         maximized = core::configManager.conf["maximized"];
         fullScreen = core::configManager.conf["fullscreen"];
+        userScaleFactor = core::configManager.conf.value("uiScaleFactor", 1.0f);
         core::configManager.release();
 
         // Setup window
@@ -284,11 +292,15 @@ namespace backend {
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
-            // Apply a pending content scale change (fired when window moves between displays)
+            // Apply pending scale changes before NewFrame() — font atlas must not be locked
             float pending = pendingContentScale.exchange(0.0f);
             if (pending > 0.0f) {
-                float snapped = std::clamp(std::round(pending), 1.0f, 4.0f);
-                applyContentScale(snapped);
+                applyContentScale(pending);
+            }
+            if (pendingUserScaleFactor > 0.0f) {
+                float factor = pendingUserScaleFactor;
+                pendingUserScaleFactor = 0.0f;
+                doApplyScale(detectedContentScale, factor);
             }
 
             beginFrame();
