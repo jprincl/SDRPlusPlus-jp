@@ -1,4 +1,5 @@
 #include <backend.h>
+#include <backend_common.h>
 #include "android_backend.h"
 #include <core.h>
 #include <gui/gui.h>
@@ -15,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <string>
 #include <gui/icons.h>
 #include <gui/style.h>
 #include <gui/menus/theme.h>
@@ -39,6 +41,7 @@ namespace backend {
     bool exited = false;
     static bool wasPlayingBeforeSuspend = false;
     static bool restartOnResume = true;
+    static common::ScaleState scaleState;
     // Sleep-reset heartbeat state — accessed only from the app thread (same thread as render loop).
     static bool sleepResetMotionPending = false;
     static std::chrono::steady_clock::time_point sleepResetLastCall{};
@@ -46,6 +49,7 @@ namespace backend {
     // Forward declarations
     int ShowSoftKeyboardInput();
     int PollUnicodeChars();
+    float getContentScale();
     static UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids);
     static bool releaseUsbDeviceHandle(const UsbDeviceHandle& handle);
     static bool callActivityVoidMethod(const char* name);
@@ -116,12 +120,22 @@ namespace backend {
         jni.env->CallVoidMethod(app->activity->clazz, method, (jint)mode, (jint)dimAfterSec, (jint)darkAfterSec);
     }
 
+    void setUserScaleFactor(float newFactor) {
+        common::setUserScaleFactor(scaleState, newFactor);
+    }
+
     void doPartialInit() {
         std::string root = (std::string)core::args["root"];
-        backend::init();
-        style::loadFonts(root + "/res"); // TODO: Don't hardcode, use config
-        icons::load(root + "/res");
+        std::string resDir = root + "/res";
+        float oldScale = style::uiScale;
+        backend::init(resDir);
+        common::setScaleFromConfig(scaleState, getContentScale());
+        style::loadFonts(resDir); // TODO: Don't hardcode, use config
+        icons::load(resDir);
         style::applyScaledStyle(thememenu::applyTheme);
+        if (std::fabs(style::uiScale - oldScale) >= 0.0001f) {
+            gui::mainWindow.onContentScaleChanged(oldScale);
+        }
         gui::mainWindow.setFirstMenuRender();
     }
 
@@ -168,6 +182,10 @@ namespace backend {
             break;
         case APP_CMD_LOST_FOCUS:
             flog::warn("APP_CMD_LOST_FOCUS");
+            break;
+        case APP_CMD_CONFIG_CHANGED:
+            flog::warn("APP_CMD_CONFIG_CHANGED");
+            common::queueContentScale(scaleState, getContentScale());
             break;
         }
     }
@@ -320,6 +338,7 @@ namespace backend {
 
     int init(std::string resDir) {
         flog::warn("Backend init");
+        float userScaleFactor = common::configUserScaleFactor();
 
         // Get window
         aquireWindow();
@@ -371,6 +390,7 @@ namespace backend {
         ImGui_ImplAndroid_Init(app->window);
         ImGui_ImplOpenGL3_Init("#version 300 es");
 
+        common::initScaleState(scaleState, resDir, getContentScale(), userScaleFactor);
         return 0;
     }
 
@@ -382,13 +402,8 @@ namespace backend {
     }
 
     void render(bool vsync) {
-        // Rendering
-        ImGui::Render();
         auto dSize = ImGui::GetIO().DisplaySize;
-        glViewport(0, 0, dSize.x, dSize.y);
-        glClearColor(gui::themeManager.clearColor.x, gui::themeManager.clearColor.y, gui::themeManager.clearColor.z, gui::themeManager.clearColor.w);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        common::renderOpenGLFrame((int)dSize.x, (int)dSize.y);
         eglSwapBuffers(_EglDisplay, _EglSurface);
     }
 
@@ -438,13 +453,17 @@ namespace backend {
                     }
                 }
 
-                // Initiate a new frame
-                ImGuiIO& io = ImGui::GetIO();
-                auto dsize = io.DisplaySize;
-
                 // Poll Unicode characters via JNI
                 // FIXME: do not call this every frame because of JNI overhead
                 PollUnicodeChars();
+
+                common::applyPendingScaleChanges(scaleState, getContentScale(), true);
+
+                // Initiate a new frame
+                beginFrame();
+
+                ImGuiIO& io = ImGui::GetIO();
+                auto dsize = io.DisplaySize;
 
                 // Open on-screen (soft) input if requested by Dear ImGui
                 static bool WantTextInputLast = false;
@@ -453,13 +472,7 @@ namespace backend {
                 WantTextInputLast = io.WantTextInput;
 
                 // Render
-                beginFrame();
-                
-                if (dsize.x > 0 && dsize.y > 0) {
-                    ImGui::SetNextWindowPos(ImVec2(0, 0));
-                    ImGui::SetNextWindowSize(ImVec2(dsize.x, dsize.y));
-                    gui::mainWindow.draw();
-                }
+                common::drawMainWindow(dsize);
                 render();
             }
             else if (sleepRenderPaused && !pauseRendering) {

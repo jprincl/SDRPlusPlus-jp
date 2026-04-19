@@ -1,4 +1,5 @@
 #include <backend.h>
+#include <backend_common.h>
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -8,12 +9,8 @@
 #include <version.h>
 #include <core.h>
 #include <filesystem>
-#include <atomic>
 #include <stb_image.h>
 #include <stb_image_resize.h>
-#include <gui/gui.h>
-#include <gui/style.h>
-#include <gui/menus/theme.h>
 
 namespace backend {
     const char* OPENGL_VERSIONS_GLSL[] = {
@@ -51,11 +48,7 @@ namespace backend {
     int _winWidth, _winHeight;
     GLFWwindow* window;
     GLFWmonitor* monitor;
-    float detectedContentScale = 1.0f;
-    float userScaleFactor = 1.0f;
-    std::atomic<float> pendingContentScale{0.0f};
-    float pendingUserScaleFactor = 0.0f;
-    std::string storedResDir;
+    common::ScaleState scaleState;
 
     static void glfw_error_callback(int error, const char* description) {
         flog::error("Glfw Error {0}: {1}", error, description);
@@ -71,48 +64,22 @@ namespace backend {
     }
 
     static void onWindowContentScaleChanged(GLFWwindow* w, float xscale, float yscale) {
-        pendingContentScale.store(xscale);
-    }
-
-    static void doApplyScale(float newDetected, float newFactor) {
-        float effective = std::clamp(newDetected * newFactor, 1.0f, 4.0f);
-        float oldScale = style::uiScale;
-        if (std::fabs(effective - oldScale) < 0.0001f && newDetected == detectedContentScale) { return; }
-        flog::info("Scale: {:.3f} -> {:.3f} (detected={:.2f}, factor={:.2f})", oldScale, effective, newDetected, newFactor);
-        detectedContentScale = newDetected;
-        userScaleFactor = newFactor;
-        style::setUIScale(effective);
-        style::applyScaledStyle(thememenu::applyTheme);
-        ImGui::GetIO().Fonts->Clear();
-        style::loadFonts(storedResDir);
-        ImGui_ImplOpenGL3_DestroyFontsTexture();
-        ImGui_ImplOpenGL3_CreateFontsTexture();
-        gui::mainWindow.onContentScaleChanged(oldScale);
-    }
-
-    static void applyContentScale(float newDetected) {
-        doApplyScale(newDetected, userScaleFactor);
+        common::queueContentScale(scaleState, xscale);
     }
 
     void setUserScaleFactor(float newFactor) {
-        // Defer the actual apply to the top of the render loop (before beginFrame/NewFrame),
-        // because this is called from within ImGui draw callbacks where the font atlas is locked.
-        pendingUserScaleFactor = newFactor;
-        core::configManager.acquire();
-        core::configManager.conf["uiScaleFactor"] = newFactor;
-        core::configManager.release(true);
+        common::setUserScaleFactor(scaleState, newFactor);
     }
 
     int init(std::string resDir) {
-        storedResDir = resDir;
         // Load config
         core::configManager.acquire();
         winWidth = core::configManager.conf["windowSize"]["w"];
         winHeight = core::configManager.conf["windowSize"]["h"];
         maximized = core::configManager.conf["maximized"];
         fullScreen = core::configManager.conf["fullscreen"];
-        userScaleFactor = core::configManager.conf.value("uiScaleFactor", 1.0f);
         core::configManager.release();
+        float userScaleFactor = common::configUserScaleFactor();
 
         // Setup window
         glfwSetErrorCallback(glfw_error_callback);
@@ -164,7 +131,7 @@ namespace backend {
         if (window) {
             float xscale = 1.0f, yscale = 1.0f;
             glfwGetWindowContentScale(window, &xscale, &yscale);
-            detectedContentScale = xscale;
+            common::initScaleState(scaleState, resDir, xscale, userScaleFactor);
         }
 
         // Load app icon
@@ -261,20 +228,16 @@ namespace backend {
 
     void render(bool vsync) {
         // Rendering
-        ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
-        glClearColor(gui::themeManager.clearColor.x, gui::themeManager.clearColor.y, gui::themeManager.clearColor.z, gui::themeManager.clearColor.w);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        common::renderOpenGLFrame(display_w, display_h);
 
         glfwSwapInterval(vsync);
         glfwSwapBuffers(window);
     }
 
     float getContentScale() {
-        return detectedContentScale;
+        return scaleState.detectedContentScale;
     }
 
     void getMouseScreenPos(double& x, double& y) {
@@ -292,16 +255,7 @@ namespace backend {
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
 
-            // Apply pending scale changes before NewFrame() — font atlas must not be locked
-            float pending = pendingContentScale.exchange(0.0f);
-            if (pending > 0.0f) {
-                applyContentScale(pending);
-            }
-            if (pendingUserScaleFactor > 0.0f) {
-                float factor = pendingUserScaleFactor;
-                pendingUserScaleFactor = 0.0f;
-                doApplyScale(detectedContentScale, factor);
-            }
+            common::applyPendingScaleChanges(scaleState, scaleState.detectedContentScale, false);
 
             beginFrame();
             
@@ -349,9 +303,7 @@ namespace backend {
             }
 
             if (winWidth > 0 && winHeight > 0) {
-                ImGui::SetNextWindowPos(ImVec2(0, 0));
-                ImGui::SetNextWindowSize(ImVec2(_winWidth, _winHeight));
-                gui::mainWindow.draw();
+                common::drawMainWindow(ImVec2(_winWidth, _winHeight));
             }
 
             render();
