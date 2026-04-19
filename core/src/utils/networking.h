@@ -9,6 +9,9 @@
 #include <condition_variable>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #else
