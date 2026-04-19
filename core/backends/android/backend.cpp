@@ -8,6 +8,7 @@
 #include <android/log.h>
 #include <android_native_app_glue.h>
 #include <android/asset_manager.h>
+#include <android/configuration.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <stdint.h>
@@ -478,6 +479,14 @@ namespace backend {
         }
 
         return 0;
+    }
+
+    float getContentScale() {
+        if (!app || !app->config) return 3.0f;
+        int32_t density = AConfiguration_getDensity(app->config);
+        if (density <= 0 || density == ACONFIGURATION_DENSITY_ANY || density == ACONFIGURATION_DENSITY_NONE)
+            return 3.0f;
+        return density / 160.0f;
     }
 
     int end() {

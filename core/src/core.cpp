@@ -289,6 +289,7 @@ int sdrpp_main(int argc, char* argv[]) {
     // Load config
     flog::info("Loading config");
     core::configManager.setPath(root + "/config.json");
+    bool firstStart = !std::filesystem::exists(root + "/config.json");
     core::configManager.load(defConfig);
     core::configManager.enableAutoSave();
     core::configManager.acquire();
@@ -380,6 +381,20 @@ int sdrpp_main(int argc, char* argv[]) {
     // Initialize backend
     int biRes = backend::init(resDir);
     if (biRes < 0) { return biRes; }
+
+    // On first start, auto-detect the OS display scaling and derive uiScale and menuWidth from it.
+    // This must happen after backend init (GLFW/EGL available for DPI query) but before font
+    // loading, which is the first consumer of style::uiScale.
+    if (firstStart) {
+        float detected = backend::getContentScale();
+        float autoScale = std::clamp(std::round(detected), 1.0f, 4.0f);
+        style::uiScale = autoScale;
+        core::configManager.acquire();
+        core::configManager.conf["uiScale"]   = autoScale;
+        core::configManager.conf["menuWidth"] = (int)(300.0f * autoScale);
+        core::configManager.release(true);
+        flog::info("First start: detected content scale {:.2f}, using uiScale={:.0f}", detected, autoScale);
+    }
 
     // Initialize SmGui in normal mode
     SmGui::init(false);

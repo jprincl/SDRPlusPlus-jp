@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
 import android.hardware.usb.*;
+import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.Manifest;
@@ -105,7 +106,7 @@ class MainActivity : NativeActivity() {
 
     // Audio routing change detection
     private var lastKnownPreferredOutputId: Int = -1
-    private val audioDeviceCallback = object : AudioManager.AudioDeviceCallback() {
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = checkRoutingChanged()
         override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = checkRoutingChanged()
 

@@ -48,6 +48,7 @@ namespace backend {
     int _winWidth, _winHeight;
     GLFWwindow* window;
     GLFWmonitor* monitor;
+    float detectedContentScale = 1.0f;
 
     static void glfw_error_callback(int error, const char* description) {
         flog::error("Glfw Error {0}: {1}", error, description);
@@ -75,6 +76,16 @@ namespace backend {
         glfwSetErrorCallback(glfw_error_callback);
         if (!glfwInit()) {
             return 1;
+        }
+
+        // Detect OS display scaling before creating a window
+        {
+            GLFWmonitor* primary = glfwGetPrimaryMonitor();
+            if (primary) {
+                float xscale = 1.0f, yscale = 1.0f;
+                glfwGetMonitorContentScale(primary, &xscale, &yscale);
+                detectedContentScale = xscale;
+            }
         }
 
     #ifdef __APPLE__
@@ -220,6 +231,10 @@ namespace backend {
 
         glfwSwapInterval(vsync);
         glfwSwapBuffers(window);
+    }
+
+    float getContentScale() {
+        return detectedContentScale;
     }
 
     void getMouseScreenPos(double& x, double& y) {

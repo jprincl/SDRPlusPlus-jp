@@ -480,7 +480,7 @@ void MainWindow::draw() {
         bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
         if (grabbingMenu) {
             newWidth = mousePos.x;
-            newWidth = std::clamp<float>(newWidth, 250, winSize.x - 250);
+            newWidth = std::clamp<float>(newWidth, 250.0f * style::uiScale, winSize.x - 250.0f * style::uiScale);
             ImGui::GetForegroundDrawList()->AddLine(ImVec2(newWidth, curY), ImVec2(newWidth, winSize.y - 10), ImGui::GetColorU32(ImGuiCol_SeparatorActive));
         }
         if (mousePos.x >= newWidth - (2.0f * style::uiScale) && mousePos.x <= newWidth + (2.0f * style::uiScale) && mousePos.y > curY) {
