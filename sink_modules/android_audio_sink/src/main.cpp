@@ -52,13 +52,18 @@ public:
     AudioSink(SinkManager::Stream* stream, std::string streamName) {
         _stream = stream;
         _streamName = std::move(streamName);
-    
+
         packer.init(_stream->sinkOut, 512);
         sampleRate = 48000;
         _stream->setSampleRate(sampleRate);
+
+        playStateHandler.handler = playStateChangeHandler;
+        playStateHandler.ctx = this;
+        gui::mainWindow.onPlayStateChange.bindHandler(&playStateHandler);
     }
 
     ~AudioSink() {
+        gui::mainWindow.onPlayStateChange.unbindHandler(&playStateHandler);
         stop();
     }
 
@@ -240,8 +245,10 @@ private:
         audioFifo.resize(fifoCapacity);
         resetAudioFifo();
 
-        packer.start();
-        producerThread = std::thread(&AudioSink::producerLoop, this);
+        if (gui::mainWindow.isPlaying()) {
+            packer.start();
+            producerThread = std::thread(&AudioSink::producerLoop, this);
+        }
 #endif
 
         activeStream.store(stream.get(), std::memory_order_release);
@@ -260,11 +267,19 @@ private:
         audioStream = std::move(stream);
         backend::setAudioOutputUsesOpenSLES(audioStream->getAudioApi() == oboe::AudioApi::OpenSLES);
 
+        if (gui::mainWindow.isPlaying()) {
+            paused = false;
 #if !ANDROID_AUDIO_SINK_USE_CALLBACK
-        packer.start();
-        // Start writer thread after stream is running.
-        writerThread = std::thread(&AudioSink::writerLoop, this);
+            packer.start();
+            // Start writer thread after stream is running.
+            writerThread = std::thread(&AudioSink::writerLoop, this);
 #endif
+        } else {
+            // Radio not playing: suspend immediately so we hold no active audio resources.
+            audioStream->pause();
+            audioStream->flush();
+            paused = true;
+        }
 
         if (preferredOutputDeviceId > 0) {
             flog::info("AudioSink: backend = {}, sharing = {}, burst = {}, buffer = {}, device = {}",
@@ -301,6 +316,7 @@ private:
         // on a particular Android device.
         //backend::setAudioOutputUsesOpenSLES(false);
 
+        paused = false;
         std::shared_ptr<oboe::AudioStream> stream = std::move(audioStream);
         stopAudioWorkerLocked();
         running = false;
@@ -561,12 +577,41 @@ private:
     std::thread writerThread;
 #endif
 
+    static void playStateChangeHandler(bool playing, void* ctx) {
+        AudioSink* _this = (AudioSink*)ctx;
+        std::lock_guard<std::mutex> lck(_this->stateMtx);
+        if (!_this->running) { return; }
+
+        if (!playing) {
+            _this->stopAudioWorkerLocked();
+            if (_this->audioStream) {
+                _this->audioStream->pause();
+                _this->audioStream->flush();
+            }
+            _this->paused = true;
+        } else {
+            if (!_this->paused) { return; }
+            _this->paused = false;
+            if (_this->audioStream) {
+                _this->audioStream->start();
+            }
+            _this->packer.start();
+#if ANDROID_AUDIO_SINK_USE_CALLBACK
+            _this->producerThread = std::thread(&AudioSink::producerLoop, _this);
+#else
+            _this->writerThread = std::thread(&AudioSink::writerLoop, _this);
+#endif
+        }
+    }
+
     SinkManager::Stream* _stream = nullptr;
     dsp::buffer::Packer<dsp::stereo_t> packer;
     std::string _streamName;
     double sampleRate = 48000;
     bool running = false;
+    bool paused = false;
     bool showDebug = false;
+    EventHandler<bool> playStateHandler;
 };
 
 class AudioSinkModule : public ModuleManager::Instance {
