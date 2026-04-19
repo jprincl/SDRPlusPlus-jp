@@ -233,6 +233,7 @@ private:
         // Tune buffer size: 2x burst for minimum latency.
         const int32_t burst = std::max<int32_t>(1, stream->getFramesPerBurst());
         stream->setBufferSizeInFrames(burst * 2);
+        routingCheckInterval = std::max(1, (int)((double)sampleRate * 0.5 / burst));
 
         // Set packer to burst-aligned chunk size.
         const int packerSize = burst;
@@ -296,6 +297,9 @@ private:
                        audioStream->getFramesPerBurst(),
                        audioStream->getBufferSizeInFrames());
         }
+
+        lastPreferredDeviceId = preferredOutputDeviceId;
+        lastRoutingGeneration = backend::audioRoutingGeneration.load(std::memory_order_relaxed);
         return true;
     }
 
@@ -354,9 +358,26 @@ private:
     // ---- Callback mode: producer thread → FIFO → RT callback ----
 
     void producerLoop() {
+        int routingCheckCount = 0;
         while (true) {
             int count = packer.out.read();
             if (count < 0) { return; }
+
+            if (++routingCheckCount >= routingCheckInterval) {
+                routingCheckCount = 0;
+                const int gen = backend::audioRoutingGeneration.load(std::memory_order_relaxed);
+                if (gen != lastRoutingGeneration) {
+                    lastRoutingGeneration = gen;
+                    const int newPreferred = backend::getPreferredAudioOutputDeviceId();
+                    if (newPreferred != lastPreferredDeviceId) {
+                        flog::info("AudioSink: preferred output device changed ({} → {}), restarting",
+                                   lastPreferredDeviceId, newPreferred);
+                        packer.out.flush();
+                        scheduleRestart();
+                        return;
+                    }
+                }
+            }
 
             pushAudioFrames(packer.out.readBuf, count);
             packer.out.flush();
@@ -386,6 +407,7 @@ private:
         // Elevate to highest non-RT priority.
         setpriority(PRIO_PROCESS, 0, -19);
 
+        int routingCheckCount = 0;
         while (true) {
             int count = packer.out.read();
             if (count < 0) { return; }
@@ -402,6 +424,25 @@ private:
             if (!stream) {
                 packer.out.flush();
                 return;
+            }
+
+            // Check for audio routing change every ~500 ms derived from the device
+            // burst rate. Kotlin only bumps audioRoutingGeneration when the preferred
+            // non-QMX output device actually changes, so the JNI call here is rare.
+            if (++routingCheckCount >= routingCheckInterval) {
+                routingCheckCount = 0;
+                const int gen = backend::audioRoutingGeneration.load(std::memory_order_relaxed);
+                if (gen != lastRoutingGeneration) {
+                    lastRoutingGeneration = gen;
+                    const int newPreferred = backend::getPreferredAudioOutputDeviceId();
+                    if (newPreferred != lastPreferredDeviceId) {
+                        flog::info("AudioSink: preferred output device changed ({} → {}), restarting",
+                                   lastPreferredDeviceId, newPreferred);
+                        packer.out.flush();
+                        scheduleRestart();
+                        return;
+                    }
+                }
             }
 
             auto result = stream->write(packer.out.readBuf, count, 100'000'000);
@@ -592,15 +633,28 @@ private:
         } else {
             if (!_this->paused) { return; }
             _this->paused = false;
-            if (_this->audioStream) {
-                _this->audioStream->start();
-            }
-            _this->packer.start();
+
+            // If the preferred output device changed while the SDR was paused,
+            // reopen the stream on the new device instead of resuming the old one.
+            const int newPreferred = backend::getPreferredAudioOutputDeviceId();
+            _this->lastRoutingGeneration = backend::audioRoutingGeneration.load(std::memory_order_relaxed);
+            if (newPreferred != _this->lastPreferredDeviceId) {
+                // Device changed while paused, restart on the new device.
+                flog::info("AudioSink: preferred output device changed while paused ({} → {}), reopening",
+                            _this->lastPreferredDeviceId, newPreferred);
+                _this->stopLocked(true);
+                _this->running = _this->openAndStartStreamLocked();
+            } else {
+                // Resume the existing stream.
+                if (_this->audioStream)
+                    _this->audioStream->start();
+                _this->packer.start();
 #if ANDROID_AUDIO_SINK_USE_CALLBACK
-            _this->producerThread = std::thread(&AudioSink::producerLoop, _this);
+                _this->producerThread = std::thread(&AudioSink::producerLoop, _this);
 #else
-            _this->writerThread = std::thread(&AudioSink::writerLoop, _this);
+                _this->writerThread = std::thread(&AudioSink::writerLoop, _this);
 #endif
+            }
         }
     }
 
@@ -611,6 +665,12 @@ private:
     bool running = false;
     bool paused = false;
     bool showDebug = false;
+
+    // Support for checking change in Android audio routing.
+    int lastPreferredDeviceId = 0;
+    int lastRoutingGeneration = 0;
+    int routingCheckInterval = 50;
+    
     EventHandler<bool> playStateHandler;
 };
 

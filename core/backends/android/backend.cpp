@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <gui/icons.h>
 #include <gui/style.h>
 #include <gui/menus/theme.h>
@@ -33,6 +34,7 @@ namespace backend {
     std::atomic<bool> sleepBlackFrameSent{false}; // Ensures one black frame before pausing
     std::atomic<bool> audioOutputOpenSLES{false};
     std::atomic<int> usbHotplugGeneration{0};
+    std::atomic<int> audioRoutingGeneration{0};
     bool exited = false;
     static bool wasPlayingBeforeSuspend = false;
     static bool restartOnResume = true;
@@ -175,6 +177,88 @@ namespace backend {
     // Only accessed from the input-handler thread — no need for atomic.
     static bool consumingWakeGesture = false;
 
+    // ---------------------------------------------------------------------------
+    // Multi-touch gesture recognizer — pinch-to-zoom
+    // Runs on the input-handler thread (same thread as the render loop in
+    // NativeActivity), so no locking is required.
+    // ---------------------------------------------------------------------------
+    struct GestureRecognizer {
+        enum class State { IDLE, PINCHING };
+        State state = State::IDLE;
+        float p[2][2] = {};   // [pointer_index][x, y]
+        float lastDist = 0.0f;
+
+        // Returns 1 if the event was consumed (do NOT forward to ImGui).
+        int32_t handle(AInputEvent* ev) {
+            if (AInputEvent_getType(ev) != AINPUT_EVENT_TYPE_MOTION) return 0;
+
+            int32_t raw    = AMotionEvent_getAction(ev);
+            int32_t action = raw & AMOTION_EVENT_ACTION_MASK;
+            int32_t count  = static_cast<int32_t>(AMotionEvent_getPointerCount(ev));
+
+            if (action == AMOTION_EVENT_ACTION_POINTER_DOWN && count == 2) {
+                // Second finger arrived — begin pinch tracking.
+                for (int i = 0; i < 2; i++) {
+                    p[i][0] = AMotionEvent_getX(ev, i);
+                    p[i][1] = AMotionEvent_getY(ev, i);
+                }
+                lastDist = fingerDist();
+                state = State::PINCHING;
+                // Release any ImGui mouse button so pending drags don't leak.
+                ImGui::GetIO().AddMouseButtonEvent(0, false);
+                return 1;
+            }
+
+            if (state == State::IDLE) return 0;
+
+            // ---- PINCHING state: consume all motion events ----
+            if (action == AMOTION_EVENT_ACTION_MOVE && count >= 2) {
+                for (int i = 0; i < 2; i++) {
+                    p[i][0] = AMotionEvent_getX(ev, i);
+                    p[i][1] = AMotionEvent_getY(ev, i);
+                }
+                float d     = fingerDist();
+                float delta = d - lastDist;
+                lastDist    = d;
+
+                // Move the ImGui cursor to the pinch centroid so that the
+                // waterfall's mouseIn* hit-tests resolve to the right region.
+                float cx = (p[0][0] + p[1][0]) * 0.5f;
+                float cy = (p[0][1] + p[1][1]) * 0.5f;
+                ImGuiIO& io = ImGui::GetIO();
+                io.AddMousePosEvent(cx, cy);
+
+                // Inject Ctrl+scroll so the waterfall zoom handler fires.
+                // Positive delta (fingers apart) → positive wheel → zoom in.
+                // Sensitivity: ~60 px of finger travel = 1 scroll unit.
+                if (fabsf(delta) > 0.5f) {
+                    io.AddKeyEvent(ImGuiKey_ModCtrl, true);
+                    io.AddMouseWheelEvent(0.0f, delta / 60.0f);
+                    io.AddKeyEvent(ImGuiKey_ModCtrl, false);
+                }
+                return 1;
+            }
+
+            if (action == AMOTION_EVENT_ACTION_POINTER_UP ||
+                action == AMOTION_EVENT_ACTION_UP         ||
+                action == AMOTION_EVENT_ACTION_CANCEL) {
+                state = State::IDLE;
+                return 1;
+            }
+
+            return 1;  // consume all other events while pinching
+        }
+
+    private:
+        float fingerDist() const {
+            float dx = p[1][0] - p[0][0];
+            float dy = p[1][1] - p[0][1];
+            return std::sqrt(dx * dx + dy * dy);
+        }
+    };
+
+    static GestureRecognizer gestureRecognizer;
+
     int32_t handleInputEvent(struct android_app* app, AInputEvent* inputEvent) {
         // If the sleep timer has dimmed/darkened the screen, intercept touch to wake.
         // Also keep consuming until ACTION_UP once we started swallowing a gesture,
@@ -204,6 +288,7 @@ namespace backend {
             sleepResetMotionPending = true;
         }
 
+        if (gestureRecognizer.handle(inputEvent)) return 1;
         return ImGui_ImplAndroid_HandleInputEvent(inputEvent);
     }
 
@@ -684,4 +769,8 @@ extern "C" {
 
 extern "C" JNIEXPORT void JNICALL Java_org_sdrpp_sdrpp_MainActivity_notifyUsbHotplugChangedNative(JNIEnv*, jobject) {
     backend::usbHotplugGeneration.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_org_sdrpp_sdrpp_MainActivity_notifyAudioRoutingChangedNative(JNIEnv*, jobject) {
+    backend::audioRoutingGeneration.fetch_add(1, std::memory_order_relaxed);
 }

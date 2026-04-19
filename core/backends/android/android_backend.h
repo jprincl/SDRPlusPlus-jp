@@ -66,6 +66,7 @@ namespace backend {
     extern const std::vector<DevVIDPID> QMX_VIDPIDS;
     extern const std::vector<DevVIDPID> RTL_SDR_VIDPIDS;
     extern std::atomic<int> usbHotplugGeneration;
+    extern std::atomic<int> audioRoutingGeneration;
 
     int getPreferredAudioOutputDeviceId();
     // Sticky flag to indicate that OpenGL ES is used on old Android devices

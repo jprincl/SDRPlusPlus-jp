@@ -103,6 +103,21 @@ class MainActivity : NativeActivity() {
     private var usbPermissionIntent: PendingIntent? = null
     private var usbReceiverRegistered = false
 
+    // Audio routing change detection
+    private var lastKnownPreferredOutputId: Int = -1
+    private val audioDeviceCallback = object : AudioManager.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = checkRoutingChanged()
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = checkRoutingChanged()
+
+        private fun checkRoutingChanged() {
+            val newId = getPreferredAudioDeviceId(this@MainActivity, AudioManager.GET_DEVICES_OUTPUTS)
+            if (newId != lastKnownPreferredOutputId) {
+                lastKnownPreferredOutputId = newId
+                notifyAudioRoutingChangedNative()
+            }
+        }
+    }
+
     companion object {
         private const val QMX_USB_VID = 0x0483
         private const val QMX_USB_PID = 0xA34C
@@ -395,6 +410,7 @@ class MainActivity : NativeActivity() {
     }
 
     private external fun notifyUsbHotplugChangedNative()
+    private external fun notifyAudioRoutingChangedNative()
 
     fun notifyUsbHotplugChanged() {
         notifyUsbHotplugChangedNative()
@@ -453,7 +469,9 @@ class MainActivity : NativeActivity() {
         }
 
         // Register events
-        usbManager = getSystemService(Context.USB_SERVICE) as UsbManager;
+        usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+        (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+            .registerAudioDeviceCallback(audioDeviceCallback, null)
         val permissionRequestIntent = Intent(ACTION_USB_PERMISSION).setPackage(packageName)
         val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
@@ -499,6 +517,8 @@ class MainActivity : NativeActivity() {
 
     public override fun onDestroy() {
         sleepTimer.stop();
+        (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+            .unregisterAudioDeviceCallback(audioDeviceCallback)
         unregisterUsbReceiver()
         SDR_conn?.close()
         SDR_conn = null
