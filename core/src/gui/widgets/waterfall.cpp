@@ -265,7 +265,7 @@ namespace ImGui {
         mouseInFFT = IS_IN_AREA(dragOrigin, fftAreaMin, fftAreaMax);
         mouseInWaterfall = IS_IN_AREA(dragOrigin, wfMin, wfMax);
 
-        int mouseWheel = ImGui::GetIO().MouseWheel;
+        float mouseWheel = ImGui::GetIO().MouseWheel;
 
         bool mouseMoved = false;
         if (mousePos.x != lastMousePos.x || mousePos.y != lastMousePos.y) { mouseMoved = true; }
@@ -407,8 +407,17 @@ namespace ImGui {
             return;
         }
 
+        // Ctrl+scroll (or synthesized pinch-to-zoom) → zoom the view bandwidth.
+        // Positive wheel = fingers apart / scroll up = zoom in (narrower view).
+        if (mouseWheel != 0.0f && ImGui::GetIO().KeyCtrl && (mouseInFFT || mouseInWaterfall || mouseInFreq)) {
+            double newBw = viewBandwidth * std::pow(0.9, (double)mouseWheel);
+            newBw = std::clamp(newBw, wholeBandwidth / 200.0, wholeBandwidth);
+            setViewBandwidth(newBw);
+            return;
+        }
+
         // If the mouse wheel is moved on the frequency scale
-        if (mouseWheel != 0 && mouseInFreq) {
+        if (mouseWheel != 0.0f && mouseInFreq) {
             viewOffset -= (double)mouseWheel * viewBandwidth / 20.0;
 
             if (viewOffset + (viewBandwidth / 2.0) > wholeBandwidth / 2.0) {
