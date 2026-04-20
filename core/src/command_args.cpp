@@ -6,11 +6,11 @@ void CommandArgsParser::defineAll() {
         std::string root = ".";
         define('c', "con", "Show console on Windows");
 #elif defined(IS_MACOS_BUNDLE)
-        std::string root = (std::string)getenv("HOME") + "/Library/Application Support/sdrpp";
+        std::string root = (std::string)getenv("HOME") + "/Library/Application Support/sdrpp-iak";
 #elif defined(__ANDROID__)
-        std::string root = "/storage/self/primary/sdrpp";
+        std::string root = "/storage/self/primary/sdrpp-iak";
 #else
-        std::string root = (std::string)getenv("HOME") + "/.config/sdrpp";
+        std::string root = (std::string)getenv("HOME") + "/.config/sdrpp-iak";
 #endif
 
         define('a', "addr", "Server mode address", "0.0.0.0");

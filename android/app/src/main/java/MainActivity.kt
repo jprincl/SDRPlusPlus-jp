@@ -90,7 +90,7 @@ private val usbReceiver = object : BroadcastReceiver() {
     }
 }
 class MainActivity : NativeActivity() {
-    private val TAG : String = "SDR++";
+    private val TAG : String = "SDR++ iak";
     public var usbManager : UsbManager? = null;
     public var SDR_device : UsbDevice? = null;
     public var SDR_conn : UsbDeviceConnection? = null;
