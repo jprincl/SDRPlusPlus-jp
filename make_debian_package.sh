@@ -48,6 +48,11 @@ echo Version: $DEB_VERSION >> sdrpp_debian_amd64/DEBIAN/control
 echo Maintainer: Ryzerth >> sdrpp_debian_amd64/DEBIAN/control
 echo Architecture: all >> sdrpp_debian_amd64/DEBIAN/control
 echo Description: Bloat-free SDR receiver software >> sdrpp_debian_amd64/DEBIAN/control
+echo License: GPL-3.0-or-later >> sdrpp_debian_amd64/DEBIAN/control
+
+# Install license file into documentation directory
+mkdir -p sdrpp_debian_amd64/usr/share/doc/sdrpp-iak
+cp "$SCRIPT_DIR/license" sdrpp_debian_amd64/usr/share/doc/sdrpp-iak/copyright
 echo Depends: $2 >> sdrpp_debian_amd64/DEBIAN/control
 
 # Copying files
