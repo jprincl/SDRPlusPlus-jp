@@ -29,7 +29,7 @@ if [ -z "$APP_VERSION" ]; then
 fi
 
 # Create the property list
-bundle_create_plist sdrpp SDR++ org.ok1iak.sdrpp $APP_VERSION sdrp sdrpp sdrpp $BUNDLE/Contents/Info.plist
+bundle_create_plist sdrpp "SDR++ iak" org.ok1iak.sdrpp $APP_VERSION sdrp sdrpp-iak sdrpp $BUNDLE/Contents/Info.plist
 
 # ========================= Install binaries =========================
 
