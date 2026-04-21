@@ -1,8 +1,10 @@
-HAM worthy modifications?
-https://github.com/qrp73/SDRPP
-
 TX, a lot more
 https://github.com/sannysanoff/SDRPlusPlusBrown
+https://sdrpp-brown.san.systems/tx.html
+https://github.com/sannysanoff/SDRPlusPlusBrown/blob/master/changelog.md
+
+HAM worthy modifications?
+https://github.com/qrp73/SDRPP
 
 SDR-888, 1 star
 https://github.com/howard0su/SDRPlusPlus

@@ -107,15 +107,15 @@ private:
     static void menuSelected(void* ctx) {
         QmxServerSourceModule* _this = (QmxServerSourceModule*)ctx;
         core::setInputSampleRate(_this->sampleRate);
-//        gui::mainWindow.playButtonLocked = !(_this->client && _this->client->isOpen());
-        flog::info("QmxServerSourceModule '{0}': Menu Select!", _this->name);
+        gui::freqSelect.minFreq = 100000; // 100 kHz
+        gui::freqSelect.maxFreq = 60000000; // 60 MHz
+        gui::freqSelect.limitFreq = true;
     }
 
     // called when the source is deselected (deactivated)
     static void menuDeselected(void* ctx) {
         QmxServerSourceModule* _this = (QmxServerSourceModule*)ctx;
-//        gui::mainWindow.playButtonLocked = false;
-        flog::info("QmxServerSourceModule '{0}': Menu Deselect!", _this->name);
+        gui::freqSelect.limitFreq = false;
     }
 
     static void start(void* ctx) {

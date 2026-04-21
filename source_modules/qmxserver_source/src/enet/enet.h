@@ -5801,9 +5801,8 @@ static int enet_address_has_source(const ENetAddress *address) {
             case ENET_SOCKOPT_TTL:
                 len = sizeof (int);
                 result = getsockopt(socket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)value, &len);
-                if (result == -1) {
+                if (result == -1)
                     result = getsockopt(socket, IPPROTO_IP, IP_TTL, (char *)value, &len);
-                }
                 break;
 
             default:

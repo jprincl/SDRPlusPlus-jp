@@ -104,6 +104,10 @@ public:
 
     void selectById(int id) {
         devId = id;
+#ifdef __linux__
+        alsaMode = (audio.getCurrentApi() == RtAudio::LINUX_ALSA);
+#endif
+
         bool created = false;
         config.acquire();
         if (!config.conf[_streamName]["devices"].contains(devList[id].name)) {

@@ -273,7 +273,6 @@ private:
 
     static void menuDeselected(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
-        flog::info("QMXSourceModule '{}': Menu Deselect!", self->name);
         gui::freqSelect.limitFreq = false;
     }
 

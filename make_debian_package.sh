@@ -45,7 +45,7 @@ mkdir sdrpp_debian_amd64/DEBIAN
 echo Create package info
 echo Package: sdrpp-iak >> sdrpp_debian_amd64/DEBIAN/control
 echo Version: $DEB_VERSION >> sdrpp_debian_amd64/DEBIAN/control
-echo Maintainer: Ryzerth >> sdrpp_debian_amd64/DEBIAN/control
+echo Maintainer: Vojtech Bubnik OK1IAK >> sdrpp_debian_amd64/DEBIAN/control
 echo Architecture: all >> sdrpp_debian_amd64/DEBIAN/control
 echo Description: Bloat-free SDR receiver software >> sdrpp_debian_amd64/DEBIAN/control
 echo License: GPL-3.0-or-later >> sdrpp_debian_amd64/DEBIAN/control

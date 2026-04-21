@@ -33,7 +33,7 @@ namespace credits {
         ImGui::Spacing();
         ImGui::Spacing();
 
-        ImGui::TextUnformatted("This software is brought to you by Alexandre Rouma (ON5RYZ) with the help of\n\n");
+        ImGui::TextUnformatted("Maintained by Vojtech Bubnik (OK1IAK), original software by Alexandre Rouma (ON5RYZ) with the help of\n\n");
 
         ImGui::Columns(4, "CreditColumns", true);
 

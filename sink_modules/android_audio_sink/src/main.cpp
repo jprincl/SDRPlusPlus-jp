@@ -34,7 +34,7 @@
 SDRPP_MOD_INFO{
     /* Name:            */ "audio_sink",
     /* Description:     */ "Android audio sink module for SDR++",
-    /* Author:          */ "Ryzerth",
+    /* Author:          */ "Ryzerth;OK1IAK",
     /* Version:         */ 0, 1, 0,
     /* Max instances    */ 1
 };
