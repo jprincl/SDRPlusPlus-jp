@@ -2,6 +2,7 @@
 #include <string.h>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
 #include <volk/volk.h>
 #include "buffer/buffer.h"
 
@@ -72,6 +73,17 @@ namespace dsp {
             std::unique_lock<std::mutex> lck(rdyMtx);
             rdyCV.wait(lck, [this] { return (dataReady || readerStop); });
 
+            return (readerStop ? -1 : dataSize);
+        }
+
+        // Like read(), but returns 0 if no data became ready within `timeout`.
+        // -1 still means stopReader() was called. Used by realtime audio sink
+        // callbacks that must not block past one device period.
+        virtual inline int read_for(std::chrono::milliseconds timeout) {
+            std::unique_lock<std::mutex> lck(rdyMtx);
+            if (!rdyCV.wait_for(lck, timeout, [this] { return (dataReady || readerStop); })) {
+                return 0;
+            }
             return (readerStop ? -1 : dataSize);
         }
 

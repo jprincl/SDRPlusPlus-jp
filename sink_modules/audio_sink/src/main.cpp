@@ -9,6 +9,7 @@
 #include <RtAudio.h>
 #include <config.h>
 #include <core.h>
+#include <chrono>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -195,6 +196,17 @@ private:
         try {
             audio.openStream(&parameters, NULL, RTAUDIO_FLOAT32, sampleRate, &bufferFrames, &callback, this, &opts);
             stereoPacker.setSampleCount(bufferFrames);
+#ifdef __linux__
+            // ALSA does not auto-recover from callback-induced XRUN, so the
+            // callback must silence-fill rather than block. Other RtAudio
+            // backends (CoreAudio, WASAPI, Pulse, JACK) tolerate a blocking
+            // callback and get lower latency from it.
+            alsaMode = (audio.getCurrentApi() == RtAudio::LINUX_ALSA);
+            // Quarter of the device period; long enough to deliver real data
+            // when the chain is keeping up, short enough to silence-fill before
+            // ALSA hits XRUN when upstream stalls (e.g. radio paused).
+            readTimeout = std::chrono::milliseconds(std::max<unsigned int>(1, (bufferFrames * 250) / sampleRate));
+#endif
             audio.startStream();
             stereoPacker.start();
         }
@@ -221,6 +233,22 @@ private:
 
     static int callback(void* outputBuffer, void* inputBuffer, unsigned int nBufferFrames, double streamTime, RtAudioStreamStatus status, void* userData) {
         AudioSink* _this = (AudioSink*)userData;
+#ifdef __linux__
+        if (_this->alsaMode) {
+            int count = _this->stereoPacker.out.read_for(_this->readTimeout);
+            if (count <= 0) {
+                // No data ready (paused, stalled, or stopped). Emit silence —
+                // a blocking wait or unwritten buffer here causes ALSA XRUN
+                // that the backend doesn't auto-recover from.
+                memset(outputBuffer, 0, nBufferFrames * sizeof(dsp::stereo_t));
+                return 0;
+            }
+            memcpy(outputBuffer, _this->stereoPacker.out.readBuf, nBufferFrames * sizeof(dsp::stereo_t));
+            _this->stereoPacker.out.flush();
+            return 0;
+        }
+#endif
+
         int count = _this->stereoPacker.out.read();
         if (count < 0) { return 0; }
 
@@ -251,7 +279,12 @@ private:
     std::string sampleRatesTxt;
     unsigned int sampleRate = 48000;
 
-    RtAudio audio;
+#ifdef __linux__
+    std::chrono::milliseconds readTimeout{4};
+    bool alsaMode = false;
+#endif // __linux__
+
+RtAudio audio;
 };
 
 class AudioSinkModule : public ModuleManager::Instance {
