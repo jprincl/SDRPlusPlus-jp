@@ -38,6 +38,16 @@ SDRPP_MOD_INFO{
 
 ConfigManager config;
 
+static std::tm safeLocalTime(std::time_t t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return tm;
+}
+
 struct KiwiSDRSourceModule : public ModuleManager::Instance {
     using Clock = std::chrono::steady_clock;
 
@@ -254,12 +264,12 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
 
         SmGui::Text(("KiwiSDR site: " + _this->kiwisdrSite).c_str());
         SmGui::Text(("Loc: " + _this->kiwisdrLoc).c_str());
-        SmGui::Text(("Status: " + std::string(_this->kiwiSdrClient.connectionStatus)).c_str());
+        SmGui::Text(("Status: " + _this->kiwiSdrClient.getConnectionStatus()).c_str());
 
         std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-        auto tmm = std::localtime(&t);
+        auto tmm = safeLocalTime(t);
         char streamTime[64];
-        strftime(streamTime, sizeof(streamTime), "%Y-%m-%d %H:%M:%S", tmm);
+        strftime(streamTime, sizeof(streamTime), "%Y-%m-%d %H:%M:%S", &tmm);
         SmGui::Text(("Stream pos: " + std::string(streamTime)).c_str());
     }
 

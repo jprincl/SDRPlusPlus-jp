@@ -38,6 +38,7 @@ namespace net::websock {
         std::default_random_engine e1;
         std::uniform_int_distribution<int> uniform_dist;
         std::atomic<bool> stopped{false};
+        static constexpr int64_t MAX_FRAME_PAYLOAD = 1024 * 1024;
 
         WSClient() : socket(), rd(), e1(rd()), uniform_dist(0, 255) {
             flog::info("WSClient instance: {}", (uint64_t)(uintptr_t)this);
@@ -71,8 +72,7 @@ namespace net::websock {
             case INCOMPLETE_FRAME:
                 return 0;
             case ERROR_FRAME:
-                printf("ERROR FRAME: %x\n", frameType);
-                break;
+                throw std::runtime_error("websock: invalid frame");
             case PING_FRAME:
                 sendPong();
                 break;
@@ -197,6 +197,9 @@ namespace net::websock {
                 payload_length = length_field;
             }
             else if(length_field == 126) { //msglen is 16bit!
+                if(in_length < pos + 2) {
+                    return INCOMPLETE_FRAME;
+                }
                 //payload_length = in_buffer[2] + (in_buffer[3]<<8);
                 payload_length = (
                     ((int64_t)in_buffer[2] << 8) |
@@ -205,6 +208,9 @@ namespace net::websock {
                 pos += 2;
             }
             else if(length_field == 127) { //msglen is 64bit!
+                if(in_length < pos + 8) {
+                    return INCOMPLETE_FRAME;
+                }
                 payload_length = (
                     ((int64_t)in_buffer[2] << 56) |
                     ((int64_t)in_buffer[3] << 48) |
@@ -219,7 +225,15 @@ namespace net::websock {
             }
 
             //printf("PAYLOAD_LEN: %08x\n", payload_length);
-            if(in_length < payload_length+pos) {
+            if(payload_length < 0) {
+                return ERROR_FRAME;
+            }
+            if(payload_length > MAX_FRAME_PAYLOAD) {
+                flog::error("ERROR: websocket payload is too large: {}", payload_length);
+                return ERROR_FRAME;
+            }
+
+            if(msg_masked && in_length < pos + 4) {
                 return INCOMPLETE_FRAME;
             }
 
@@ -228,6 +242,10 @@ namespace net::websock {
                 //printf("MASK: %08x\n", mask);
                 pos += 4;
 
+                if(payload_length > in_length - pos) {
+                    return INCOMPLETE_FRAME;
+                }
+
                 // unmask data:
                 unsigned char* c = in_buffer+pos;
                 for(int i=0; i<payload_length; i++) {
@@ -235,10 +253,13 @@ namespace net::websock {
                 }
             }
 
-            if(payload_length > out_size) {
+            if(payload_length > in_length - pos) {
+                return INCOMPLETE_FRAME;
+            }
+
+            if(payload_length > out_size - 1) {
                 flog::error("ERROR: output buffer is too small for the payload");
-                abort();
-                //TODO: if output buffer is too small -- ERROR or resize(free and allocate bigger one) the buffer ?
+                return ERROR_FRAME;
             }
 
             memcpy((void*)out_buffer, (void*)(in_buffer+pos), payload_length);
@@ -384,11 +405,11 @@ namespace net::websock {
             int senderr = errno;
             flog::info("sent: {} of {}", len, (int64_t)initHeaders.size());
 
-            uint8_t buf[100000];
+            std::vector<uint8_t> buf(100000);
 
             int recvd = 0;
             while (!stopped) {
-                recvd = socket->recv(buf, sizeof(buf) - 1, false, 100);
+                recvd = socket->recv(buf.data(), buf.size() - 1, false, 100);
                 if (recvd != 0) {
                     break;
                 }
@@ -407,7 +428,7 @@ namespace net::websock {
             buf[recvd] = 0;
             flog::info("recvd: {}", recvd);
             std::vector<std::string> recvHeaders;
-            std::string bufs = (char*)buf;
+            std::string bufs = (char*)buf.data();
             auto pos = bufs.find("\r\n\r\n");
             if (pos == std::string::npos) {
                 socket->close();
@@ -424,13 +445,22 @@ namespace net::websock {
             }
             onConnected();
             while (!stopped) {
-                int len0 = maybeDecodeBuffer(data);
+                int len0 = 0;
+                try {
+                    len0 = maybeDecodeBuffer(data);
+                }
+                catch (...) {
+                    socket->close();
+                    onDisconnected();
+                    shouldNotifyDisconnected = false;
+                    throw;
+                }
                 if (len0 > 0) {
 //                    printf("decoded/dropping bytes: %d\n", len0);
                     data.erase(data.begin(), data.begin() + len0);
                     continue;
                 }
-                recvd = socket->recv(buf, sizeof(buf), false, 100); // 100 msec
+                recvd = socket->recv(buf.data(), buf.size(), false, 100); // 100 msec
                 if (stopped) {
                     break;
                 }
@@ -445,6 +475,12 @@ namespace net::websock {
                     break;
                 }
                 onEveryReceive();
+                if (data.size() + recvd > MAX_FRAME_PAYLOAD + 16) {
+                    socket->close();
+                    onDisconnected();
+                    shouldNotifyDisconnected = false;
+                    throw std::runtime_error("websock: frame too large");
+                }
                 for (int i = 0; i < recvd; i++) {
                     data.push_back(buf[i]);
                 }

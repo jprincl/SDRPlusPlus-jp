@@ -4,11 +4,14 @@
 #include <complex>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <cstdint>
 #include <thread>
 #include <core.h>
 #include <cstring>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <utility>
 #include <vector>
 #include "utils/proto/websock.h"
@@ -16,24 +19,53 @@
 struct KiwiSDRClient {
     using Clock = std::chrono::steady_clock;
 
+    enum Modulation {
+        TUNE_IQ = 1,
+        TUNE_REAL = 2,           // only real data, -3 .. +3 kHz
+    };
+
     net::websock::WSClient wsClient;
     std::string hostPort;
-    bool connected = false;
+    std::atomic<bool> connected{false};
+
+private:
     char connectionStatus[100] = "Not connected";
+    mutable std::mutex connectionStatusLock;
+
+public:
     Clock::time_point lastPing;
     std::atomic<bool> running{false};
+    std::atomic<Modulation> currentModulation{TUNE_IQ};
     std::vector<Clock::time_point> times;
 
     std::function<void()> onConnected = []() {};
     std::function<void()> onDisconnected = []() {};
     std::vector<std::complex<float>> iqData;
     std::mutex iqDataLock;
+    std::thread looperThread;
 
+    static int16_t readBE16(const char* data) {
+        const auto* bytes = reinterpret_cast<const uint8_t*>(data);
+        const uint16_t value = (static_cast<uint16_t>(bytes[0]) << 8) | bytes[1];
+        if (value < 0x8000) {
+            return static_cast<int16_t>(value);
+        }
+        return static_cast<int16_t>(static_cast<int>(value) - 0x10000);
+    }
+
+    void setConnectionStatus(const char* status) {
+        std::lock_guard<std::mutex> lock(connectionStatusLock);
+        snprintf(connectionStatus, sizeof connectionStatus, "%s", status);
+    }
+
+    std::string getConnectionStatus() const {
+        std::lock_guard<std::mutex> lock(connectionStatusLock);
+        return connectionStatus;
+    }
 
     virtual ~KiwiSDRClient() {
-        running = false;
         flog::info("KiwiSDRClient: destructor");
-        running = false;
+        stop();
     }
 
     int IQDATA_FREQUENCY = 12000;
@@ -43,7 +75,7 @@ struct KiwiSDRClient {
     void init(const std::string& hostport) {
 
         this->hostPort = hostport;
-        strcpy(connectionStatus, "Not connected");
+        setConnectionStatus("Not connected");
         static std::atomic_int outCount;
 
         outCount = 0;
@@ -51,7 +83,7 @@ struct KiwiSDRClient {
         wsClient.onDisconnected = [&]() {
             connected = false;
             this->onDisconnected();
-            snprintf(connectionStatus, sizeof connectionStatus, "Disconnected");
+            setConnectionStatus("Disconnected");
         };
 
         wsClient.onConnected = [&]() {
@@ -66,7 +98,7 @@ struct KiwiSDRClient {
             if (this->onConnected) {
                 onConnected();
             }
-            strcpy(connectionStatus, "Connected, waiting data...");
+            setConnectionStatus("Connected, waiting data...");
             //            wsClient.sendString("SET mod=iq low_cut=-5000 high_cut=5000 freq=14074.000");
         };
         wsClient.onTextMessage = [&](const std::string& msg) {
@@ -98,68 +130,43 @@ struct KiwiSDRClient {
                 while (!times.empty() && times.front() < ctm - 2s) {
                     times.erase(times.begin());
                 }
-                snprintf(connectionStatus, sizeof connectionStatus, "Receiving. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
+                char status[100];
+                snprintf(status, sizeof status, "Receiving. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
+                setConnectionStatus(status);
                 int IQ_HEADER_SIZE = 20;
                 int REAL_HEADER_SIZE = 10;
-                if (currentModulation == TUNE_REAL && msg.size() == 1024 + REAL_HEADER_SIZE) { // REAL data
-                    auto scan = msg.data();
-                    scan += REAL_HEADER_SIZE;
-
-                    if (scan != msg.data() + REAL_HEADER_SIZE) {
-                        flog::info("ERROR scan != msg.data() + REAL_HEADER_SIZE\n");
-                        abort(); // homegrown assert.
+                const Modulation modulation = currentModulation.load();
+                if (modulation == TUNE_REAL && msg.size() == 1024 + REAL_HEADER_SIZE) { // REAL data
+                    const char* samples = msg.data() + REAL_HEADER_SIZE;
+                    setConnectionStatus("Storing real..");
+                    {
+                        std::lock_guard<std::mutex> lock(iqDataLock);
+                        for (int z = 0; z < 512; z++) {
+                            const int16_t sample = readBE16(samples + (z * 2));
+                            iqData.emplace_back(sample / 32767.0f, 0.0f);
+                        }
+                        while (iqData.size() > NETWORK_BUFFER_SIZE * 1.5) {
+                            iqData.erase(iqData.begin(), iqData.begin() + 200);
+                        }
                     }
-
-                    int16_t* ptr = (int16_t*)scan;
-                    snprintf(connectionStatus, sizeof connectionStatus, "Storing real..");
-                    iqDataLock.lock();
-                    for (int z = 0; z < 512; z++) {
-                        int16_t* iqsample = &ptr[z];
-                        char* fourbytes = (char*)iqsample;
-                        std::swap(fourbytes[0], fourbytes[1]);
-                        iqData.emplace_back(iqsample[0] / 32767.0, 0);
-                    }
-                    while (iqData.size() > NETWORK_BUFFER_SIZE * 1.5) {
-                        iqData.erase(iqData.begin(), iqData.begin() + 200);
-                    }
-                    iqDataLock.unlock();
-                    snprintf(connectionStatus, sizeof connectionStatus, "Cont Recv. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
+                    snprintf(status, sizeof status, "Cont Recv. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
+                    setConnectionStatus(status);
                 }
-                if (currentModulation == TUNE_IQ && msg.size() == 2048 + IQ_HEADER_SIZE && msg[3] == 0x08) { // IQ data
-                    auto scan = msg.data();
-                    scan += 4;
-                    auto sequence = *(int32_t*)scan;
-                    scan += 4;
-                    char one = *(char*)scan;
-                    scan += 1;
-                    auto info1 = *(int16_t*)scan;
-                    scan += 2;
-                    char zero = *(char*)scan;
-                    scan += 1;
-                    auto timestamp = *(int32_t*)scan;
-                    scan += 4;
-                    auto* arg2 = (int32_t*)scan;
-                    scan += 4;
-
-                    if (scan != msg.data() + IQ_HEADER_SIZE) {
-                        flog::info("ERROR scan != msg.data() + IQ_HEADER_SIZE\n");
-                        abort(); // homegrown assert.
+                if (modulation == TUNE_IQ && msg.size() == 2048 + IQ_HEADER_SIZE && msg[3] == 0x08) { // IQ data
+                    const char* samples = msg.data() + IQ_HEADER_SIZE;
+                    {
+                        std::lock_guard<std::mutex> lock(iqDataLock);
+                        for (int z = 0; z < 512; z++) {
+                            const char* iqsample = samples + (z * 4);
+                            const int16_t i = readBE16(iqsample);
+                            const int16_t q = readBE16(iqsample + 2);
+                            iqData.emplace_back(i / 32767.0f, q / 32767.0f);
+                        }
+                        while (iqData.size() > NETWORK_BUFFER_SIZE * 1.5) {
+                            iqData.erase(iqData.begin(), iqData.begin() + 200);
+                        }
                     }
-
-                    int16_t* ptr = (int16_t*)scan;
-                    iqDataLock.lock();
-                    for (int z = 0; z < 512; z++) {
-                        int16_t* iqsample = &ptr[2 * z];
-                        char* fourbytes = (char*)iqsample;
-                        std::swap(fourbytes[0], fourbytes[1]);
-                        std::swap(fourbytes[2], fourbytes[3]);
-                        iqData.emplace_back(iqsample[0] / 32767.0, iqsample[1] / 32767.0);
-                    }
-                    while (iqData.size() > NETWORK_BUFFER_SIZE * 1.5) {
-                        iqData.erase(iqData.begin(), iqData.begin() + 200);
-                    }
-                    iqDataLock.unlock();
-                    //                    flog::info("{} Got sound: bytes={} sequence={} info1={} timestamp={} , {} samples, buflen now = {} (erased {})", (int64_t)currentTimeMillis(), msg.size(), sequence, info1, timestamp, (msg.size() - HEADER_SIZE) / 4, buflen, erased);
+                    //                    flog::info("{} Got sound: bytes={} , {} samples, buflen now = {} (erased {})", (int64_t)currentTimeMillis(), msg.size(), (msg.size() - HEADER_SIZE) / 4, buflen, erased);
                 }
             }
             else {
@@ -190,22 +197,15 @@ struct KiwiSDRClient {
     }
 
 
-    enum Modulation {
-        TUNE_IQ = 1,
-        TUNE_REAL = 2,           // only real data, -3 .. +3 kHz
-    };
-
-    Modulation currentModulation;
-
     void tune(double freq, Modulation mod) {
         char buf[1024];
         switch (mod) {
         case Modulation::TUNE_IQ:
-            currentModulation = mod;
+            currentModulation.store(mod);
             snprintf(buf, sizeof buf, "SET mod=iq low_cut=-7000 high_cut=7000 freq=%0.3f", freq / 1000.0);
             break;
         case Modulation::TUNE_REAL:
-            currentModulation = mod;
+            currentModulation.store(mod);
             snprintf(buf, sizeof(buf), "SET mod=usb low_cut=0 high_cut=8000 freq=%0.3f", (freq - 3000) / 1000.0);
             break;
         }
@@ -213,21 +213,30 @@ struct KiwiSDRClient {
     }
 
     void stop() {
-        using namespace std::chrono_literals;
-        strcpy(connectionStatus, "Disconnecting..");
-        wsClient.stopSocket();
-        strcpy(connectionStatus, "Disconnecting2..");
-        while (running) {
-            std::this_thread::sleep_for(100ms);
+        if (running.load() || looperThread.joinable()) {
+            setConnectionStatus("Disconnecting..");
         }
-        strcpy(connectionStatus, "Disconnected.");
+        running = false;
+        wsClient.stopSocket();
+        if (looperThread.joinable()) {
+            if (looperThread.get_id() != std::this_thread::get_id()) {
+                looperThread.join();
+            }
+        }
+        connected = false;
+        setConnectionStatus("Disconnected.");
     }
 
     void start() {
-        strcpy(connectionStatus, "Connecting..");
+        if (running.load()) { return; }
+        if (looperThread.joinable()) {
+            looperThread.join();
+        }
+        setConnectionStatus("Connecting..");
         running = true;
+        connected = false;
         wsClient.stopped = false;
-        std::thread looper([&]() {
+        looperThread = std::thread([this]() {
             flog::info("calling x.connectAndReceiveLoop..");
             try {
                 std::string hostName;
@@ -245,16 +254,18 @@ struct KiwiSDRClient {
                 auto epochMs = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
                 wsClient.connectAndReceiveLoop(hostName, port, "/kiwi/" + std::to_string(epochMs) + "/SND");
                 flog::info("x.connectAndReceiveLoop exited.");
-                strcpy(connectionStatus, "Disconnected");
+                setConnectionStatus("Disconnected");
+                connected = false;
                 running = false;
             }
             catch (const std::runtime_error& e) {
                 flog::error("KiwiSDRSourceModule: Exception: {}", e.what());
-                strcpy(connectionStatus, "Error: ");
-                strcat(connectionStatus, e.what());
+                char status[100];
+                snprintf(status, sizeof status, "Error: %s", e.what());
+                setConnectionStatus(status);
+                connected = false;
                 running = false;
             }
         });
-        looper.detach();
     }
 };

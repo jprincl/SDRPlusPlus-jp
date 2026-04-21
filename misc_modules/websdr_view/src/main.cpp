@@ -18,6 +18,8 @@
 #include <gui/widgets/waterfall.h>
 #include <algorithm>
 #include <chrono>
+#include <complex>
+#include <mutex>
 
 #define MAX_COMMAND_LENGTH 8192
 
@@ -98,7 +100,7 @@ public:
         }
 
         void tuneIfNeeded() {
-            if (!client || !client->connected) { return; }
+            if (!client || !client->connected.load()) { return; }
             if (lastTunedFrequency == gui::freqSelect.frequency) { return; }
             lastTunedFrequency = gui::freqSelect.frequency;
             client->tune(lastTunedFrequency, KiwiSDRClient::TUNE_REAL);
@@ -215,17 +217,19 @@ public:
                 if (remains <= 0) {
                     stop();
                 } else if (client) {
-                    client->iqDataLock.lock();
-                    if (client->iqData.size() > 0) {
-                        std::vector<dsp::stereo_t> vec(client->iqData.size(), {0, 0});
-                        for (int i = 0; i < client->iqData.size(); i++) {
-                            vec[i].r = vec[i].l = client->iqData[i].real();
+                    std::vector<std::complex<float>> iqData;
+                    {
+                        std::lock_guard<std::mutex> lock(client->iqDataLock);
+                        iqData.swap(client->iqData);
+                    }
+                    if (!iqData.empty()) {
+                        std::vector<dsp::stereo_t> vec(iqData.size(), {0, 0});
+                        for (int i = 0; i < iqData.size(); i++) {
+                            vec[i].r = vec[i].l = iqData[i].real();
                         }
                         //                            flog::info("addAudioSamples: {}", vec.size());
                         wf->addAudioSamples(vec.data(), vec.size(), client->IQDATA_FREQUENCY);
-                        client->iqData.clear();
                     }
-                    client->iqDataLock.unlock();
 
 
                     const ImVec2 sz = {0, 0}; // ImGui::GetContentRegionAvail();
@@ -267,8 +271,11 @@ public:
         if (config.conf.contains("visible")) {
             visible = config.conf["visible"];
         }
-        if (config.conf.contains("receivers")) {
+        if (config.conf.contains("receivers") && config.conf["receivers"].is_object()) {
             for (auto [k, c]: config.conf["receivers"].items()) {
+                if (!c.is_object() || !c.contains("url") || !c.contains("loc") || !c["url"].is_string() || !c["loc"].is_string()) {
+                    continue;
+                }
                 std::string url = c["url"];
                 std::string loc = c["loc"];
                 const std::shared_ptr<SingleReceiver> &recvr = std::make_shared<SingleReceiver>(k, url, loc, this);

@@ -39,6 +39,7 @@ struct KiwiSDRMapSelector {
         std::string error;
         std::string lastTestedServer;
         std::string lastTestedServerLoc;
+        std::atomic<bool> cancelRequested{false};
         bool inProgress = false;
     };
 
@@ -57,6 +58,7 @@ struct KiwiSDRMapSelector {
     std::vector<ServerEntry> servers;
     std::shared_ptr<ServerTestState> serverTestState = std::make_shared<ServerTestState>();
     std::thread serversListThread;
+    std::thread serverTestThread;
     const std::string configPrefix;
 
     ConfigManager* config;
@@ -70,6 +72,10 @@ struct KiwiSDRMapSelector {
     }
 
     ~KiwiSDRMapSelector() {
+        serverTestState->cancelRequested = true;
+        if (serverTestThread.joinable()) {
+            serverTestThread.join();
+        }
         if (serversListThread.joinable()) {
             serversListThread.join();
         }
@@ -259,12 +265,16 @@ struct KiwiSDRMapSelector {
                                     testState->error.clear();
                                     testState->lastTestedServer.clear();
                                     testState->lastTestedServerLoc.clear();
+                                    testState->cancelRequested = false;
                                     startTest = true;
                                 }
                             }
                             if (startTest) {
+                                if (serverTestThread.joinable()) {
+                                    serverTestThread.join();
+                                }
                                 ServerEntry server = s;
-                                std::thread tester([testState, server]() {
+                                serverTestThread = std::thread([testState, server]() {
                                     auto setStatus = [testState](const std::string& status) {
                                         std::lock_guard<std::mutex> lock(testState->mutex);
                                         testState->status = status;
@@ -272,6 +282,9 @@ struct KiwiSDRMapSelector {
                                     auto finishTest = [testState]() {
                                         std::lock_guard<std::mutex> lock(testState->mutex);
                                         testState->inProgress = false;
+                                    };
+                                    auto isCanceled = [testState]() {
+                                        return testState->cancelRequested.load();
                                     };
                                     KiwiSDRClient testClient;
                                     std::atomic<bool> plannedDisconnect{false};
@@ -309,6 +322,9 @@ struct KiwiSDRMapSelector {
                                             testClient.start();
                                             auto start = Clock::now();
                                             while (true) {
+                                                if (isCanceled()) {
+                                                    break;
+                                                }
                                                 if (disconnected.load()) {
                                                     break;
                                                 }
@@ -325,9 +341,12 @@ struct KiwiSDRMapSelector {
                                                 }
                                             }
                                             testClient.stop();
-                                            if (connected.load()) {
+                                            if (isCanceled()) {
+                                                setStatus("Server test canceled");
+                                            }
+                                            else if (connected.load()) {
                                                 auto disconnectWaitStart = Clock::now();
-                                                while (!disconnected.load() && Clock::now() - disconnectWaitStart < 5s) {
+                                                while (!disconnected.load() && !isCanceled() && Clock::now() - disconnectWaitStart < 5s) {
                                                     std::this_thread::sleep_for(100ms);
                                                 }
                                                 flog::info("Disconnected ok");
@@ -348,7 +367,6 @@ struct KiwiSDRMapSelector {
                                     }
                                     finishTest();
                                 });
-                                tester.detach();
                             }
                         }
                     }
@@ -425,15 +443,20 @@ struct KiwiSDRMapSelector {
             controlHttp.recvResponseHeader(rshdr, 5000);
 
             flog::debug("Response from {}: {}", host, rshdr.getStatusString());
-            std::vector<uint8_t> data(2000000, 0);
+            constexpr size_t MAX_RESPONSE_SIZE = 4 * 1024 * 1024;
+            std::vector<uint8_t> data(16 * 1024);
             std::string response;
+            response.reserve(256 * 1024);
             while (true) {
                 auto len = controlSock->recv(data.data(), data.size());
                 if (len < 1) {
                     break;
                 }
-                response += std::string((char*)data.data(), len);
-                std::this_thread::sleep_for(std::chrono::microseconds(100));
+                if (response.size() + len > MAX_RESPONSE_SIZE) {
+                    controlSock->close();
+                    throw std::runtime_error("Server response is too large");
+                }
+                response.append((char*)data.data(), len);
             }
             controlSock->close();
             auto BEGIN = "var kiwisdr_com =";
@@ -443,10 +466,11 @@ struct KiwiSDRMapSelector {
                 throw std::runtime_error("Invalid response from server");
             }
             auto endIx = response.rfind(END);
-            if (endIx == std::string::npos) {
+            const auto contentBeginIx = beginIx + strlen(BEGIN);
+            if (endIx == std::string::npos || endIx < contentBeginIx) {
                 throw std::runtime_error("Invalid response from server");
             }
-            response = response.substr(beginIx + strlen(BEGIN), endIx - (beginIx + strlen(BEGIN)));
+            response = response.substr(contentBeginIx, endIx - contentBeginIx);
             response += "}]"; // fix trailing comma unsupported by parser
 
             FILE* toSave = fopen(jsoncache.c_str(), "wt");
