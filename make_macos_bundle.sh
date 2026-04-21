@@ -33,8 +33,8 @@ bundle_create_plist sdrpp "SDR++ iak" org.ok1iak.sdrpp $APP_VERSION sdrp sdrpp-i
 
 # ========================= Install binaries =========================
 
-# Core
-bundle_install_binary $BUNDLE $BUNDLE/Contents/MacOS $BUILD_DIR/sdrpp 
+ # Core
+bundle_install_binary $BUNDLE $BUNDLE/Contents/MacOS $BUILD_DIR/sdrpp-iak
 bundle_install_binary $BUNDLE $BUNDLE/Contents/Frameworks $BUILD_DIR/core/libsdrpp_core.dylib
 
 # Source modules
