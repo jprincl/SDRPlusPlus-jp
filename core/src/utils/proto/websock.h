@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <map>
 #include <string>
 #include <cerrno>
@@ -36,7 +37,7 @@ namespace net::websock {
         std::random_device rd;
         std::default_random_engine e1;
         std::uniform_int_distribution<int> uniform_dist;
-        bool stopped = false;
+        std::atomic<bool> stopped{false};
 
         WSClient() : socket(), rd(), e1(rd()), uniform_dist(0, 255) {
             flog::info("WSClient instance: {}", (uint64_t)(uintptr_t)this);
@@ -262,15 +263,100 @@ namespace net::websock {
         std::function<void()> onDisconnected = [](){};
         std::function<void()> onEveryReceive = [](){};
 
+        void closeRawSocket(::net::SockHandle_t sock) {
+#ifdef _WIN32
+            closesocket(sock);
+#else
+            close(sock);
+#endif
+        }
+
+        std::shared_ptr<::net::Socket> connectSocket(const std::string& host, int port) {
+            ::net::Address addr(host, port);
+            ::net::SockHandle_t sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#ifdef _WIN32
+            if (sock == INVALID_SOCKET) {
+#else
+            if (sock < 0) {
+#endif
+                throw std::runtime_error("Could not create socket");
+            }
+
+#ifdef _WIN32
+            u_long enabled = 1;
+            ioctlsocket(sock, FIONBIO, &enabled);
+#else
+            fcntl(sock, F_SETFL, O_NONBLOCK);
+#endif
+
+            int result = ::connect(sock, (sockaddr*)&addr.addr, sizeof(sockaddr_in));
+            if (result) {
+#ifdef _WIN32
+                int err = WSAGetLastError();
+                if (err != WSAEWOULDBLOCK && err != WSAEINPROGRESS) {
+#else
+                if (errno != EINPROGRESS) {
+#endif
+                    closeRawSocket(sock);
+                    throw std::runtime_error("Could not connect");
+                }
+            }
+
+            while (!stopped) {
+                fd_set writeSet;
+                fd_set errorSet;
+                FD_ZERO(&writeSet);
+                FD_ZERO(&errorSet);
+                FD_SET(sock, &writeSet);
+                FD_SET(sock, &errorSet);
+
+                timeval tv;
+                tv.tv_sec = 0;
+                tv.tv_usec = 100000;
+#ifdef _WIN32
+                int ready = select(0, NULL, &writeSet, &errorSet, &tv);
+#else
+                int ready = select(sock + 1, NULL, &writeSet, &errorSet, &tv);
+#endif
+                if (ready < 0) {
+                    closeRawSocket(sock);
+                    throw std::runtime_error("Could not connect");
+                }
+                if (ready == 0) {
+                    continue;
+                }
+
+                int connectError = 0;
+#ifdef _WIN32
+                int connectErrorLen = sizeof(connectError);
+#else
+                socklen_t connectErrorLen = sizeof(connectError);
+#endif
+                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&connectError, &connectErrorLen) || connectError) {
+                    closeRawSocket(sock);
+                    throw std::runtime_error("Could not connect");
+                }
+                return std::make_shared<::net::Socket>(sock, &addr);
+            }
+
+            closeRawSocket(sock);
+            return {};
+        }
+
         void connectAndReceiveLoop(const std::string& host, int port, const std::string& path) {
             flog::info("WSClient connectAndReceiveLoop: inst={}", (uint64_t)(uintptr_t)this);
-            stopped = false;
-            auto z = net::connect(Address(host, port));
+            auto z = connectSocket(host, port);
+            if (!z) {
+                onDisconnected();
+                return;
+            }
             socket = z;
+            bool shouldNotifyDisconnected = true;
             if (stopped) {
                 if (socket) {
                     socket->close();
                     socket.reset();
+                    onDisconnected();
                     return;
                 }
             }
@@ -300,7 +386,18 @@ namespace net::websock {
 
             uint8_t buf[100000];
 
-            int recvd = socket->recv(buf, sizeof(buf), false, NO_TIMEOUT);
+            int recvd = 0;
+            while (!stopped) {
+                recvd = socket->recv(buf, sizeof(buf) - 1, false, 100);
+                if (recvd != 0) {
+                    break;
+                }
+            }
+            if (stopped) {
+                socket->close();
+                onDisconnected();
+                return;
+            }
             if (recvd <= 0) {
                 std::string msg = "websock: recv failed, errno=" + std::to_string(errno)+" (recvd="+std::to_string(recvd)+
                                   " sent="+std::to_string(len)+" senderr="+std::to_string(senderr)+")";
@@ -326,7 +423,7 @@ namespace net::websock {
                 data.push_back(buf[i]);
             }
             onConnected();
-            while (true) {
+            while (!stopped) {
                 int len0 = maybeDecodeBuffer(data);
                 if (len0 > 0) {
 //                    printf("decoded/dropping bytes: %d\n", len0);
@@ -334,6 +431,9 @@ namespace net::websock {
                     continue;
                 }
                 recvd = socket->recv(buf, sizeof(buf), false, 100); // 100 msec
+                if (stopped) {
+                    break;
+                }
                 if (recvd == 0) {
                     continue;
                 }
@@ -341,6 +441,7 @@ namespace net::websock {
                 if (recvd <= 0) {
                     socket->close();
                     onDisconnected();
+                    shouldNotifyDisconnected = false;
                     break;
                 }
                 onEveryReceive();
@@ -348,8 +449,13 @@ namespace net::websock {
                     data.push_back(buf[i]);
                 }
             }
+            if (shouldNotifyDisconnected) {
+                socket->close();
+                onDisconnected();
+            }
         }
         void stopSocket() {
+            stopped = true;
             if (socket) {
                 socket->close();
             }

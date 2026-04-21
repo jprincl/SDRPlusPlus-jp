@@ -125,7 +125,7 @@ struct KiwiSDRClient {
                     iqDataLock.unlock();
                     snprintf(connectionStatus, sizeof connectionStatus, "Cont Recv. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
                 }
-                if (currentModulation == TUNE_IQ && msg[3] == 0x08 && msg.size() == 2048 + IQ_HEADER_SIZE) { // IQ data
+                if (currentModulation == TUNE_IQ && msg.size() == 2048 + IQ_HEADER_SIZE && msg[3] == 0x08) { // IQ data
                     auto scan = msg.data();
                     scan += 4;
                     auto sequence = *(int32_t*)scan;
@@ -226,6 +226,7 @@ struct KiwiSDRClient {
     void start() {
         strcpy(connectionStatus, "Connecting..");
         running = true;
+        wsClient.stopped = false;
         std::thread looper([&]() {
             flog::info("calling x.connectAndReceiveLoop..");
             try {

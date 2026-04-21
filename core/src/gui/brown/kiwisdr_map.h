@@ -7,11 +7,13 @@
 #include <gui/style.h>
 #include <algorithm>
 #include <chrono>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <locale>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -27,10 +29,18 @@ struct KiwiSDRMapSelector {
     geomap::GeoMap geoMap;
     std::shared_ptr<json> serversList;
     std::string serverListError;
-    std::string serverTestStatus;
-    std::string serverTestError;
     bool loadingList = false;
+    std::mutex serversListMutex;
     std::string root;
+
+    struct ServerTestState {
+        std::mutex mutex;
+        std::string status;
+        std::string error;
+        std::string lastTestedServer;
+        std::string lastTestedServerLoc;
+        bool inProgress = false;
+    };
 
     struct ServerEntry {
         ImVec2 gps; // -1 .. 1 etc
@@ -45,11 +55,9 @@ struct KiwiSDRMapSelector {
     };
 
     std::vector<ServerEntry> servers;
-    std::string lastTestedServer;
-    std::string lastTestedServerLoc;
-    std::mutex lastTestedServerMutex;
+    std::shared_ptr<ServerTestState> serverTestState = std::make_shared<ServerTestState>();
+    std::thread serversListThread;
     const std::string configPrefix;
-    bool testInProgress = false;
 
     ConfigManager* config;
 
@@ -59,6 +67,12 @@ struct KiwiSDRMapSelector {
         json def = json({});
         config->load(def);
         geoMap.loadFrom(*config, configPrefix.c_str()); // configPrefix is like "mapselector1_"
+    }
+
+    ~KiwiSDRMapSelector() {
+        if (serversListThread.joinable()) {
+            serversListThread.join();
+        }
     }
 
     void openPopup() {
@@ -77,20 +91,36 @@ struct KiwiSDRMapSelector {
                 geoMap.saveTo(*config, configPrefix.c_str());
                 geoMap.scaleTranslateDirty = false;
             }
-            if (!serversList) {
-                if (!serverListError.empty()) {
-                    ImGui::Text("%s", serverListError.c_str());
+            std::shared_ptr<json> currentServersList;
+            std::string currentServerListError;
+            bool currentLoadingList = false;
+            {
+                std::lock_guard<std::mutex> lock(serversListMutex);
+                currentServersList = serversList;
+                currentServerListError = serverListError;
+                currentLoadingList = loadingList;
+            }
+            if (!currentServersList) {
+                if (!currentServerListError.empty()) {
+                    ImGui::Text("%s", currentServerListError.c_str());
                 }
                 else {
                     ImGui::Text("Loading KiwiSDR servers list..");
-                    if (!loadingList) {
-                        loadingList = true;
-                        std::thread t([&]() {
-                            serversList = loadServersList();
+                    if (!currentLoadingList) {
+                        {
+                            std::lock_guard<std::mutex> lock(serversListMutex);
+                            loadingList = true;
+                        }
+                        if (serversListThread.joinable()) {
+                            serversListThread.join();
+                        }
+                        serversListThread = std::thread([&]() {
+                            auto loadedServersList = loadServersList();
+                            std::vector<ServerEntry> loadedServers;
 
-                            if (serversList) {
+                            if (loadedServersList) {
                                 int totallyParsed = 0;
-                                for (const auto& entry : *serversList) {
+                                for (const auto& entry : *loadedServersList) {
                                     ServerEntry serverEntry;
 
                                     // Check if all required fields are present
@@ -124,7 +154,7 @@ struct KiwiSDRMapSelector {
                                                 sscanf(entry["snr"].get<std::string>().c_str(), "%f,%f", &serverEntry.maxSnr, &serverEntry.secondSnr);
                                                 serverEntry.users = atoi(entry["users"].get<std::string>().c_str());
                                                 serverEntry.usersmax = atoi(entry["users_max"].get<std::string>().c_str());
-                                                servers.push_back(serverEntry);
+                                                loadedServers.push_back(serverEntry);
                                                 totallyParsed++;
                                             }
                                         }
@@ -133,14 +163,15 @@ struct KiwiSDRMapSelector {
                                 flog::info("Parsed {} servers",totallyParsed);
                             }
 
-                            std::sort(servers.begin(), servers.end(), [](const ServerEntry& a, const ServerEntry& b) {
+                            std::sort(loadedServers.begin(), loadedServers.end(), [](const ServerEntry& a, const ServerEntry& b) {
                                 return a.maxSnr < b.maxSnr;
                             });
 
-
+                            std::lock_guard<std::mutex> lock(serversListMutex);
+                            servers = std::move(loadedServers);
+                            serversList = loadedServersList;
                             loadingList = false;
                         });
-                        t.detach();
                     }
                 }
             }
@@ -209,96 +240,131 @@ struct KiwiSDRMapSelector {
                             ImGui::Text("USR: %d/%d", s.users, s.usersmax);
                         }
                         ImGui::Text("URL: %s", s.url.c_str());
-                        ImGui::BeginDisabled(testInProgress);
+                        bool currentTestInProgress = false;
+                        {
+                            std::lock_guard<std::mutex> lock(serverTestState->mutex);
+                            currentTestInProgress = serverTestState->inProgress;
+                        }
+                        ImGui::BeginDisabled(currentTestInProgress);
                         auto doTest = doFingerButton("Test server");
                         ImGui::EndDisabled();
                         if (doTest) {
-                            lastTestedServerMutex.lock();
-                            lastTestedServer = "";
-                            lastTestedServerMutex.unlock();
-                            if (!testInProgress) {
-                                testInProgress = true;
-                                serverTestStatus = "Testing server " + s.url + " ...";
-                                std::thread tester([=]() {
+                            auto testState = serverTestState;
+                            bool startTest = false;
+                            {
+                                std::lock_guard<std::mutex> lock(testState->mutex);
+                                if (!testState->inProgress) {
+                                    testState->inProgress = true;
+                                    testState->status = "Testing server " + s.url + " ...";
+                                    testState->error.clear();
+                                    testState->lastTestedServer.clear();
+                                    testState->lastTestedServerLoc.clear();
+                                    startTest = true;
+                                }
+                            }
+                            if (startTest) {
+                                ServerEntry server = s;
+                                std::thread tester([testState, server]() {
+                                    auto setStatus = [testState](const std::string& status) {
+                                        std::lock_guard<std::mutex> lock(testState->mutex);
+                                        testState->status = status;
+                                    };
+                                    auto finishTest = [testState]() {
+                                        std::lock_guard<std::mutex> lock(testState->mutex);
+                                        testState->inProgress = false;
+                                    };
                                     KiwiSDRClient testClient;
-                                    bool plannedDisconnect = false;
-                                    if (s.url.find("http://") == 0) {
-                                        auto hostPort = s.url.substr(7);
-                                        auto loc = s.loc;
-                                        auto lastSlash = hostPort.find("/");
-                                        if (lastSlash != std::string::npos) {
-                                            hostPort = hostPort.substr(0, lastSlash);
-                                        }
-                                        serverTestStatus = "Testing server " + hostPort + "...";
-                                        testClient.init(hostPort);
-                                        using namespace std::chrono_literals;
-                                        using Clock = std::chrono::steady_clock;
-                                        bool connected = 0;
-                                        bool disconnected = 0;
-                                        auto start = Clock::now();
-                                        testClient.onConnected = [&]() {
-                                            connected = true;
-                                            serverTestStatus = "Connected to server " + hostPort + " ...";
-                                            start = Clock::now();
-                                            testClient.tune(14074000, KiwiSDRClient::TUNE_IQ);
-                                        };
-                                        testClient.onDisconnected = [&]() {
-                                            disconnected = true;
-                                            if (plannedDisconnect) {
-                                                serverTestStatus = "Got some data. Server OK: " + s.url;
-                                                lastTestedServerMutex.lock();
-                                                lastTestedServer = hostPort;
-                                                lastTestedServerLoc = loc;
-                                                lastTestedServerMutex.unlock();
+                                    std::atomic<bool> plannedDisconnect{false};
+                                    std::atomic<bool> connected{false};
+                                    std::atomic<bool> disconnected{false};
+                                    try {
+                                        if (server.url.find("http://") == 0) {
+                                            auto hostPort = server.url.substr(7);
+                                            auto loc = server.loc;
+                                            auto lastSlash = hostPort.find("/");
+                                            if (lastSlash != std::string::npos) {
+                                                hostPort = hostPort.substr(0, lastSlash);
+                                            }
+                                            setStatus("Testing server " + hostPort + "...");
+                                            testClient.init(hostPort);
+                                            using namespace std::chrono_literals;
+                                            using Clock = std::chrono::steady_clock;
+                                            testClient.onConnected = [&]() {
+                                                connected = true;
+                                                setStatus("Connected to server " + hostPort + " ...");
+                                                testClient.tune(14074000, KiwiSDRClient::TUNE_IQ);
+                                            };
+                                            testClient.onDisconnected = [&]() {
+                                                disconnected = true;
+                                                std::lock_guard<std::mutex> lock(testState->mutex);
+                                                if (plannedDisconnect.load()) {
+                                                    testState->status = "Got some data. Server OK: " + server.url;
+                                                    testState->lastTestedServer = hostPort;
+                                                    testState->lastTestedServerLoc = loc;
+                                                }
+                                                else {
+                                                    testState->status = "Disconnect, no data. Server NOT OK: " + server.url;
+                                                }
+                                            };
+                                            testClient.start();
+                                            auto start = Clock::now();
+                                            while (true) {
+                                                if (disconnected.load()) {
+                                                    break;
+                                                }
+                                                testClient.iqDataLock.lock();
+                                                auto bufsize = testClient.iqData.size();
+                                                testClient.iqDataLock.unlock();
+                                                std::this_thread::sleep_for(100ms);
+                                                if (bufsize > 0) {
+                                                    plannedDisconnect = true;
+                                                    break;
+                                                }
+                                                if (Clock::now() - start > 5s) {
+                                                    break;
+                                                }
+                                            }
+                                            testClient.stop();
+                                            if (connected.load()) {
+                                                auto disconnectWaitStart = Clock::now();
+                                                while (!disconnected.load() && Clock::now() - disconnectWaitStart < 5s) {
+                                                    std::this_thread::sleep_for(100ms);
+                                                }
+                                                flog::info("Disconnected ok");
                                             }
                                             else {
-                                                serverTestStatus = "Disconnect, no data. Server NOT OK: " + s.url;
+                                                setStatus("Could not connect to server: " + server.url);
+                                                std::this_thread::sleep_for(1s);
                                             }
-                                        };
-                                        testClient.start();
-                                        start = Clock::now();
-                                        while (true) {
-                                            if (disconnected) {
-                                                break;
-                                            }
-                                            testClient.iqDataLock.lock();
-                                            auto bufsize = testClient.iqData.size();
-                                            testClient.iqDataLock.unlock();
-                                            std::this_thread::sleep_for(100ms);
-                                            if (bufsize > 0) {
-                                                plannedDisconnect = true;
-                                                break;
-                                            }
-                                            if (connected && Clock::now() - start > 5s) {
-                                                break;
-                                            }
-                                        }
-                                        testClient.stop();
-                                        if (connected) {
-                                            while (!disconnected) {
-                                                std::this_thread::sleep_for(100ms);
-                                            }
-                                            flog::info("Disconnected ok");
                                         }
                                         else {
-                                            std::this_thread::sleep_for(1s);
+                                            setStatus("Non-http url " + server.url);
                                         }
-                                        testInProgress = false;
                                     }
-                                    else {
-                                        serverTestStatus = "Non-http url " + s.url;
+                                    catch (const std::exception& e) {
+                                        std::lock_guard<std::mutex> lock(testState->mutex);
+                                        testState->status = "Server test error";
+                                        testState->error = e.what();
                                     }
+                                    finishTest();
                                 });
                                 tester.detach();
                             }
                         }
                     }
                 }
-                if (!serverTestStatus.empty()) {
-                    ImGui::Text("%s", serverTestStatus.c_str());
+                std::string currentServerTestStatus;
+                std::string currentServerTestError;
+                {
+                    std::lock_guard<std::mutex> lock(serverTestState->mutex);
+                    currentServerTestStatus = serverTestState->status;
+                    currentServerTestError = serverTestState->error;
                 }
-                if (!serverTestError.empty()) {
-                    ImGui::Text("Server test error: %s", serverTestError.c_str());
+                if (!currentServerTestStatus.empty()) {
+                    ImGui::Text("%s", currentServerTestStatus.c_str());
+                }
+                if (!currentServerTestError.empty()) {
+                    ImGui::Text("Server test error: %s", currentServerTestError.c_str());
                 }
             }
 
@@ -310,15 +376,20 @@ struct KiwiSDRMapSelector {
             if (doFingerButton("Cancel")) {
                 ImGui::CloseCurrentPopup();
             }
-            lastTestedServerMutex.lock();
-            if (lastTestedServer != "") {
+            std::string currentLastTestedServer;
+            std::string currentLastTestedServerLoc;
+            {
+                std::lock_guard<std::mutex> lock(serverTestState->mutex);
+                currentLastTestedServer = serverTestState->lastTestedServer;
+                currentLastTestedServerLoc = serverTestState->lastTestedServerLoc;
+            }
+            if (currentLastTestedServer != "") {
                 ImGui::SameLine();
-                if (doFingerButton("Use tested server: " + lastTestedServer)) {
-                    onSelected(lastTestedServer,lastTestedServerLoc);
+                if (doFingerButton("Use tested server: " + currentLastTestedServer)) {
+                    onSelected(currentLastTestedServer,currentLastTestedServerLoc);
                     ImGui::CloseCurrentPopup();
                 }
             }
-            lastTestedServerMutex.unlock();
 
             ImGui::EndPopup();
         }
@@ -371,11 +442,11 @@ struct KiwiSDRMapSelector {
             if (beginIx == std::string::npos) {
                 throw std::runtime_error("Invalid response from server");
             }
-            auto endIx = response.find_last_of(END);
+            auto endIx = response.rfind(END);
             if (endIx == std::string::npos) {
                 throw std::runtime_error("Invalid response from server");
             }
-            response = response.substr(beginIx + strlen(BEGIN), endIx - strlen(END) - (beginIx + strlen(BEGIN)));
+            response = response.substr(beginIx + strlen(BEGIN), endIx - (beginIx + strlen(BEGIN)));
             response += "}]"; // fix trailing comma unsupported by parser
 
             FILE* toSave = fopen(jsoncache.c_str(), "wt");
@@ -387,6 +458,7 @@ struct KiwiSDRMapSelector {
             return std::make_shared<json>(json::parse(response));
         }
         catch (std::exception& e) {
+            std::lock_guard<std::mutex> lock(serversListMutex);
             serverListError = e.what();
             return std::shared_ptr<json>();
         }

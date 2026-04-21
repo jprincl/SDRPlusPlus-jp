@@ -23,6 +23,7 @@
 #include <ctime>
 #include <fstream>
 #include <thread>
+#include <atomic>
 #include <gui/brown/kiwisdr_map.h>
 
 
@@ -125,14 +126,17 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
 
     static void start(void* ctx) {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
-        if (_this->running) { return; }
-        _this->running = true;
+        if (_this->running.load()) { return; }
+        if (_this->feederThread.joinable()) {
+            _this->feederThread.join();
+        }
+        if (_this->running.exchange(true)) { return; }
         _this->kiwiSdrClient.start();
         _this->nextSend = {};
         _this->timeSet = false;
-        std::thread feeder([=]() {
+        _this->feederThread = std::thread([=]() {
             Clock::time_point nextSend{};
-            while (_this->running) {
+            while (_this->running.load()) {
                 _this->kiwiSdrClient.iqDataLock.lock();
                 auto bufsize = _this->kiwiSdrClient.iqData.size();
                 _this->kiwiSdrClient.iqDataLock.unlock();
@@ -173,18 +177,18 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
                 }
             }
         });
-        feeder.detach();
-
-        _this->running = true;
         flog::info("KiwiSDRSourceModule '{0}': Start!", _this->name);
     }
 
     static void stop(void* ctx) {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
-        if (!_this->running) { return; }
+        bool wasRunning = _this->running.exchange(false);
+        if (!wasRunning && !_this->kiwiSdrClient.running.load() && !_this->feederThread.joinable()) { return; }
         _this->kiwiSdrClient.stop();
 
-        _this->running = false;
+        if (_this->feederThread.joinable()) {
+            _this->feederThread.join();
+        }
         flog::info("KiwiSDRSourceModule '{0}': Stop!", _this->name);
     }
 
@@ -213,7 +217,7 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     static void tune(double freq, void* ctx) {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
         _this->lastTuneFrequency = freq;
-        if (_this->running && _this->connected) {
+        if (_this->running.load() && _this->connected.load()) {
             _this->kiwiSdrClient.tune(freq, KiwiSDRClient::TUNE_IQ);
         }
         flog::info("KiwiSDRSourceModule '{0}': Tune: {1}!", _this->name, freq);
@@ -262,14 +266,15 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
 
     std::string name;
     bool enabled = true;
-    bool running = false;
-    bool connected = false;
+    std::atomic<bool> running{false};
+    std::atomic<bool> connected{false};
     bool timeSet = false;
 
     double freq;
     bool serverBusy = false;
 
     dsp::stream<dsp::complex_t> stream;
+    std::thread feederThread;
     SourceManager::SourceHandler handler;
 
     std::shared_ptr<KiwiSDRClient> client;

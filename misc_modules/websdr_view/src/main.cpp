@@ -267,11 +267,13 @@ public:
         if (config.conf.contains("visible")) {
             visible = config.conf["visible"];
         }
-        for (auto [k, c]: config.conf["receivers"].items()) {
-            std::string url = c["url"];
-            std::string loc = c["loc"];
-            const std::shared_ptr<SingleReceiver> &recvr = std::make_shared<SingleReceiver>(k, url, loc, this);
-            receivers.emplace_back(recvr);
+        if (config.conf.contains("receivers")) {
+            for (auto [k, c]: config.conf["receivers"].items()) {
+                std::string url = c["url"];
+                std::string loc = c["loc"];
+                const std::shared_ptr<SingleReceiver> &recvr = std::make_shared<SingleReceiver>(k, url, loc, this);
+                receivers.emplace_back(recvr);
+            }
         }
         config.release(false);
     }
