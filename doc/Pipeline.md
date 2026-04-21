@@ -119,7 +119,10 @@ The nodes below each own a worker thread. Dashed arrows are data streams
 4. **`split` (`Splitter<complex_t>`)** — 1 thread. Copies every incoming
    packet into every bound output stream (FFT, one per VFO, recorders, etc).
    The copy itself happens inside the splitter thread, so every consumer sees
-   the same packet cadence.
+   the same packet cadence. Outputs are written **serially**, so a single
+   blocked consumer (e.g. a recorder that can't flush its disk, or an overloaded
+   FFT reshaper) stalls all other consumers and back-pressures the upstream
+   chain.
 
 5. **FFT branch**:
    * `reshape` (Reshaper) — **2 threads** (`core/src/dsp/buffer/reshaper.h`,
@@ -254,7 +257,7 @@ Default running set for a single VFO + audio sink, WFM demodulator
 | `volumeAjust`                                              | 1 |
 | `stereoPacker`                                             | 1 |
 | RtAudio out callback                                       | 1 (driver-owned) |
-| **Total**                                                  | **~19** |
+| **Total**                                                  | **~20** |
 
 \* `WFM::start()` unconditionally starts `rdsDemod` (1) + `hs` RDS-byte
 handler sink (1) + `reshape` for the RDS diagnostic scope (2) + `diagHandler`
@@ -305,6 +308,19 @@ quiesce.
   outermost level. Used e.g. when switching demodulator, changing sample rate,
   retuning filter taps, enabling/disabling a chain stage.
 
+Two start/stop quirks worth knowing:
+
+* **`IQFrontEnd::setBuffering()` does not quiesce `inBuf`.** It just flips
+  `inBuf.bypass`; the two frame-buffer workers keep running across the flag
+  change. A producer thread observing the old bypass value can race against a
+  consumer thread already switched, so toggling buffering live is not
+  guaranteed-lossless by itself.
+* **`audio_sink` starts RtAudio before `stereoPacker`.** In
+  `sink_modules/audio_sink/src/main.cpp` the openStream + startStream pair runs
+  before `stereoPacker.start()`, so the first RtAudio callback can fire before
+  the packer has produced its first packet and will block in `read()` until
+  it does.
+
 ### 5.4 Buffer sizes / number of buffers
 
 * Every `dsp::stream<T>` pre-allocates **2 × 1 000 000** elements
@@ -320,9 +336,13 @@ quiesce.
   back-pressure — it just overwrites slot 0 and desyncs the consumer. Under
   steady overload the block silently drops information instead of blocking
   upstream.
-* `Reshaper` has an internal `RingBuffer<T>` sized to `keep * 2` elements.
-  Acts as the FFT-rate gearbox between the splitter cadence and the
-  FFT stride.
+* `Reshaper` has an internal `RingBuffer<T>`. The ring **always allocates
+  `RING_BUF_SZ = 1 000 000` elements**; `Reshaper` just sets
+  `maxLatency = keep * 2`, which caps how many samples `getReadable()` will
+  return — it does **not** shrink the allocation. Acts as the FFT-rate
+  gearbox between the splitter cadence and the FFT stride. For the default
+  front-end (8 Msps, FFT size 1024, FFT rate 20 Hz) this works out to
+  `keep = 1024`, `skip = 400 000 − 1024`, output cadence 20 × 1024 samples/s.
 * `Packer` (audio sink side) accumulates until it has `bufferFrames`
   samples, where `bufferFrames = sampleRate / 60` (e.g. 800 at 48 kHz,
   ≈ 16.67 ms).
@@ -387,6 +407,11 @@ So the actual desktop end-to-end figure is **~40–55 ms nominal** and
 **up to ~200 ms when `inBuf` is buffering bursts**. The audio sink still
 dominates the steady-state number; the input buffer dominates the jitter
 and the tail.
+
+The nominal figure assumes a typical **1–2 packets** of `inBuf` occupancy
+(~5–10 ms at Pₛ = 5 ms). If `inBuf` is forced to bypass and the front-end
+has no queue to idle in, the same pipeline comes in closer to
+**~30–50 ms**, dominated purely by packetisation + DSP + audio buffers.
 
 Numbers to confirm at runtime (see §7). They are *not* measured in the
 current code base — see the last section for instrumentation proposals.
