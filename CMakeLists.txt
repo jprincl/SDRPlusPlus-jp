@@ -29,6 +29,7 @@ option(OPT_BUILD_HAROGIC_SOURCE "Build Harogic Source Module (Dependencies: htra
 option(OPT_BUILD_HERMES_SOURCE "Build Hermes Source Module (no dependencies required)" ON)
 option(OPT_BUILD_HYDRASDR_RFONE_SOURCE "Build HydraSDR RFOne Source Module (Dependencies: libhydrasdr)" ON)
 option(OPT_BUILD_KCSDR_SOURCE "Build KCSDR Source Module (Dependencies: libkcsdr)" OFF)
+option(OPT_BUILD_KIWISDR_SOURCE "Build KiwiSDR WebSDR Source Module (no dependencies required)" ON)
 option(OPT_BUILD_LIMESDR_SOURCE "Build LimeSDR Source Module (Dependencies: liblimesuite)" OFF)
 option(OPT_BUILD_NETWORK_SOURCE "Build Network Source Module (no dependencies required)" ON)
 option(OPT_BUILD_PERSEUS_SOURCE "Build Perseus Source Module (Dependencies: libperseus-sdr)" OFF)
@@ -76,6 +77,7 @@ option(OPT_BUILD_RIGCTL_CLIENT "Rigctl client to make SDR++ act as a panadapter"
 option(OPT_BUILD_RIGCTL_SERVER "Rigctl backend for controlling SDR++ with software like gpredict" ON)
 option(OPT_BUILD_SCANNER "Frequency scanner" ON)
 option(OPT_BUILD_SCHEDULER "Build the scheduler" OFF)
+option(OPT_BUILD_WEBSDR_VIEW "Build WebSDR View module (no dependencies required)" ON)
 
 # Other options
 option(USE_INTERNAL_LIBCORRECT "Use an internal version of libcorrect" ON)
@@ -186,6 +188,10 @@ endif (OPT_BUILD_HYDRASDR_RFONE_SOURCE)
 if (OPT_BUILD_KCSDR_SOURCE)
 add_subdirectory("source_modules/kcsdr_source")
 endif (OPT_BUILD_KCSDR_SOURCE)
+
+if (OPT_BUILD_KIWISDR_SOURCE)
+add_subdirectory("source_modules/kiwisdr_source")
+endif (OPT_BUILD_KIWISDR_SOURCE)
 
 if (OPT_BUILD_LIMESDR_SOURCE)
 add_subdirectory("source_modules/limesdr_source")
@@ -361,6 +367,10 @@ if (OPT_BUILD_SCHEDULER)
 add_subdirectory("misc_modules/scheduler")
 endif (OPT_BUILD_SCHEDULER)
 
+if (OPT_BUILD_WEBSDR_VIEW)
+add_subdirectory("misc_modules/websdr_view")
+endif (OPT_BUILD_WEBSDR_VIEW)
+
 if (MSVC)
     add_executable(sdrpp "src/main.cpp" "win32/resources.rc")
 else ()
@@ -375,7 +385,7 @@ target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILER_FLAGS})
 # Copy dynamic libs over
 if (MSVC)
     add_custom_target(do_always ALL xcopy /s \"$<TARGET_FILE_DIR:sdrpp_core>\\*.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
-    add_custom_target(do_always_volk ALL xcopy /s \"C:/Program Files/PothosSDR/bin\\volk.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
+    add_custom_target(do_always_volk ALL xcopy \"D:/src/SDRPlusPlus/build/Debug/volk.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
 
     if (COPY_MSVC_REDISTRIBUTABLES)
         # Get the list of Visual C++ runtime DLLs
@@ -421,6 +431,7 @@ set_target_properties(sdrpp PROPERTIES OUTPUT_NAME "sdrpp-iak")
 install(TARGETS sdrpp DESTINATION bin)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/bandplans DESTINATION share/sdrpp-iak)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/colormaps DESTINATION share/sdrpp-iak)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/cty DESTINATION share/sdrpp-iak)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/fonts DESTINATION share/sdrpp-iak)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/icons DESTINATION share/sdrpp-iak)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/themes DESTINATION share/sdrpp-iak)

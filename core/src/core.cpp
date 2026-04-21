@@ -187,6 +187,8 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["moduleInstances"]["Hermes Source"]["enabled"] = true;
     defConfig["moduleInstances"]["HydraSDR Source"]["module"] = "hydrasdr_source";
     defConfig["moduleInstances"]["HydraSDR Source"]["enabled"] = true;
+    defConfig["moduleInstances"]["KiwiSDR Source"]["module"] = "kiwisdr_source";
+    defConfig["moduleInstances"]["KiwiSDR Source"]["enabled"] = true;
     defConfig["moduleInstances"]["LimeSDR Source"]["module"] = "limesdr_source";
     defConfig["moduleInstances"]["LimeSDR Source"]["enabled"] = true;
     defConfig["moduleInstances"]["Network Source"]["module"] = "network_source";
@@ -226,6 +228,8 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["moduleInstances"]["Frequency Manager"] = "frequency_manager";
     defConfig["moduleInstances"]["Recorder"] = "recorder";
     defConfig["moduleInstances"]["Rigctl Server"] = "rigctl_server";
+    defConfig["moduleInstances"]["WebSDR View"]["module"] = "websdr_view";
+    defConfig["moduleInstances"]["WebSDR View"]["enabled"] = true;
     // defConfig["moduleInstances"]["Rigctl Client"] = "rigctl_client";
     // TODO: Enable rigctl_client when ready
     // defConfig["moduleInstances"]["Scanner"] = "scanner";
@@ -312,6 +316,7 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.conf["modules"][modCount++] = "rtl_tcp_source.so";
     core::configManager.conf["modules"][modCount++] = "sdrpp_server_source.so";
     core::configManager.conf["modules"][modCount++] = "spyserver_source.so";
+    core::configManager.conf["modules"][modCount++] = "kiwisdr_source.so";
 
     core::configManager.conf["modules"][modCount++] = "network_sink.so";
     core::configManager.conf["modules"][modCount++] = "audio_sink.so";
@@ -324,6 +329,7 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.conf["modules"][modCount++] = "recorder.so";
     core::configManager.conf["modules"][modCount++] = "rigctl_server.so";
     core::configManager.conf["modules"][modCount++] = "scanner.so";
+    core::configManager.conf["modules"][modCount++] = "websdr_view.so";
 #endif
 
     // Fix missing elements in config

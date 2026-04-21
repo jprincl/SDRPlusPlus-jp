@@ -36,6 +36,8 @@ cp $build_dir/source_modules/hydrasdr_source/Release/hydrasdr_source.dll sdrpp_w
 cp 'C:/Program Files/PothosSDR/bin/hydrasdr.dll' sdrpp_windows_x64/
 cp 'C:/Program Files/PothosSDR/bin/pthreadVC3.dll' sdrpp_windows_x64/
 
+cp $build_dir/source_modules/kiwisdr_source/Release/kiwisdr_source.dll sdrpp_windows_x64/modules/
+
 cp $build_dir/source_modules/limesdr_source/Release/limesdr_source.dll sdrpp_windows_x64/modules/
 cp 'C:/Program Files/PothosSDR/bin/LimeSuite.dll' sdrpp_windows_x64/
 
@@ -105,6 +107,8 @@ cp $build_dir/misc_modules/rigctl_client/Release/rigctl_client.dll sdrpp_windows
 cp $build_dir/misc_modules/rigctl_server/Release/rigctl_server.dll sdrpp_windows_x64/modules/
 
 cp $build_dir/misc_modules/scanner/Release/scanner.dll sdrpp_windows_x64/modules/
+
+cp $build_dir/misc_modules/websdr_view/Release/websdr_view.dll sdrpp_windows_x64/modules/
 
 
 # Copy supporting libs
