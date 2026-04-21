@@ -1,0 +1,114 @@
+HAM worthy modifications?
+https://github.com/qrp73/SDRPP
+
+TX, a lot more
+https://github.com/sannysanoff/SDRPlusPlusBrown
+
+SDR-888, 1 star
+https://github.com/howard0su/SDRPlusPlus
+
+RigExpert fork: fobossdr, network sink catch block, spectran_source fix, 3 stars
+https://github.com/rigexpert/SDRPlusPlus
+
+OM2LT Erik Brocko: MiriSDR - open source SDRPlay driver, PortAudio diff, SoapySDR diff, 3 stars
+https://github.com/ericek111/SDRPlusPlus
+
+NRSC-5 decoder
+https://github.com/mriise/SDRPlusPlus-NRSC-5
+
+Changed PlutoSDR source to support libiio v1 API - the libiio v0 crashes for me
+https://github.com/tilarids/SDRPlusPlus
+
+support for https://rfnm.com/
+https://github.com/chiaraberti13/SDRPlusPlus
+
+Chinese version BG5JRE, localization?
+https://github.com/nkxingxh/SDRPlusPlus-CHS
+
+Windows Arm64EC build
+https://github.com/fluid41/SDRPlusPlus
+
+IMGUI update to support OpenGL 3.0 correctly https://github.com/AlexandreRouma/SDRPlusPlus/issues/1430
+https://github.com/sdekrijger/SDRPlusPlus
+
+Side controls for Vol, Zoom, FFTMin, FFTMax
+https://github.com/r4d10n/SDRPlusPlus
+
+Caribou Lite support https://www.crowdsupply.com/cariboulabs/cariboulite-rpi-hat
+https://github.com/cariboulabs/SDRPlusPlus
+
+Baseband sink
+https://github.com/SatDump/SDRPlusPlus
+
+Radiosonde
+https://github.com/jethrocarr/SDRPlusPlus
+
+PlutoSDR tweaks, 17 stars
+https://github.com/F5OEO/SDRPlusPlus
+
+Fobos Agile RX support (RigExpert)
+https://github.com/stenn930/SDRPlusPlus
+
+Docking layout, updated ImGUI
+https://github.com/Zaryob/SDRPlusPlus
+
+?? ATV, raw audio saving?
+https://github.com/randomradioprojects/SDRPlusPlus
+
+?? PlutoSDR fixes
+https://github.com/meee1/SDRPlusPlus
+
+?? M17 encryption mute?
+https://github.com/Paulo-D2000/SDRPlusPlus
+
+?? Some UI tweaks, airspy_TCP server
+https://github.com/daviderud/SDRPlusPlus
+
+?? Some MacOS compilation fixes, audio in support for server
+https://github.com/noah04n/SDRPlusPlus/
+
+?? active, chinese? USRP?
+https://github.com/JustZhenya/SDRPlusPlus
+
+SDDC, ???
+https://github.com/syehorov/SDRPlusPlus
+
+LimeSDR fixes, 2 stars
+https://github.com/alphafox02/SDRPlusPlus
+
+R-PI hardware (rotary encoder)
+https://github.com/K7MDL2/SDRPlusPlus
+
+Disconnected SDR++ forks
+https://github.com/LunaeMons/SDRPlusPlus_CommunityEdition
+https://github.com/KubaPro010/SDRMinusMinus
+
+SDR++ modules
+https://github.com/cropinghigh/sdrpp-tetra-demodulator
+https://github.com/dbdexter-dev/sdrpp_radiosonde
+https://github.com/cropinghigh/sdrpp-vhfvoiceradio
+https://github.com/cropinghigh/sdrpp-inmarsatc-demodulator
+https://github.com/Sultan-papagani/sdrpp_new_rtlsdr_source
+https://github.com/cropinghigh/sdrpp-dvbs-demodulator
+https://github.com/d3cker/sdrppcontroller
+https://github.com/OttoPattemore/shortwave-station-list-sdrpp
+https://github.com/gerner/sdrpp-rigsync
+https://github.com/gerner/sdrpp-spots
+https://github.com/F4JTV/sdrpp_cospas_sarsat
+https://github.com/BlackDuke07/sdrpp-spyglass
+https://github.com/comparchitect/sdrpp-pico-panel
+https://github.com/pwnderpants/sdrpp-noise-reduction
+https://github.com/srgkmv/sdrpp-micron-source
+https://github.com/srgkmv/sdrpp-libresdr-source
+https://github.com/MatiasSaibene/S-Meter_for_SDRPP
+https://github.com/BlackDuke07/sdrpp-bm-scanner
+
+SDR++ utils
+https://github.com/mgiugliano/syncSDRpp
+
+BlackDuke07/sdrpp-bm-scanner: Bookmark Scanner plugin for SDR++
+https://github.com/BlackDuke07/sdrpp-bm-scanner
+
+https://project.crx.cloud/ping-sound-hamradio-remote-station
+
+https://github.com/fluid41/SDRPlusPlus/commit/19e31e03c06df8aa95ad0ec23c06ff3d79e015e7
