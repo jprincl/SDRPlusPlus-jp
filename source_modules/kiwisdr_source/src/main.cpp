@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <chrono>
 #include <ctime>
+#include <cstring>
 #include <fstream>
 #include <thread>
 #include <atomic>
@@ -51,28 +52,36 @@ static std::tm safeLocalTime(std::time_t t) {
 struct KiwiSDRSourceModule : public ModuleManager::Instance {
     using Clock = std::chrono::steady_clock;
 
-    std::string kiwisdrSite = "sk6ag1.ddns.net:8071";
+    char kiwisdrHost[1024] = "";
+    int kiwisdrPort = 8073;
     std::string kiwisdrLoc = "";
-    //    std::string kiwisdrSite = "kiwi-iva.aprs.fi";
     KiwiSDRClient kiwiSdrClient;
     std::string root;
     KiwiSDRMapSelector selector;
+
+    std::string kiwisdrHostPort() const {
+        return std::string(kiwisdrHost) + ":" + std::to_string(kiwisdrPort);
+    }
 
     KiwiSDRSourceModule(std::string name, const std::string &root) : kiwiSdrClient(), selector(root, &config, "KiwiSDR Source") {
         this->name = name;
         this->root = root;
 
         config.acquire();
-        if (config.conf.contains("kiwisdr_site")) {
-            kiwisdrSite = config.conf["kiwisdr_site"];
+        if (config.conf.contains("kiwisdr_host")) {
+            std::string host = config.conf["kiwisdr_host"];
+            std::strncpy(kiwisdrHost, host.c_str(), sizeof(kiwisdrHost) - 1);
+            kiwisdrHost[sizeof(kiwisdrHost) - 1] = '\0';
+        }
+        if (config.conf.contains("kiwisdr_port")) {
+            kiwisdrPort = config.conf["kiwisdr_port"];
         }
         if (config.conf.contains("kiwisdr_loc")) {
             kiwisdrLoc = config.conf["kiwisdr_loc"];
         }
         config.release(false);
 
-
-        kiwiSdrClient.init(kiwisdrSite);
+        kiwiSdrClient.init(kiwisdrHostPort());
 
         // Yeah no server-ception, sorry...
         // Initialize lists
@@ -249,21 +258,52 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             ImGui::EndDisabled();
 
             _this->selector.drawPopup([=](const std::string &hostPort, const std::string &loc) {
-                _this->kiwisdrSite = hostPort;
+                std::size_t colon = hostPort.find(":");
+                std::string host = (colon == std::string::npos) ? hostPort : hostPort.substr(0, colon);
+                int port = 8073;
+                if (colon != std::string::npos) {
+                    try { port = std::stoi(hostPort.substr(colon + 1)); } catch (...) {}
+                }
+                std::strncpy(_this->kiwisdrHost, host.c_str(), sizeof(_this->kiwisdrHost) - 1);
+                _this->kiwisdrHost[sizeof(_this->kiwisdrHost) - 1] = '\0';
+                _this->kiwisdrPort = port;
                 _this->kiwisdrLoc = loc;
                 config.acquire();
-                config.conf["kiwisdr_site"] = _this->kiwisdrSite;
+                config.conf["kiwisdr_host"] = host;
+                config.conf["kiwisdr_port"] = port;
                 config.conf["kiwisdr_loc"] = _this->kiwisdrLoc;
                 config.release(true);
-                _this->kiwiSdrClient.init(_this->kiwisdrSite);
+                _this->kiwiSdrClient.init(_this->kiwisdrHostPort());
             });
+
+            ImGui::BeginDisabled(gui::mainWindow.isPlaying());
+            if (SmGui::InputText(("##_kiwisdr_host_" + _this->name).c_str(),
+                                 _this->kiwisdrHost, sizeof(_this->kiwisdrHost))) {
+                config.acquire();
+                config.conf["kiwisdr_host"] = std::string(_this->kiwisdrHost);
+                config.release(true);
+            }
+            bool hostCommitted = ImGui::IsItemDeactivatedAfterEdit();
+            SmGui::SameLine();
+            SmGui::FillWidth();
+            if (SmGui::InputInt(("##_kiwisdr_port_" + _this->name).c_str(), &_this->kiwisdrPort, 0, 0)) {
+                config.acquire();
+                config.conf["kiwisdr_port"] = _this->kiwisdrPort;
+                config.release(true);
+            }
+            bool portCommitted = ImGui::IsItemDeactivatedAfterEdit();
+            if (hostCommitted || portCommitted) {
+                _this->kiwisdrLoc.clear();
+                config.acquire();
+                config.conf["kiwisdr_loc"] = _this->kiwisdrLoc;
+                config.release(true);
+                _this->kiwiSdrClient.init(_this->kiwisdrHostPort());
+            }
+            ImGui::EndDisabled();
         }
 
-
-
-
-        SmGui::Text(("KiwiSDR site: " + _this->kiwisdrSite).c_str());
-        SmGui::Text(("Loc: " + _this->kiwisdrLoc).c_str());
+        if (!_this->kiwisdrLoc.empty())
+            SmGui::Text(("Loc: " + _this->kiwisdrLoc).c_str());
         SmGui::Text(("Status: " + _this->kiwiSdrClient.getConnectionStatus()).c_str());
 
         std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
