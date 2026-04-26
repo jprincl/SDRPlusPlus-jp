@@ -123,6 +123,7 @@ namespace net::websock {
     }
 
     void WSClient::closeCurrentSocket(bool markStopped) {
+        websocketReady = false;
         if (markStopped) {
             stopped = true;
         }
@@ -291,6 +292,9 @@ namespace net::websock {
     // mask bytes — without this the four sender entry points would race.
     void WSClient::sendFrame(uint8_t firstByte, const uint8_t* payload, size_t len) {
         std::lock_guard<std::mutex> lock(sendMutex);
+        if (!websocketReady) {
+            throw std::runtime_error("websock: send before websocket handshake completed");
+        }
         std::string buffer;
         buffer.resize(len + 200, ' ');
         int frameLen = makeFrame(firstByte, (unsigned char*)payload, (int)len,
@@ -375,15 +379,18 @@ namespace net::websock {
         unsigned char msg_opcode = in_buffer[0] & 0x0F;
         unsigned char msg_fin = (in_buffer[0] >> 7) & 0x01;
         unsigned char msg_masked = (in_buffer[1] >> 7) & 0x01;
+        if (in_buffer[0] & 0x70) {
+            return Inbound::Error;
+        }
+        if (msg_masked) {
+            return Inbound::Error;
+        }
 
         // *** message decoding
 
-        int64_t payload_length = 0;
+        uint64_t payload_length = 0;
         int pos = 2;
-        int length_field = in_buffer[1] & (~0x80);
-        // Held as a byte array so the load is alignment-safe (in_buffer+pos
-        // is unaligned by construction) and free of strict-aliasing issues.
-        uint8_t mask[4] = {0, 0, 0, 0};
+        int length_field = in_buffer[1] & 0x7F;
 
         //printf("IN:"); for(int i=0; i<20; i++) printf("%02x ",buffer[i]); printf("\n");
 
@@ -394,72 +401,51 @@ namespace net::websock {
             if (in_length < pos + 2) {
                 return Inbound::Incomplete;
             }
-            //payload_length = in_buffer[2] + (in_buffer[3]<<8);
             payload_length = (
-                ((int64_t)in_buffer[2] << 8) |
-                ((int64_t)in_buffer[3])
+                ((uint64_t)in_buffer[pos] << 8) |
+                ((uint64_t)in_buffer[pos + 1])
             );
+            if (payload_length < 126) {
+                return Inbound::Error;
+            }
             pos += 2;
         }
         else if (length_field == 127) { //msglen is 64bit!
             if (in_length < pos + 8) {
                 return Inbound::Incomplete;
             }
-            payload_length = (
-                ((int64_t)in_buffer[2] << 56) |
-                ((int64_t)in_buffer[3] << 48) |
-                ((int64_t)in_buffer[4] << 40) |
-                ((int64_t)in_buffer[5] << 32) |
-                ((int64_t)in_buffer[6] << 24) |
-                ((int64_t)in_buffer[7] << 16) |
-                ((int64_t)in_buffer[8] << 8) |
-                ((int64_t)in_buffer[9])
-            );
+            if (in_buffer[pos] & 0x80) {
+                return Inbound::Error;
+            }
+            for (int i = 0; i < 8; i++) {
+                payload_length = (payload_length << 8) | in_buffer[pos + i];
+            }
+            if (payload_length < 65536) {
+                return Inbound::Error;
+            }
             pos += 8;
         }
 
         //printf("PAYLOAD_LEN: %08x\n", payload_length);
-        if (payload_length < 0) {
-            return Inbound::Error;
-        }
-        if (payload_length > MAX_FRAME_PAYLOAD) {
+        if (payload_length > (uint64_t)MAX_FRAME_PAYLOAD) {
             flog::error("ERROR: websocket payload is too large: {}", payload_length);
             return Inbound::Error;
         }
 
-        if (msg_masked && in_length < pos + 4) {
+        if (payload_length > (uint64_t)(in_length - pos)) {
             return Inbound::Incomplete;
         }
 
-        if (msg_masked) {
-            memcpy(mask, in_buffer + pos, 4);
-            //printf("MASK: %02x %02x %02x %02x\n", mask[0], mask[1], mask[2], mask[3]);
-            pos += 4;
-
-            if (payload_length > in_length - pos) {
-                return Inbound::Incomplete;
-            }
-
-            // unmask data:
-            unsigned char* c = in_buffer + pos;
-            for (int i = 0; i < payload_length; i++) {
-                c[i] = c[i] ^ mask[i % 4];
-            }
-        }
-
-        if (payload_length > in_length - pos) {
-            return Inbound::Incomplete;
-        }
-
-        if (payload_length > out_size - 1) {
+        if (payload_length > (uint64_t)(out_size - 1)) {
             flog::error("ERROR: output buffer is too small for the payload");
             return Inbound::Error;
         }
 
-        memcpy((void*)out_buffer, (void*)(in_buffer + pos), payload_length);
-        out_buffer[payload_length] = 0;
-        *out_length = payload_length + 1;
-        *skipSize = payload_length + pos;
+        const int payloadSize = (int)payload_length;
+        memcpy((void*)out_buffer, (void*)(in_buffer + pos), payloadSize);
+        out_buffer[payloadSize] = 0;
+        *out_length = payloadSize + 1;
+        *skipSize = payloadSize + pos;
 
         //printf("TEXT: %s\n", out_buffer);
 
@@ -553,6 +539,7 @@ namespace net::websock {
     void WSClient::connectAndReceiveLoop(const std::string& host, int port, const std::string& path) {
         flog::info("WSClient connectAndReceiveLoop: inst={}", (uint64_t)(uintptr_t)this);
 
+        websocketReady = false;
         std::string currentHost = host;
         int currentPort = port;
         std::string currentPath = path;
@@ -673,6 +660,7 @@ namespace net::websock {
                 for (int i = (int)pos + 4; i < recvd; i++) {
                     data.push_back(buf[i]);
                 }
+                websocketReady = true;
                 break;
             }
 

@@ -68,6 +68,7 @@ namespace net::websock {
         std::string fragmentBuffer;
         int fragmentOpcode = 0;
         int count = 0;
+        std::atomic<bool> websocketReady{false};
 
         int maybeDecodeBuffer(const std::vector<uint8_t>& data);
 
