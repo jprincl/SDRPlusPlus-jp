@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <imgui.h>
 #include <mutex>
 #include <optional>
@@ -9,6 +10,11 @@
 #include <vector>
 
 struct ServerEntry {
+    struct FrequencyBand {
+        uint64_t startHz = 0;
+        uint64_t endHz = 0;
+    };
+
     ImVec2 gps;
     std::string name;
     std::string loc;
@@ -19,6 +25,7 @@ struct ServerEntry {
     int users = 0;
     int usersmax = 0;
     int extApi = 0;
+    std::optional<FrequencyBand> band;
     bool selected = false;
 };
 
@@ -77,7 +84,7 @@ public:
     };
 
     /// Start probing the given URL. No-op if a probe is already in flight.
-    void start(std::string url, std::string loc);
+    void start(std::string url, std::string loc, std::optional<ServerEntry::FrequencyBand> band);
 
     /// Request cancellation of any in-flight probe.
     void cancel();
@@ -91,7 +98,7 @@ public:
     std::optional<OkServer> lastOk() const;
 
 private:
-    void testThreadFn(std::string url, std::string loc);
+    void testThreadFn(std::string url, std::string loc, std::optional<ServerEntry::FrequencyBand> band);
 
     std::thread testThread;
     mutable std::mutex stateMutex;

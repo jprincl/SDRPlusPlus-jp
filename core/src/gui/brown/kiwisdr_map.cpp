@@ -157,6 +157,10 @@ void KiwiSDRMapSelector::drawSelectionPanel() {
         if (!s.selected || !shouldShowServer(s)) continue;
         ImGui::Text("%s", s.name.c_str());
         ImGui::Text("%s", s.loc.c_str());
+        if (s.band) {
+            const std::string bandText = "Band: " + std::to_string(s.band->startHz) + "-" + std::to_string(s.band->endHz) + " Hz";
+            ImGui::Text("%s", bandText.c_str());
+        }
         if (!s.antenna.empty()) {
             ImGui::Text("ANT: %s", s.antenna.c_str());
         }
@@ -173,7 +177,7 @@ void KiwiSDRMapSelector::drawSelectionPanel() {
         const bool doTest = doFingerButton("Test server");
         ImGui::EndDisabled();
         if (doTest) {
-            tester.start(s.url, s.loc);
+            tester.start(s.url, s.loc, s.band);
         }
     }
 }

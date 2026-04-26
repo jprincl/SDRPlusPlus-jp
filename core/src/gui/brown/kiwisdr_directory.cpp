@@ -102,6 +102,7 @@ namespace {
 
     std::optional<ServerEntry> parseServerEntry(const json& entry) {
         if (!(entry.contains("gps") && entry.contains("name") && entry.contains("url") &&
+              entry.contains("loc") &&
               entry.contains("snr") && entry.contains("users") && entry.contains("users_max") &&
               entry.contains("offline"))) {
             return std::nullopt;
@@ -128,6 +129,20 @@ namespace {
         e.url = entry["url"].get<std::string>();
         if (entry.contains("antenna")) {
             e.antenna = entry["antenna"].get<std::string>();
+        }
+        if (entry.contains("bands")) {
+            const std::string bands_str = entry["bands"].get<std::string>();
+            std::stringstream bands(bands_str);
+            bands.imbue(std::locale::classic());
+            ServerEntry::FrequencyBand band;
+            char separator = '\0';
+            bands >> band.startHz >> separator >> band.endHz;
+            bands >> std::ws;
+            if (!bands.eof() || separator != '-' || band.startHz > band.endHz) {
+                flog::warn("Parsing bands failed: \"{}\"", bands_str);
+                return std::nullopt;
+            }
+            e.band = band;
         }
         sscanf(entry["snr"].get<std::string>().c_str(), "%f,%f", &e.maxSnr, &e.secondSnr);
         e.users = atoi(entry["users"].get<std::string>().c_str());
@@ -230,7 +245,7 @@ KiwiSDRTester::~KiwiSDRTester() {
     }
 }
 
-void KiwiSDRTester::start(std::string url, std::string loc) {
+void KiwiSDRTester::start(std::string url, std::string loc, std::optional<ServerEntry::FrequencyBand> band) {
     {
         std::lock_guard<std::mutex> lock(stateMutex);
         if (inProgress) {
@@ -245,7 +260,7 @@ void KiwiSDRTester::start(std::string url, std::string loc) {
     if (testThread.joinable()) {
         testThread.join();
     }
-    testThread = std::thread(&KiwiSDRTester::testThreadFn, this, std::move(url), std::move(loc));
+    testThread = std::thread(&KiwiSDRTester::testThreadFn, this, std::move(url), std::move(loc), std::move(band));
 }
 
 void KiwiSDRTester::cancel() {
@@ -272,7 +287,7 @@ std::optional<KiwiSDRTester::OkServer> KiwiSDRTester::lastOk() const {
     return lastOkServer;
 }
 
-void KiwiSDRTester::testThreadFn(std::string url, std::string loc) {
+void KiwiSDRTester::testThreadFn(std::string url, std::string loc, std::optional<ServerEntry::FrequencyBand> band) {
     using namespace std::chrono_literals;
     using Clock = std::chrono::steady_clock;
 
@@ -297,7 +312,8 @@ void KiwiSDRTester::testThreadFn(std::string url, std::string loc) {
             testClient.onConnected = [&]() {
                 connectedFlag = true;
                 setStatus("Connected to server " + hostPort + " ...");
-                testClient.tune(14074000, KiwiSDRClient::TUNE_IQ);
+                const uint64_t testFrequency = band ? (band->startHz + band->endHz) / 2 : 14074000;
+                testClient.tune(double(testFrequency), KiwiSDRClient::TUNE_IQ);
             };
             testClient.onDisconnected = [&, hostPort, loc, url]() {
                 disconnectedFlag = true;

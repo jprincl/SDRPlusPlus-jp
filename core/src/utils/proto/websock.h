@@ -413,6 +413,16 @@ namespace net::websock {
             return std::string();
         }
 
+        static bool equalsIgnoreAsciiCase(const std::string& a, const std::string& b) {
+            if (a.size() != b.size()) { return false; }
+            for (size_t i = 0; i < a.size(); i++) {
+                if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         void connectAndReceiveLoop(const std::string& host, int port, const std::string& path) {
             flog::info("WSClient connectAndReceiveLoop: inst={}", (uint64_t)(uintptr_t)this);
 
@@ -533,10 +543,15 @@ namespace net::websock {
                     }
                     socket->close();
                     socket.reset();
-                    flog::info("websock: following redirect ({} left) to {}:{}{}", redirectsLeft, parsed->host, parsed->port, parsed->path);
+                    std::string redirectPath = parsed->path;
+                    if (redirectPath != currentPath && equalsIgnoreAsciiCase(redirectPath, currentPath)) {
+                        flog::info("websock: preserving redirect path case: {} -> {}", redirectPath, currentPath);
+                        redirectPath = currentPath;
+                    }
+                    flog::info("websock: following redirect ({} left) to {}:{}{}", redirectsLeft, parsed->host, parsed->port, redirectPath);
                     currentHost = parsed->host;
                     currentPort = parsed->port;
-                    currentPath = parsed->path;
+                    currentPath = redirectPath;
                     redirectsLeft--;
                     continue;
                 }
