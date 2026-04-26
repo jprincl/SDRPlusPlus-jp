@@ -1,15 +1,20 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <functional>
 #include <memory>
+#include "../base64.h"
 #include "../net.h"
 #include "../url.h"
 #include "http.h"
+#include "picohash.h"
 #include <cctype>
 #include <stdio.h>
 #include <random>
@@ -18,6 +23,15 @@
 #include <utils/flog.h>
 
 namespace net::websock {
+
+    inline std::string sha1Base64(const std::string& in) {
+        _picohash_sha1_ctx_t ctx;
+        _picohash_sha1_init(&ctx);
+        _picohash_sha1_update(&ctx, in.data(), in.size());
+        uint8_t digest[PICOHASH_SHA1_DIGEST_LENGTH];
+        _picohash_sha1_final(&ctx, digest);
+        return base64::encode(digest, PICOHASH_SHA1_DIGEST_LENGTH);
+    }
 
     inline void splitStringV(const std::string& input, const std::string& delimiter, std::vector<std::string>& output) {
         output.clear();
@@ -42,6 +56,11 @@ namespace net::websock {
         std::atomic<bool> stopped{false};
         static constexpr int64_t MAX_FRAME_PAYLOAD = 1024 * 1024;
 
+        std::string secKey;        // generated per upgrade attempt
+        int fragmentOpcode = 0;    // 0=none, 1=text, 2=binary
+        std::string fragmentBuffer;
+        std::mutex sendMutex;      // serializes concurrent senders on this->socket
+
         WSClient() : socket(), rd(), e1(rd()), uniform_dist(0, 255) {
             flog::info("WSClient instance: {}", (uint64_t)(uintptr_t)this);
         }
@@ -58,18 +77,64 @@ namespace net::websock {
             int skipSize = 0;
             int frameType = getFrame((unsigned char*)data.data(), (int)data.size(), (unsigned char*)buffer.data(), (int)buffer.length(), &outLen, &skipSize);
 //            printf("(%d) Handling frame type: %x, skipsize = %d ...\n", count, frameType, skipSize);
+            auto appendFragment = [&]() {
+                if (outLen > 1) {
+                    if (fragmentBuffer.size() + (size_t)(outLen - 1) > (size_t)MAX_FRAME_PAYLOAD) {
+                        throw std::runtime_error("websock: fragmented message too large");
+                    }
+                    fragmentBuffer.append(buffer.data(), outLen - 1);
+                }
+            };
             switch(frameType) {
             case TEXT_FRAME:
+                if (fragmentOpcode != 0) {
+                    throw std::runtime_error("websock: TEXT frame received while fragment in progress");
+                }
                 if (outLen > 3) {
                     buffer.resize(outLen - 1);
                     onTextMessage(buffer);
                 }
                 break;
             case BINARY_FRAME:
+                if (fragmentOpcode != 0) {
+                    throw std::runtime_error("websock: BINARY frame received while fragment in progress");
+                }
                 if (outLen > 3) {
                     buffer.resize(outLen - 1);
                     onBinaryMessage(buffer);
                 }
+                break;
+            case INCOMPLETE_TEXT_FRAME:
+                if (fragmentOpcode != 0) {
+                    throw std::runtime_error("websock: TEXT fragment-start while fragment in progress");
+                }
+                fragmentOpcode = 1;
+                appendFragment();
+                break;
+            case INCOMPLETE_BINARY_FRAME:
+                if (fragmentOpcode != 0) {
+                    throw std::runtime_error("websock: BINARY fragment-start while fragment in progress");
+                }
+                fragmentOpcode = 2;
+                appendFragment();
+                break;
+            case CONTINUATION_FRAGMENT:
+                if (fragmentOpcode == 0) {
+                    throw std::runtime_error("websock: CONTINUATION frame without fragment in progress");
+                }
+                appendFragment();
+                break;
+            case CONTINUATION_FINAL:
+                if (fragmentOpcode == 0) {
+                    throw std::runtime_error("websock: CONTINUATION-final frame without fragment in progress");
+                }
+                appendFragment();
+                if (fragmentBuffer.size() > 2) {
+                    if (fragmentOpcode == 1) { onTextMessage(fragmentBuffer); }
+                    else if (fragmentOpcode == 2) { onBinaryMessage(fragmentBuffer); }
+                }
+                fragmentOpcode = 0;
+                fragmentBuffer.clear();
                 break;
             case INCOMPLETE_FRAME:
                 return 0;
@@ -90,30 +155,49 @@ namespace net::websock {
             return skipSize;
         }
 
+        // Loop over Socket::send to handle short writes and serialize concurrent
+        // senders. Throws if the socket has been closed (or closes mid-send).
+        void sendAllRaw(const uint8_t* data, size_t len) {
+            std::lock_guard<std::mutex> lock(sendMutex);
+            auto sock = socket;
+            if (!sock) {
+                throw std::runtime_error("websock: send on closed socket");
+            }
+            size_t sent = 0;
+            while (sent < len) {
+                int n = sock->send(data + sent, len - sent);
+                if (n > 0) {
+                    sent += (size_t)n;
+                    continue;
+                }
+                if (!sock->isOpen()) {
+                    throw std::runtime_error("websock: send failed, socket closed");
+                }
+                // Non-blocking socket reported WOULD_BLOCK; brief backoff and retry.
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+
         void sendPong() {
             std::string str = " ";
             std::string buffer;
             buffer.resize(200, ' ');
             int len = makeFrame(PONG_FRAME, (unsigned char*)str.c_str(), 0, (unsigned char *)buffer.data(), buffer.size());
-            buffer.resize(len);
-            socket->sendstr(buffer);
-            //
+            sendAllRaw((const uint8_t*)buffer.data(), (size_t)len);
         }
 
         void sendClose() {
             std::string buffer;
             buffer.resize(200, ' ');
             int len = makeFrame(CLOSE_FRAME, nullptr, 0, (unsigned char *)buffer.data(), buffer.size());
-            buffer.resize(len);
-            socket->sendstr(buffer);
+            sendAllRaw((const uint8_t*)buffer.data(), (size_t)len);
         }
 
         void sendString(const std::string &str) {
             std::string buffer;
             buffer.resize(str.length() + 200, ' ');
             int len = makeFrame(TEXT_FRAME, (unsigned char*)str.c_str(), str.length(), (unsigned char *)buffer.data(), buffer.size());
-            buffer.resize(len);
-            socket->sendstr(buffer);
+            sendAllRaw((const uint8_t*)buffer.data(), (size_t)len);
 //            flog::info("<= {}", str);
         }
 
@@ -121,8 +205,7 @@ namespace net::websock {
             std::string buffer;
             buffer.resize(data.size() + 200, ' ');
             int len = makeFrame(BINARY_FRAME, (unsigned char*)data.data(), data.size(), (unsigned char *)buffer.data(), buffer.size());
-            buffer.resize(len);
-            socket->sendstr(buffer);
+            sendAllRaw((const uint8_t*)buffer.data(), (size_t)len);
         }
 
         // PARTS were taken from https://github.com/katzarsky/WebSocket
@@ -136,6 +219,8 @@ namespace net::websock {
 
             INCOMPLETE_TEXT_FRAME=0x01,
             INCOMPLETE_BINARY_FRAME=0x02,
+            CONTINUATION_FRAGMENT=0x03,
+            CONTINUATION_FINAL=0x04,
 
             TEXT_FRAME=0x81,
             BINARY_FRAME=0x82,
@@ -291,7 +376,7 @@ namespace net::websock {
                 if(msg_opcode == 0x8 && payload_length == 1) { return ERROR_FRAME; }
             }
 
-            if(msg_opcode == 0x0) return (msg_fin)?TEXT_FRAME:INCOMPLETE_TEXT_FRAME; // continuation frame ?
+            if(msg_opcode == 0x0) return (msg_fin)?CONTINUATION_FINAL:CONTINUATION_FRAGMENT;
             if(msg_opcode == 0x1) return (msg_fin)?TEXT_FRAME:INCOMPLETE_TEXT_FRAME;
             if(msg_opcode == 0x2) return (msg_fin)?BINARY_FRAME:INCOMPLETE_BINARY_FRAME;
             if(msg_opcode == 0x8) return CLOSE_FRAME;
@@ -452,6 +537,14 @@ namespace net::websock {
                 }
                 flog::info("WSClient socket connected to {}:{}", currentHost, currentPort);
 
+                {
+                    uint8_t keyBytes[16];
+                    for (int i = 0; i < 16; i++) { keyBytes[i] = (uint8_t)uniform_dist(e1); }
+                    secKey = base64::encode(keyBytes, 16);
+                }
+                fragmentOpcode = 0;
+                fragmentBuffer.clear();
+
                 std::string initHeaders =
                     "Accept-Encoding: gzip, deflate\r\n"
                     "Accept-Language: en-US,en\r\n"
@@ -461,11 +554,11 @@ namespace net::websock {
                     "Pragma: no-cache\r\n"
                     "Sec-GPC: 1\r\n"
                     "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
-                    "Sec-WebSocket-Key: tXZvmn8MbkVRhAoczhuyVQ==\r\n"
                     "Sec-WebSocket-Version: 13\r\n"
                     "Upgrade: websocket\r\n"
                     "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36\r\n";
                 initHeaders = "GET " + currentPath + " HTTP/1.1\r\n" + initHeaders;
+                initHeaders += "Sec-WebSocket-Key: " + secKey + "\r\n";
                 // RFC 7230 §5.4: omit the port from Host/Origin when it matches the scheme default,
                 // otherwise reverse proxies (e.g. *.proxy.kiwisdr.com) fail to match server_name.
                 const std::string hostHeader = (currentPort == 80) ? currentHost : (currentHost + ":" + std::to_string(currentPort));
@@ -473,9 +566,9 @@ namespace net::websock {
                 initHeaders += "Origin: http://" + hostHeader + "\r\n";
                 initHeaders += "\r\n";
 
-                int len = socket->sendstr(initHeaders);
+                sendAllRaw((const uint8_t*)initHeaders.data(), initHeaders.size());
                 int senderr = errno;
-                flog::info("sent: {} of {}", len, (int64_t)initHeaders.size());
+                flog::info("sent {} bytes of upgrade request", (int64_t)initHeaders.size());
 
                 // Accumulate the upgrade response until we see the \r\n\r\n header terminator.
                 // The response can be split across multiple TCP segments (e.g. direct KiwiSDRs
@@ -490,7 +583,7 @@ namespace net::websock {
                     int n = socket->recv(buf.data() + recvd, buf.size() - 1 - recvd, false, 100);
                     if (n < 0) {
                         std::string msg = "websock: recv failed, errno=" + std::to_string(errno)+" (recvd="+std::to_string(recvd)+
-                                          " sent="+std::to_string(len)+" senderr="+std::to_string(senderr)+")";
+                                          " senderr="+std::to_string(senderr)+")";
                         socket->close();
                         throw std::runtime_error(msg);
                     }
@@ -521,6 +614,17 @@ namespace net::websock {
 
                 int status = recvHeaders.empty() ? -1 : parseStatusCode(recvHeaders[0]);
                 if (status == 101) {
+                    std::string upgradeHdr = findHeaderValue(recvHeaders, "Upgrade");
+                    if (!equalsIgnoreAsciiCase(upgradeHdr, "websocket")) {
+                        socket->close();
+                        throw std::runtime_error("websock: handshake failed: missing or wrong Upgrade header (got '" + upgradeHdr + "')");
+                    }
+                    std::string accept = findHeaderValue(recvHeaders, "Sec-WebSocket-Accept");
+                    std::string expected = sha1Base64(secKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+                    if (accept != expected) {
+                        socket->close();
+                        throw std::runtime_error("websock: handshake failed: bad Sec-WebSocket-Accept (got '" + accept + "', expected '" + expected + "')");
+                    }
                     data.clear();
                     for (int i = (int)pos + 4; i < recvd; i++) {
                         data.push_back(buf[i]);
