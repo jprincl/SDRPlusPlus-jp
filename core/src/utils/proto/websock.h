@@ -31,8 +31,8 @@ namespace net::websock {
 
         // Signals the receive loop to exit. Safe to call from any thread,
         // including from inside a callback. The loop notices `stopped` on its
-        // next 100 ms recv-timeout tick, then closes the socket itself — this
-        // keeps Socket::close() on the same thread that called recv().
+        // next 100 ms recv-timeout tick, then closes the socket under the
+        // same mutex used by send/recv.
         void stopSocket();
 
         // External "user asked stop" flag; reset to false before calling
@@ -53,12 +53,9 @@ namespace net::websock {
 
         static constexpr int64_t MAX_FRAME_PAYLOAD = 1024 * 1024;
 
-        // socket is read by senders / written by the receive loop. The
-        // shared_ptr field itself is guarded by socketMutex; method calls on
-        // the pointee Socket are not. The receive loop is the only thread
-        // that ever calls close()/recv() on the Socket — this is the whole
-        // point of stopSocket() not closing the socket itself.
-        std::shared_ptr<::net::Socket> socket;
+        // socketMutex guards both pointer lifetime and net::Socket method
+        // calls because net::Socket keeps non-atomic state internally.
+        std::unique_ptr<::net::Socket> socket;
         std::mutex socketMutex;
 
         std::string path;
@@ -80,10 +77,10 @@ namespace net::websock {
                          unsigned char* out_buffer, int out_size,
                          int* out_length, int* skipSize);
 
-        std::shared_ptr<::net::Socket> connectSocket(const std::string& host, int port);
-        // Snapshot/replace the `socket` field under socketMutex.
-        std::shared_ptr<::net::Socket> snapshotSocket();
-        void setSocket(std::shared_ptr<::net::Socket> s);
+        std::unique_ptr<::net::Socket> connectSocket(const std::string& host, int port);
+        void setSocket(std::unique_ptr<::net::Socket> s);
+        void closeCurrentSocket(bool markStopped);
+        int recvSocket(uint8_t* data, size_t len, int timeout);
         // Handshake path: takes sendMutex, then writes raw bytes (no frame wrapping).
         void sendAllRaw(const uint8_t* data, size_t len);
         // Caller must hold sendMutex. Pure short-write retry loop.

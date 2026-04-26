@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <stdio.h>
 #include <thread>
+#include <utility>
 
 #include "../base64.h"
 #include "../net.h"
@@ -116,14 +117,38 @@ namespace net::websock {
 
     WSClient::~WSClient() = default;
 
-    std::shared_ptr<::net::Socket> WSClient::snapshotSocket() {
-        std::lock_guard<std::mutex> lock(socketMutex);
-        return socket;
-    }
-
-    void WSClient::setSocket(std::shared_ptr<::net::Socket> s) {
+    void WSClient::setSocket(std::unique_ptr<::net::Socket> s) {
         std::lock_guard<std::mutex> lock(socketMutex);
         socket = std::move(s);
+    }
+
+    void WSClient::closeCurrentSocket(bool markStopped) {
+        if (markStopped) {
+            stopped = true;
+        }
+
+        std::lock_guard<std::mutex> lock(socketMutex);
+        if (socket) {
+            socket->close();
+            socket.reset();
+        }
+    }
+
+    int WSClient::recvSocket(uint8_t* data, size_t len, int timeout) {
+        std::lock_guard<std::mutex> lock(socketMutex);
+        if (!socket) {
+            return -1;
+        }
+
+        if (stopped) {
+            return 0;
+        }
+
+        int n = socket->recv(data, len, false, timeout);
+        if (!socket->isOpen()) {
+            stopped = true;
+        }
+        return n;
     }
 
     int WSClient::maybeDecodeBuffer(const std::vector<uint8_t>& data) {
@@ -217,20 +242,36 @@ namespace net::websock {
 
     // Short-write retry loop. Caller MUST hold sendMutex.
     void WSClient::sendAllRawLocked(const uint8_t* data, size_t len) {
-        // The shared_ptr copy keeps Socket alive across the write loop even
-        // if the receive loop later does setSocket(nullptr).
-        auto sock = snapshotSocket();
-        if (!sock) {
-            throw std::runtime_error("websock: send on closed socket");
+        if (stopped) {
+            throw std::runtime_error("websock: send aborted, client stopped");
         }
         size_t sent = 0;
         while (sent < len) {
-            int n = sock->send(data + sent, len - sent);
+            if (stopped) {
+                throw std::runtime_error("websock: send aborted, client stopped");
+            }
+
+            int n = 0;
+            bool open = true;
+            {
+                std::lock_guard<std::mutex> lock(socketMutex);
+                if (!socket) {
+                    throw std::runtime_error("websock: send on closed socket");
+                }
+                if (stopped) {
+                    throw std::runtime_error("websock: send aborted, client stopped");
+                }
+                n = socket->send(data + sent, len - sent);
+                open = socket->isOpen();
+                if (!open) {
+                    stopped = true;
+                }
+            }
             if (n > 0) {
                 sent += (size_t)n;
                 continue;
             }
-            if (!sock->isOpen()) {
+            if (!open) {
                 throw std::runtime_error("websock: send failed, socket closed");
             }
             // Non-blocking socket reported WOULD_BLOCK; brief backoff and retry.
@@ -437,7 +478,7 @@ namespace net::websock {
         return Inbound::Error;
     }
 
-    std::shared_ptr<::net::Socket> WSClient::connectSocket(const std::string& host, int port) {
+    std::unique_ptr<::net::Socket> WSClient::connectSocket(const std::string& host, int port) {
         ::net::Address addr(host, port);
         ::net::SockHandle_t sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 #ifdef _WIN32
@@ -502,7 +543,7 @@ namespace net::websock {
                 closeRawSocket(sock);
                 throw std::runtime_error("Could not connect");
             }
-            return std::make_shared<::net::Socket>(sock, &addr);
+            return std::make_unique<::net::Socket>(sock, &addr);
         }
 
         closeRawSocket(sock);
@@ -529,10 +570,9 @@ namespace net::websock {
                 onDisconnected();
                 return;
             }
-            setSocket(z);
+            setSocket(std::move(z));
             if (stopped) {
-                z->close();
-                setSocket(nullptr);
+                closeCurrentSocket(false);
                 onDisconnected();
                 return;
             }
@@ -581,14 +621,14 @@ namespace net::websock {
             size_t pos = std::string::npos;
             while (!stopped) {
                 if ((size_t)recvd + 1 >= buf.size()) {
-                    socket->close();
+                    closeCurrentSocket(true);
                     throw std::runtime_error("websock: upgrade response headers too large");
                 }
-                int n = socket->recv(buf.data() + recvd, buf.size() - 1 - recvd, false, 100);
+                int n = recvSocket(buf.data() + recvd, buf.size() - 1 - recvd, 100);
                 if (n < 0) {
                     std::string msg = "websock: recv failed, errno=" + std::to_string(errno) + " (recvd=" + std::to_string(recvd) +
                                       " senderr=" + std::to_string(senderr) + ")";
-                    socket->close();
+                    closeCurrentSocket(true);
                     throw std::runtime_error(msg);
                 }
                 if (n == 0) {
@@ -603,7 +643,7 @@ namespace net::websock {
                 }
             }
             if (stopped) {
-                socket->close();
+                closeCurrentSocket(false);
                 onDisconnected();
                 return;
             }
@@ -620,13 +660,13 @@ namespace net::websock {
             if (status == 101) {
                 std::string upgradeHdr = findHeaderValue(recvHeaders, "Upgrade");
                 if (!equalsIgnoreAsciiCase(upgradeHdr, "websocket")) {
-                    socket->close();
+                    closeCurrentSocket(true);
                     throw std::runtime_error("websock: handshake failed: missing or wrong Upgrade header (got '" + upgradeHdr + "')");
                 }
                 std::string accept = findHeaderValue(recvHeaders, "Sec-WebSocket-Accept");
                 std::string expected = sha1Base64(secKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
                 if (accept != expected) {
-                    socket->close();
+                    closeCurrentSocket(true);
                     throw std::runtime_error("websock: handshake failed: bad Sec-WebSocket-Accept (got '" + accept + "', expected '" + expected + "')");
                 }
                 data.clear();
@@ -641,16 +681,15 @@ namespace net::websock {
             if (isRedirect && redirectsLeft > 0) {
                 std::string location = findHeaderValue(recvHeaders, "Location");
                 if (location.empty()) {
-                    socket->close();
+                    closeCurrentSocket(true);
                     throw std::runtime_error("websock: redirect without Location header");
                 }
                 auto parsed = url::parseHttpHostPort(location);
                 if (!parsed) {
-                    socket->close();
+                    closeCurrentSocket(true);
                     throw std::runtime_error("websock: cannot parse redirect Location: " + location);
                 }
-                socket->close();
-                setSocket(nullptr);
+                closeCurrentSocket(false);
                 std::string redirectPath = parsed->path;
                 if (redirectPath != currentPath && equalsIgnoreAsciiCase(redirectPath, currentPath)) {
                     flog::info("websock: preserving redirect path case: {} -> {}", redirectPath, currentPath);
@@ -664,7 +703,7 @@ namespace net::websock {
                 continue;
             }
 
-            socket->close();
+            closeCurrentSocket(true);
             throw std::runtime_error("websock: upgrade failed: " +
                 (recvHeaders.empty() ? std::string("(no status line)") : recvHeaders[0]));
         }
@@ -676,7 +715,7 @@ namespace net::websock {
                 len0 = maybeDecodeBuffer(data);
             }
             catch (...) {
-                socket->close();
+                closeCurrentSocket(true);
                 onDisconnected();
                 shouldNotifyDisconnected = false;
                 throw;
@@ -686,7 +725,7 @@ namespace net::websock {
                 data.erase(data.begin(), data.begin() + len0);
                 continue;
             }
-            recvd = socket->recv(buf.data(), buf.size(), false, 100); // 100 msec
+            recvd = recvSocket(buf.data(), buf.size(), 100); // 100 msec
             if (stopped) {
                 break;
             }
@@ -695,14 +734,14 @@ namespace net::websock {
             }
 //            printf("recvd bytes in loop: %d\n", recvd);
             if (recvd <= 0) {
-                socket->close();
+                closeCurrentSocket(true);
                 onDisconnected();
                 shouldNotifyDisconnected = false;
                 break;
             }
             onEveryReceive();
             if (data.size() + recvd > MAX_FRAME_PAYLOAD + 16) {
-                socket->close();
+                closeCurrentSocket(true);
                 onDisconnected();
                 shouldNotifyDisconnected = false;
                 throw std::runtime_error("websock: frame too large");
@@ -712,16 +751,15 @@ namespace net::websock {
             }
         }
         if (shouldNotifyDisconnected) {
-            socket->close();
+            closeCurrentSocket(true);
             onDisconnected();
         }
     }
 
     void WSClient::stopSocket() {
         // Set the flag and let the receive loop close the socket on its way
-        // out. This avoids calling Socket::close() concurrently with the
-        // receive loop's Socket::recv(), at the cost of up to ~100 ms of
-        // shutdown latency (the recv timeout in connectAndReceiveLoop).
+        // out. Socket method calls are serialized by socketMutex, so no
+        // thread closes while another is inside send/recv.
         stopped = true;
     }
 
