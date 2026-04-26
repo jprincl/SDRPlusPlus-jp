@@ -237,7 +237,8 @@ namespace qmx::detail {
             std::string description = desc ? desc : deviceName;
             bool isInput = !ioid || std::string(ioid) == "Input";
 
-            if (isInput && !deviceName.empty() && looksLikeQmx(description + " " + deviceName)) {
+            if (isInput && !deviceName.empty() && looksLikeQmx(description + " " + deviceName) &&
+                deviceName.find("hw:") == 0) {
                 std::replace(description.begin(), description.end(), '\n', ' ');
                 devices.push_back({ deviceName, description });
             }

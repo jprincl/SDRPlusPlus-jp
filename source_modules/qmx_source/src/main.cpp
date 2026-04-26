@@ -444,6 +444,9 @@ private:
             );
         }
 #endif
+        // Display any device error in red.
+        if (std::string error = self->device.lastError(); !error.empty())
+            SmGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), error.c_str());
 
         //self->sync.tick();
 

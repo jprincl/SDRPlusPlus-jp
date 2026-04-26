@@ -203,13 +203,15 @@ namespace qmx::detail {
             }
         }
 #else
-        static const std::array<const char*, 6> prefixes = {
-            "/dev/ttyACM",
-            "/dev/ttyUSB",
-            "/dev/cu.usbmodem",
-            "/dev/cu.usbserial",
-            "/dev/tty.usbmodem",
-            "/dev/tty.usbserial"
+        // QMX acts as a USB CDC device, thus only detect USB CDC devices, callout interfaces.
+        static const std::array<const char*, 1> prefixes = {
+#if defined(__linux__)
+            "/dev/ttyACM"
+#elif defined(__APPLE__)
+            "/dev/cu.usbmodem"
+#else // defined(__OpenBSD__) || defined(__NetBSD__) || defined(__FreeBSD__)
+            "//dev/cuaU",
+#endif
         };
 
         for (const auto& entry : std::filesystem::directory_iterator("/dev")) {
