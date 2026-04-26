@@ -17,6 +17,7 @@
 #include <core.h>
 #include <config.h>
 #include "utils/proto/kiwisdr.h"
+#include "utils/url.h"
 #include "gui/smgui.h"
 #include <filesystem>
 #include <chrono>
@@ -258,12 +259,9 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             ImGui::EndDisabled();
 
             _this->selector.drawPopup([=](const std::string &hostPort, const std::string &loc) {
-                std::size_t colon = hostPort.find(":");
-                std::string host = (colon == std::string::npos) ? hostPort : hostPort.substr(0, colon);
-                int port = 8073;
-                if (colon != std::string::npos) {
-                    try { port = std::stoi(hostPort.substr(colon + 1)); } catch (...) {}
-                }
+                auto parsed = url::splitHostPort(hostPort);
+                std::string host = parsed ? parsed->host : hostPort;
+                int port = parsed ? parsed->port : 8073;
                 std::strncpy(_this->kiwisdrHost, host.c_str(), sizeof(_this->kiwisdrHost) - 1);
                 _this->kiwisdrHost[sizeof(_this->kiwisdrHost) - 1] = '\0';
                 _this->kiwisdrPort = port;

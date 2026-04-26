@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 #include "utils/proto/websock.h"
+#include "utils/url.h"
 
 struct KiwiSDRClient {
     using Clock = std::chrono::steady_clock;
@@ -239,20 +240,13 @@ public:
         looperThread = std::thread([this]() {
             flog::info("calling x.connectAndReceiveLoop..");
             try {
-                std::string hostName;
-                int port;
-                std::size_t colonPosition = hostPort.find(":");
-                if (colonPosition != std::string::npos) {
-                    hostName = hostPort.substr(0, colonPosition);
-                    port = std::stoi(hostPort.substr(colonPosition + 1));
-                }
-                else {
-                    hostName = hostPort;
-                    port = 0;
+                auto parsed = url::splitHostPort(hostPort);
+                if (!parsed) {
+                    throw std::runtime_error("KiwiSDRClient: malformed host:port: " + hostPort);
                 }
                 using namespace std::chrono;
                 auto epochMs = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-                wsClient.connectAndReceiveLoop(hostName, port, "/kiwi/" + std::to_string(epochMs) + "/SND");
+                wsClient.connectAndReceiveLoop(parsed->host, parsed->port, "/kiwi/" + std::to_string(epochMs) + "/SND");
                 flog::info("x.connectAndReceiveLoop exited.");
                 setConnectionStatus("Disconnected");
                 connected = false;

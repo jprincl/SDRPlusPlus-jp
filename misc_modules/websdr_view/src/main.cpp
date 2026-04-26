@@ -13,9 +13,11 @@
 #include <module.h>
 #include <gui/gui.h>
 #include <gui/style.h>
+#include <gui/widgets/simple_widgets.h>
 #include <core.h>
 #include <config.h>
 #include <gui/widgets/waterfall.h>
+#include "utils/proto/kiwisdr.h"
 #include <algorithm>
 #include <chrono>
 #include <complex>
