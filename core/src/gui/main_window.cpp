@@ -536,6 +536,7 @@ void MainWindow::draw() {
     // Handle menu resize
     ImVec2 winSize = ImGui::GetWindowSize();
     ImVec2 mousePos = ImGui::GetMousePos();
+    bool isWindowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     if (showMenu && !grabbingMenu) {
         int clampedMenuWidth = style::clampSplit(menuWidth, winSize.x, 250.0f, 250.0f);
         if (clampedMenuWidth != menuWidth) {
@@ -556,7 +557,7 @@ void MainWindow::draw() {
 #ifdef ANDROID
         separatorHitRadius = (20.0f * style::uiScale);
 #endif
-        if (mousePos.x >= newWidth - separatorHitRadius && mousePos.x <= newWidth + separatorHitRadius && mousePos.y > curY) {
+        if (isWindowHovered && mousePos.x >= newWidth - separatorHitRadius && mousePos.x <= newWidth + separatorHitRadius && mousePos.y > curY) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
             if (click) {
                 grabbingMenu = true;
