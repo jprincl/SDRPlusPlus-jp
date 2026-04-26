@@ -16,27 +16,30 @@
 
 namespace net::websock {
 
-    enum WSClient::WebSocketFrameType : int {
-        ERROR_FRAME             = 0xFF00,
-        INCOMPLETE_FRAME        = 0xFE00,
-
-        OPENING_FRAME           = 0x3300,
-        CLOSING_FRAME           = 0x3400,
-
-        INCOMPLETE_TEXT_FRAME   = 0x01,
-        INCOMPLETE_BINARY_FRAME = 0x02,
-        CONTINUATION_FRAGMENT   = 0x03,
-        CONTINUATION_FINAL      = 0x04,
-
-        TEXT_FRAME              = 0x81,
-        BINARY_FRAME            = 0x82,
-        CLOSE_FRAME             = 0x88,
-
-        PING_FRAME              = 0x19,
-        PONG_FRAME              = 0x1A,
+    // Inbound classification returned by getFrame(). These values never go on
+    // the wire — they only tell maybeDecodeBuffer() what the decoded frame is.
+    enum class WSClient::Inbound : int {
+        Text,
+        Binary,
+        IncompleteText,     // first fragment of a TEXT message (FIN=0, opcode=1)
+        IncompleteBinary,   // first fragment of a BINARY message (FIN=0, opcode=2)
+        Continuation,       // mid-fragment (FIN=0, opcode=0)
+        ContinuationFinal,  // final fragment (FIN=1, opcode=0)
+        Ping,
+        Close,
+        Pong,
+        Incomplete,         // not enough bytes buffered yet
+        Error,              // protocol violation
     };
 
     namespace {
+
+        // Outgoing wire bytes (FIN=1, RSV=000, opcode in low nibble).
+        // RFC 6455 §5.2/§5.4. Fed directly to makeFrame() as buffer[0].
+        constexpr uint8_t WIRE_TEXT   = 0x81;
+        constexpr uint8_t WIRE_BINARY = 0x82;
+        constexpr uint8_t WIRE_CLOSE  = 0x88;
+        constexpr uint8_t WIRE_PONG   = 0x8A;
 
         std::string sha1Base64(const std::string& in) {
             _picohash_sha1_ctx_t ctx;
@@ -113,6 +116,16 @@ namespace net::websock {
 
     WSClient::~WSClient() = default;
 
+    std::shared_ptr<::net::Socket> WSClient::snapshotSocket() {
+        std::lock_guard<std::mutex> lock(socketMutex);
+        return socket;
+    }
+
+    void WSClient::setSocket(std::shared_ptr<::net::Socket> s) {
+        std::lock_guard<std::mutex> lock(socketMutex);
+        socket = std::move(s);
+    }
+
     int WSClient::maybeDecodeBuffer(const std::vector<uint8_t>& data) {
         std::string buffer;
         if (data.empty()) {
@@ -121,10 +134,10 @@ namespace net::websock {
         buffer.resize(data.size() + 200, ' ');
         int outLen = 0;
         int skipSize = 0;
-        int frameType = getFrame((unsigned char*)data.data(), (int)data.size(),
-                                 (unsigned char*)buffer.data(), (int)buffer.length(),
-                                 &outLen, &skipSize);
-//        printf("(%d) Handling frame type: %x, skipsize = %d ...\n", count, frameType, skipSize);
+        Inbound kind = getFrame((unsigned char*)data.data(), (int)data.size(),
+                                (unsigned char*)buffer.data(), (int)buffer.length(),
+                                &outLen, &skipSize);
+//        printf("(%d) Handling frame kind: %d, skipsize = %d ...\n", count, (int)kind, skipSize);
         auto appendFragment = [&]() {
             if (outLen > 1) {
                 if (fragmentBuffer.size() + (size_t)(outLen - 1) > (size_t)MAX_FRAME_PAYLOAD) {
@@ -133,81 +146,80 @@ namespace net::websock {
                 fragmentBuffer.append(buffer.data(), outLen - 1);
             }
         };
-        switch (frameType) {
-        case TEXT_FRAME:
+        switch (kind) {
+        case Inbound::Text:
             if (fragmentOpcode != 0) {
                 throw std::runtime_error("websock: TEXT frame received while fragment in progress");
             }
-            if (outLen > 3) {
-                buffer.resize(outLen - 1);
-                onTextMessage(buffer);
-            }
+            // outLen == payload_length + 1 (trailing NUL); deliver every
+            // valid message including 0/1/2-byte payloads.
+            buffer.resize(outLen - 1);
+            onTextMessage(buffer);
             break;
-        case BINARY_FRAME:
+        case Inbound::Binary:
             if (fragmentOpcode != 0) {
                 throw std::runtime_error("websock: BINARY frame received while fragment in progress");
             }
-            if (outLen > 3) {
-                buffer.resize(outLen - 1);
-                onBinaryMessage(buffer);
-            }
+            buffer.resize(outLen - 1);
+            onBinaryMessage(buffer);
             break;
-        case INCOMPLETE_TEXT_FRAME:
+        case Inbound::IncompleteText:
             if (fragmentOpcode != 0) {
                 throw std::runtime_error("websock: TEXT fragment-start while fragment in progress");
             }
             fragmentOpcode = 1;
             appendFragment();
             break;
-        case INCOMPLETE_BINARY_FRAME:
+        case Inbound::IncompleteBinary:
             if (fragmentOpcode != 0) {
                 throw std::runtime_error("websock: BINARY fragment-start while fragment in progress");
             }
             fragmentOpcode = 2;
             appendFragment();
             break;
-        case CONTINUATION_FRAGMENT:
+        case Inbound::Continuation:
             if (fragmentOpcode == 0) {
                 throw std::runtime_error("websock: CONTINUATION frame without fragment in progress");
             }
             appendFragment();
             break;
-        case CONTINUATION_FINAL:
+        case Inbound::ContinuationFinal:
             if (fragmentOpcode == 0) {
                 throw std::runtime_error("websock: CONTINUATION-final frame without fragment in progress");
             }
             appendFragment();
-            if (fragmentBuffer.size() > 2) {
-                if (fragmentOpcode == 1) { onTextMessage(fragmentBuffer); }
-                else if (fragmentOpcode == 2) { onBinaryMessage(fragmentBuffer); }
-            }
+            if (fragmentOpcode == 1) { onTextMessage(fragmentBuffer); }
+            else if (fragmentOpcode == 2) { onBinaryMessage(fragmentBuffer); }
             fragmentOpcode = 0;
             fragmentBuffer.clear();
             break;
-        case INCOMPLETE_FRAME:
+        case Inbound::Incomplete:
             return 0;
-        case ERROR_FRAME:
+        case Inbound::Error:
             throw std::runtime_error("websock: invalid frame");
-        case PING_FRAME:
-            sendPong();
+        case Inbound::Ping:
+            // outLen = payload_length + 1 (getFrame appends a NUL terminator),
+            // so outLen-1 is the actual ping payload size to echo.
+            sendPong((const uint8_t*)buffer.data(), (size_t)(outLen - 1));
             break;
-        case CLOSE_FRAME:
+        case Inbound::Close:
             sendClose();
             stopped = true;
             break;
-        default:
-            printf("Unknown frame type: %x\n", frameType);
+        case Inbound::Pong:
+            // RFC 6455 §5.5.4: unsolicited Pongs are spec-allowed; this
+            // client never sends Pings, so any Pong is ignored.
             break;
         }
         count++;
         return skipSize;
     }
 
-    // Loop over Socket::send to handle short writes and serialize concurrent
-    // senders. Throws if the socket has been closed (or closes mid-send).
-    void WSClient::sendAllRaw(const uint8_t* data, size_t len) {
-        std::lock_guard<std::mutex> lock(sendMutex);
-        auto sock = socket;
+    // Short-write retry loop. Caller MUST hold sendMutex.
+    void WSClient::sendAllRawLocked(const uint8_t* data, size_t len) {
+        // The shared_ptr copy keeps Socket alive across the write loop even
+        // if the receive loop later does setSocket(nullptr).
+        auto sock = snapshotSocket();
         if (!sock) {
             throw std::runtime_error("websock: send on closed socket");
         }
@@ -226,46 +238,51 @@ namespace net::websock {
         }
     }
 
-    void WSClient::sendPong() {
-        std::string str = " ";
+    // Used for the upgrade-request bytes during the handshake. No frame
+    // wrapping, no mask, doesn't touch the random engine.
+    void WSClient::sendAllRaw(const uint8_t* data, size_t len) {
+        std::lock_guard<std::mutex> lock(sendMutex);
+        sendAllRawLocked(data, len);
+    }
+
+    // Build a websocket frame and write it. The mutex MUST cover makeFrame()
+    // because makeFrame() mutates the shared random engine while generating
+    // mask bytes — without this the four sender entry points would race.
+    void WSClient::sendFrame(uint8_t firstByte, const uint8_t* payload, size_t len) {
+        std::lock_guard<std::mutex> lock(sendMutex);
         std::string buffer;
-        buffer.resize(200, ' ');
-        int len = makeFrame(PONG_FRAME, (unsigned char*)str.c_str(), 0,
-                            (unsigned char*)buffer.data(), buffer.size());
-        sendAllRaw((const uint8_t*)buffer.data(), (size_t)len);
+        buffer.resize(len + 200, ' ');
+        int frameLen = makeFrame(firstByte, (unsigned char*)payload, (int)len,
+                                 (unsigned char*)buffer.data(), buffer.size());
+        sendAllRawLocked((const uint8_t*)buffer.data(), (size_t)frameLen);
+    }
+
+    // RFC 6455 §5.5.3: a Pong sent in response to a Ping MUST carry the
+    // same Application data as the Ping. getFrame() rejects control frames
+    // with payload >125 bytes, so `len` is always small here.
+    void WSClient::sendPong(const uint8_t* payload, size_t len) {
+        sendFrame(WIRE_PONG, payload, len);
     }
 
     void WSClient::sendClose() {
-        std::string buffer;
-        buffer.resize(200, ' ');
-        int len = makeFrame(CLOSE_FRAME, nullptr, 0,
-                            (unsigned char*)buffer.data(), buffer.size());
-        sendAllRaw((const uint8_t*)buffer.data(), (size_t)len);
+        sendFrame(WIRE_CLOSE, nullptr, 0);
     }
 
     void WSClient::sendString(const std::string& str) {
-        std::string buffer;
-        buffer.resize(str.length() + 200, ' ');
-        int len = makeFrame(TEXT_FRAME, (unsigned char*)str.c_str(), str.length(),
-                            (unsigned char*)buffer.data(), buffer.size());
-        sendAllRaw((const uint8_t*)buffer.data(), (size_t)len);
+        sendFrame(WIRE_TEXT, (const uint8_t*)str.data(), str.size());
 //        flog::info("<= {}", str);
     }
 
     void WSClient::sendBinary(const std::vector<uint8_t>& data) {
-        std::string buffer;
-        buffer.resize(data.size() + 200, ' ');
-        int len = makeFrame(BINARY_FRAME, (unsigned char*)data.data(), data.size(),
-                            (unsigned char*)buffer.data(), buffer.size());
-        sendAllRaw((const uint8_t*)buffer.data(), (size_t)len);
+        sendFrame(WIRE_BINARY, data.data(), data.size());
     }
 
     // PARTS were taken from https://github.com/katzarsky/WebSocket
-    int WSClient::makeFrame(WebSocketFrameType frame_type, unsigned char* msg, int msg_length,
+    int WSClient::makeFrame(uint8_t firstByte, unsigned char* msg, int msg_length,
                             unsigned char* buffer, int buffer_size) {
         int pos = 0;
         int size = msg_length;
-        buffer[pos++] = (unsigned char)frame_type; // fin included
+        buffer[pos++] = firstByte; // FIN/RSV/opcode — see WIRE_* constants
 
         if (size <= 125) {
             buffer[pos++] = size; // set mask bit
@@ -291,28 +308,28 @@ namespace net::websock {
                 buffer[pos++] = ((size >> 8 * i) & 0xFF);
             }
         }
-        if (frame_type != PONG_FRAME) {
-            buffer[1] |= 0x80; // set mask bit
-            auto maskIndex = pos;
-            buffer[pos++] = uniform_dist(e1);
-            buffer[pos++] = uniform_dist(e1);
-            buffer[pos++] = uniform_dist(e1);
-            buffer[pos++] = uniform_dist(e1);
-            if (size > 0) {
-                memcpy((void*)(buffer + pos), msg, size);
-            }
-            for (int q = 0; q < size; q++) {
-                buffer[pos + q] ^= buffer[maskIndex + (q % 4)];
-            }
+        // RFC 6455 §5.1: a client MUST mask every frame it sends, including
+        // control frames such as PONG.
+        buffer[1] |= 0x80;
+        auto maskIndex = pos;
+        buffer[pos++] = uniform_dist(e1);
+        buffer[pos++] = uniform_dist(e1);
+        buffer[pos++] = uniform_dist(e1);
+        buffer[pos++] = uniform_dist(e1);
+        if (size > 0) {
+            memcpy((void*)(buffer + pos), msg, size);
+        }
+        for (int q = 0; q < size; q++) {
+            buffer[pos + q] ^= buffer[maskIndex + (q % 4)];
         }
         return (size + pos);
     }
 
-    WSClient::WebSocketFrameType WSClient::getFrame(unsigned char* in_buffer, int in_length,
-                                                    unsigned char* out_buffer, int out_size,
-                                                    int* out_length, int* skipSize) {
+    WSClient::Inbound WSClient::getFrame(unsigned char* in_buffer, int in_length,
+                                         unsigned char* out_buffer, int out_size,
+                                         int* out_length, int* skipSize) {
         //printf("getTextFrame()\n");
-        if (in_length < 2) return INCOMPLETE_FRAME;
+        if (in_length < 2) return Inbound::Incomplete;
 
         unsigned char msg_opcode = in_buffer[0] & 0x0F;
         unsigned char msg_fin = (in_buffer[0] >> 7) & 0x01;
@@ -323,7 +340,9 @@ namespace net::websock {
         int64_t payload_length = 0;
         int pos = 2;
         int length_field = in_buffer[1] & (~0x80);
-        unsigned int mask = 0;
+        // Held as a byte array so the load is alignment-safe (in_buffer+pos
+        // is unaligned by construction) and free of strict-aliasing issues.
+        uint8_t mask[4] = {0, 0, 0, 0};
 
         //printf("IN:"); for(int i=0; i<20; i++) printf("%02x ",buffer[i]); printf("\n");
 
@@ -332,7 +351,7 @@ namespace net::websock {
         }
         else if (length_field == 126) { //msglen is 16bit!
             if (in_length < pos + 2) {
-                return INCOMPLETE_FRAME;
+                return Inbound::Incomplete;
             }
             //payload_length = in_buffer[2] + (in_buffer[3]<<8);
             payload_length = (
@@ -343,7 +362,7 @@ namespace net::websock {
         }
         else if (length_field == 127) { //msglen is 64bit!
             if (in_length < pos + 8) {
-                return INCOMPLETE_FRAME;
+                return Inbound::Incomplete;
             }
             payload_length = (
                 ((int64_t)in_buffer[2] << 56) |
@@ -360,40 +379,40 @@ namespace net::websock {
 
         //printf("PAYLOAD_LEN: %08x\n", payload_length);
         if (payload_length < 0) {
-            return ERROR_FRAME;
+            return Inbound::Error;
         }
         if (payload_length > MAX_FRAME_PAYLOAD) {
             flog::error("ERROR: websocket payload is too large: {}", payload_length);
-            return ERROR_FRAME;
+            return Inbound::Error;
         }
 
         if (msg_masked && in_length < pos + 4) {
-            return INCOMPLETE_FRAME;
+            return Inbound::Incomplete;
         }
 
         if (msg_masked) {
-            mask = *((unsigned int*)(in_buffer + pos));
-            //printf("MASK: %08x\n", mask);
+            memcpy(mask, in_buffer + pos, 4);
+            //printf("MASK: %02x %02x %02x %02x\n", mask[0], mask[1], mask[2], mask[3]);
             pos += 4;
 
             if (payload_length > in_length - pos) {
-                return INCOMPLETE_FRAME;
+                return Inbound::Incomplete;
             }
 
             // unmask data:
             unsigned char* c = in_buffer + pos;
             for (int i = 0; i < payload_length; i++) {
-                c[i] = c[i] ^ ((unsigned char*)(&mask))[i % 4];
+                c[i] = c[i] ^ mask[i % 4];
             }
         }
 
         if (payload_length > in_length - pos) {
-            return INCOMPLETE_FRAME;
+            return Inbound::Incomplete;
         }
 
         if (payload_length > out_size - 1) {
             flog::error("ERROR: output buffer is too small for the payload");
-            return ERROR_FRAME;
+            return Inbound::Error;
         }
 
         memcpy((void*)out_buffer, (void*)(in_buffer + pos), payload_length);
@@ -404,18 +423,18 @@ namespace net::websock {
         //printf("TEXT: %s\n", out_buffer);
 
         if (msg_opcode >= 0x8) {
-            if (!msg_fin || payload_length > 125) { return ERROR_FRAME; }
-            if (msg_opcode == 0x8 && payload_length == 1) { return ERROR_FRAME; }
+            if (!msg_fin || payload_length > 125) { return Inbound::Error; }
+            if (msg_opcode == 0x8 && payload_length == 1) { return Inbound::Error; }
         }
 
-        if (msg_opcode == 0x0) return (msg_fin) ? CONTINUATION_FINAL : CONTINUATION_FRAGMENT;
-        if (msg_opcode == 0x1) return (msg_fin) ? TEXT_FRAME : INCOMPLETE_TEXT_FRAME;
-        if (msg_opcode == 0x2) return (msg_fin) ? BINARY_FRAME : INCOMPLETE_BINARY_FRAME;
-        if (msg_opcode == 0x8) return CLOSE_FRAME;
-        if (msg_opcode == 0x9) return PING_FRAME;
-        if (msg_opcode == 0xA) return PONG_FRAME;
+        if (msg_opcode == 0x0) return msg_fin ? Inbound::ContinuationFinal : Inbound::Continuation;
+        if (msg_opcode == 0x1) return msg_fin ? Inbound::Text   : Inbound::IncompleteText;
+        if (msg_opcode == 0x2) return msg_fin ? Inbound::Binary : Inbound::IncompleteBinary;
+        if (msg_opcode == 0x8) return Inbound::Close;
+        if (msg_opcode == 0x9) return Inbound::Ping;
+        if (msg_opcode == 0xA) return Inbound::Pong;
 
-        return ERROR_FRAME;
+        return Inbound::Error;
     }
 
     std::shared_ptr<::net::Socket> WSClient::connectSocket(const std::string& host, int port) {
@@ -510,10 +529,10 @@ namespace net::websock {
                 onDisconnected();
                 return;
             }
-            socket = z;
+            setSocket(z);
             if (stopped) {
-                socket->close();
-                socket.reset();
+                z->close();
+                setSocket(nullptr);
                 onDisconnected();
                 return;
             }
@@ -535,7 +554,10 @@ namespace net::websock {
                 "Cookie: ident=\r\n"
                 "Pragma: no-cache\r\n"
                 "Sec-GPC: 1\r\n"
-                "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
+                // permessage-deflate (RFC 7692) is intentionally NOT advertised: getFrame()
+                // ignores RSV1 and there is no inflate path, so accepting the extension
+                // would silently feed compressed bytes to the message callbacks.
+                // "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
                 "Sec-WebSocket-Version: 13\r\n"
                 "Upgrade: websocket\r\n"
                 "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36\r\n";
@@ -628,7 +650,7 @@ namespace net::websock {
                     throw std::runtime_error("websock: cannot parse redirect Location: " + location);
                 }
                 socket->close();
-                socket.reset();
+                setSocket(nullptr);
                 std::string redirectPath = parsed->path;
                 if (redirectPath != currentPath && equalsIgnoreAsciiCase(redirectPath, currentPath)) {
                     flog::info("websock: preserving redirect path case: {} -> {}", redirectPath, currentPath);
@@ -696,10 +718,11 @@ namespace net::websock {
     }
 
     void WSClient::stopSocket() {
+        // Set the flag and let the receive loop close the socket on its way
+        // out. This avoids calling Socket::close() concurrently with the
+        // receive loop's Socket::recv(), at the cost of up to ~100 ms of
+        // shutdown latency (the recv timeout in connectAndReceiveLoop).
         stopped = true;
-        if (socket) {
-            socket->close();
-        }
     }
 
 }
