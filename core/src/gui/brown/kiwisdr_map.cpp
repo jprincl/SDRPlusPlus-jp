@@ -45,7 +45,10 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     const ImVec2 ws = ImGui::GetIO().DisplaySize * 0.75f;
     ImGui::SetWindowSize(ws);
     ImGui::BeginChild("##geomap-kiwisdr", ws - ImVec2(0, 50), true, 0);
-    geoMap.draw();
+    const char* filterButtonLabel = showExtApiOnly ? "Show all stations" : "Show EXT API only";
+    geoMap.draw(filterButtonLabel, [this]() {
+        showExtApiOnly = !showExtApiOnly;
+    });
     if (geoMap.scaleTranslateDirty) {
         geoMap.saveTo(*config, configPrefix.c_str());
         geoMap.scaleTranslateDirty = false;
@@ -68,10 +71,6 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     }
     else {
         ImGui::Text("Loaded servers list");
-        ImGui::SameLine();
-        if (doFingerButton(showExtApiOnly ? "Show all stations" : "Show EXT API only")) {
-            showExtApiOnly = !showExtApiOnly;
-        }
         drawMarkers();
         handleHitTest();
         drawSelectionPanel();

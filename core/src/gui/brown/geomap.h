@@ -60,7 +60,7 @@ namespace geomap {
         std::function <ImVec2(ImVec2)> recentMapToScreen;
         ImVec2 recentCanvasPos;
 
-        void draw();
+        void draw(const char* extraButtonLabel = nullptr, std::function<void()> extraButtonAction = {});
         void saveTo(ConfigManager &manager, const char* string);
         void loadFrom(ConfigManager& manager, const char* prefix);
     };

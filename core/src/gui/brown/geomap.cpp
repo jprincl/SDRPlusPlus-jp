@@ -102,7 +102,7 @@ namespace geomap {
     };
 
 
-    void GeoMap::draw() {
+    void GeoMap::draw(const char* extraButtonLabel, std::function<void()> extraButtonAction) {
 
         maybeInit();
 
@@ -170,6 +170,12 @@ namespace geomap {
             scale = ImVec2(1.0, 1.0);
             translate = ImVec2(0.0, 0.0);
             scaleTranslateDirty = true;
+        }
+        if (extraButtonLabel && extraButtonAction) {
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+            if (doFingerButton(extraButtonLabel)) {
+                extraButtonAction();
+            }
         }
 
     }
