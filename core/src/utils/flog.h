@@ -16,10 +16,8 @@ namespace flog {
     void __log__(Type type, const char* fmt, const std::vector<std::string>& args);
 
     // Conversion functions
-    std::string __toString__(bool value);
-    std::string __toString__(char value);
-    // Arithmetic types are handled by the template version below
-    std::string __toString__(const char* value);
+    inline std::string __toString__(bool value) { return value ? "true" : "false"; }
+    inline std::string __toString__(char value) { return std::string("") + value; }
     std::string __toString__(const void* value);
     template <class T>
     std::string __toString__(const T& value) {
@@ -27,6 +25,8 @@ namespace flog {
             return std::to_string(value);
         } else if constexpr (std::is_same<T, std::string>::value) {
             return value;
+        } else if constexpr (std::is_same_v<T, char*> || std::is_same_v<T, const char*>) {
+            return value ? std::string(value) : std::string();
         } else {
             static_assert(sizeof(T) == 0, "No __toString__ conversion available for this type");
         }

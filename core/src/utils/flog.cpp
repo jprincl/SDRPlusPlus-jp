@@ -179,20 +179,6 @@ namespace flog {
         }
     }
 
-    std::string __toString__(bool value) {
-        return value ? "true" : "false";
-    }
-
-    std::string __toString__(char value) {
-        return std::string("")+value;
-    }
-
-
-
-    std::string __toString__(const char* value) {
-        return value;
-    }
-
     std::string __toString__(const void* value) {
         char buf[32];
         sprintf(buf, "0x%p", value);
