@@ -2,13 +2,13 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
 
-namespace net { class Socket; }
+#include "../net.h"
 
 namespace net::websock {
 
@@ -53,9 +53,9 @@ namespace net::websock {
 
         static constexpr int64_t MAX_FRAME_PAYLOAD = 1024 * 1024;
 
-        // socketMutex guards both pointer lifetime and net::Socket method
+        // socketMutex guards both socket lifetime and net::Socket method
         // calls because net::Socket keeps non-atomic state internally.
-        std::unique_ptr<::net::Socket> socket;
+        std::optional<::net::Socket> socket;
         std::mutex socketMutex;
 
         std::string path;
@@ -78,8 +78,8 @@ namespace net::websock {
                          unsigned char* out_buffer, int out_size,
                          int* out_length, int* skipSize);
 
-        std::unique_ptr<::net::Socket> connectSocket(const std::string& host, int port);
-        void setSocket(std::unique_ptr<::net::Socket> s);
+        ::net::SockHandle_t connectSocket(const ::net::Address& addr);
+        void emplaceSocket(::net::SockHandle_t sock, const ::net::Address& addr);
         void closeCurrentSocket(bool markStopped);
         int recvSocket(uint8_t* data, size_t len, int timeout);
         // Handshake path: takes sendMutex, then writes raw bytes (no frame wrapping).

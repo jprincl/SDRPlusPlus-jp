@@ -7,10 +7,8 @@
 #include <stdexcept>
 #include <stdio.h>
 #include <thread>
-#include <utility>
 
 #include "../base64.h"
-#include "../net.h"
 #include "../url.h"
 #include "picohash.h"
 #include <utils/flog.h>
@@ -109,6 +107,50 @@ namespace net::websock {
 #endif
         }
 
+        ::net::SockHandle_t invalidSocketHandle() {
+#ifdef _WIN32
+            return INVALID_SOCKET;
+#else
+            return -1;
+#endif
+        }
+
+        bool isValidSocketHandle(::net::SockHandle_t sock) {
+#ifdef _WIN32
+            return sock != INVALID_SOCKET;
+#else
+            return sock >= 0;
+#endif
+        }
+
+        class RawSocketGuard {
+        public:
+            explicit RawSocketGuard(::net::SockHandle_t sock) : sock(sock) {}
+            ~RawSocketGuard() {
+                if (isValidSocketHandle(sock)) {
+                    closeRawSocket(sock);
+                }
+            }
+
+            RawSocketGuard(const RawSocketGuard&) = delete;
+            RawSocketGuard& operator=(const RawSocketGuard&) = delete;
+
+            explicit operator bool() const {
+                return isValidSocketHandle(sock);
+            }
+
+            ::net::SockHandle_t get() const {
+                return sock;
+            }
+
+            void release() {
+                sock = invalidSocketHandle();
+            }
+
+        private:
+            ::net::SockHandle_t sock;
+        };
+
     } // namespace
 
     WSClient::WSClient() : socket(), rd(), e1(rd()), uniform_dist(0, 255) {
@@ -117,9 +159,9 @@ namespace net::websock {
 
     WSClient::~WSClient() = default;
 
-    void WSClient::setSocket(std::unique_ptr<::net::Socket> s) {
+    void WSClient::emplaceSocket(::net::SockHandle_t sock, const ::net::Address& addr) {
         std::lock_guard<std::mutex> lock(socketMutex);
-        socket = std::move(s);
+        socket.emplace(sock, &addr);
     }
 
     void WSClient::closeCurrentSocket(bool markStopped) {
@@ -454,18 +496,18 @@ namespace net::websock {
             if (msg_opcode == 0x8 && payload_length == 1) { return Inbound::Error; }
         }
 
-        if (msg_opcode == 0x0) return msg_fin ? Inbound::ContinuationFinal : Inbound::Continuation;
-        if (msg_opcode == 0x1) return msg_fin ? Inbound::Text   : Inbound::IncompleteText;
-        if (msg_opcode == 0x2) return msg_fin ? Inbound::Binary : Inbound::IncompleteBinary;
-        if (msg_opcode == 0x8) return Inbound::Close;
-        if (msg_opcode == 0x9) return Inbound::Ping;
-        if (msg_opcode == 0xA) return Inbound::Pong;
-
-        return Inbound::Error;
+        switch (msg_opcode) {
+        case 0x0: return msg_fin ? Inbound::ContinuationFinal : Inbound::Continuation;
+        case 0x1: return msg_fin ? Inbound::Text : Inbound::IncompleteText;
+        case 0x2: return msg_fin ? Inbound::Binary : Inbound::IncompleteBinary;
+        case 0x8: return Inbound::Close;
+        case 0x9: return Inbound::Ping;
+        case 0xA: return Inbound::Pong;
+        default:  return Inbound::Error;
+        }
     }
 
-    std::unique_ptr<::net::Socket> WSClient::connectSocket(const std::string& host, int port) {
-        ::net::Address addr(host, port);
+    ::net::SockHandle_t WSClient::connectSocket(const ::net::Address& addr) {
         ::net::SockHandle_t sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 #ifdef _WIN32
         if (sock == INVALID_SOCKET) {
@@ -529,11 +571,11 @@ namespace net::websock {
                 closeRawSocket(sock);
                 throw std::runtime_error("Could not connect");
             }
-            return std::make_unique<::net::Socket>(sock, &addr);
+            return sock;
         }
 
         closeRawSocket(sock);
-        return {};
+        return invalidSocketHandle();
     }
 
     void WSClient::connectAndReceiveLoop(const std::string& host, int port, const std::string& path) {
@@ -552,12 +594,14 @@ namespace net::websock {
         int recvd = 0;
 
         while (true) {
-            auto z = connectSocket(currentHost, currentPort);
+            ::net::Address addr(currentHost, currentPort);
+            RawSocketGuard z(connectSocket(addr));
             if (!z) {
                 onDisconnected();
                 return;
             }
-            setSocket(std::move(z));
+            emplaceSocket(z.get(), addr);
+            z.release();
             if (stopped) {
                 closeCurrentSocket(false);
                 onDisconnected();
