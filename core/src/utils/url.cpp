@@ -10,9 +10,10 @@ namespace url {
         }
         std::string rest = url.substr(HTTP_SCHEME.size());
 
-        // Strip path / query / fragment.
+        std::string pathPart = "/";
         auto suffix = rest.find_first_of("/?#");
         if (suffix != std::string::npos) {
+            pathPart = rest.substr(suffix);
             rest = rest.substr(0, suffix);
         }
 
@@ -22,6 +23,7 @@ namespace url {
 
         auto colon = rest.find(':');
         HttpHostPort r;
+        r.path = pathPart;
         if (colon == std::string::npos) {
             r.host = rest;
             r.port = 80;
@@ -46,6 +48,7 @@ namespace url {
             return std::nullopt;
         }
         HttpHostPort r;
+        r.path = "/";
         r.host = hostPort.substr(0, colon);
         if (r.host.empty()) {
             return std::nullopt;

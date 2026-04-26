@@ -8,7 +8,9 @@
 #include <functional>
 #include <memory>
 #include "../net.h"
+#include "../url.h"
 #include "http.h"
+#include <cctype>
 #include <stdio.h>
 #include <random>
 #include <stdexcept>
@@ -76,6 +78,10 @@ namespace net::websock {
             case PING_FRAME:
                 sendPong();
                 break;
+            case CLOSE_FRAME:
+                sendClose();
+                stopped = true;
+                break;
             default:
                 printf("Unknown frame type: %x\n", frameType);
                 break;
@@ -92,6 +98,14 @@ namespace net::websock {
             buffer.resize(len);
             socket->sendstr(buffer);
             //
+        }
+
+        void sendClose() {
+            std::string buffer;
+            buffer.resize(200, ' ');
+            int len = makeFrame(CLOSE_FRAME, nullptr, 0, (unsigned char *)buffer.data(), buffer.size());
+            buffer.resize(len);
+            socket->sendstr(buffer);
         }
 
         void sendString(const std::string &str) {
@@ -125,6 +139,7 @@ namespace net::websock {
 
             TEXT_FRAME=0x81,
             BINARY_FRAME=0x82,
+            CLOSE_FRAME=0x88,
 
             PING_FRAME=0x19,
             PONG_FRAME=0x1A
@@ -167,7 +182,9 @@ namespace net::websock {
                 buffer[pos++] = uniform_dist(e1);
                 buffer[pos++] = uniform_dist(e1);
                 buffer[pos++] = uniform_dist(e1);
-                memcpy((void*)(buffer+pos), msg, size);
+                if (size > 0) {
+                    memcpy((void*)(buffer+pos), msg, size);
+                }
                 for(int q=0; q<size; q++) {
                     buffer[pos+q] ^= buffer[maskIndex + (q%4)];
                 }
@@ -269,9 +286,15 @@ namespace net::websock {
 
             //printf("TEXT: %s\n", out_buffer);
 
+            if(msg_opcode >= 0x8) {
+                if(!msg_fin || payload_length > 125) { return ERROR_FRAME; }
+                if(msg_opcode == 0x8 && payload_length == 1) { return ERROR_FRAME; }
+            }
+
             if(msg_opcode == 0x0) return (msg_fin)?TEXT_FRAME:INCOMPLETE_TEXT_FRAME; // continuation frame ?
             if(msg_opcode == 0x1) return (msg_fin)?TEXT_FRAME:INCOMPLETE_TEXT_FRAME;
             if(msg_opcode == 0x2) return (msg_fin)?BINARY_FRAME:INCOMPLETE_BINARY_FRAME;
+            if(msg_opcode == 0x8) return CLOSE_FRAME;
             if(msg_opcode == 0x9) return PING_FRAME;
             if(msg_opcode == 0xA) return PONG_FRAME;
 
@@ -364,85 +387,165 @@ namespace net::websock {
             return {};
         }
 
+        static int parseStatusCode(const std::string& statusLine) {
+            auto sp1 = statusLine.find(' ');
+            if (sp1 == std::string::npos) return -1;
+            auto sp2 = statusLine.find(' ', sp1 + 1);
+            std::string code = (sp2 == std::string::npos)
+                ? statusLine.substr(sp1 + 1)
+                : statusLine.substr(sp1 + 1, sp2 - sp1 - 1);
+            try { return std::stoi(code); } catch (...) { return -1; }
+        }
+
+        static std::string findHeaderValue(const std::vector<std::string>& headers, const std::string& name) {
+            for (const auto& h : headers) {
+                auto colon = h.find(':');
+                if (colon == std::string::npos || colon != name.size()) continue;
+                bool match = true;
+                for (size_t i = 0; i < name.size(); i++) {
+                    if (std::tolower((unsigned char)h[i]) != std::tolower((unsigned char)name[i])) { match = false; break; }
+                }
+                if (!match) continue;
+                auto val = h.substr(colon + 1);
+                auto start = val.find_first_not_of(" \t");
+                return start == std::string::npos ? std::string() : val.substr(start);
+            }
+            return std::string();
+        }
+
         void connectAndReceiveLoop(const std::string& host, int port, const std::string& path) {
             flog::info("WSClient connectAndReceiveLoop: inst={}", (uint64_t)(uintptr_t)this);
-            auto z = connectSocket(host, port);
-            if (!z) {
-                onDisconnected();
-                return;
-            }
-            socket = z;
+
+            std::string currentHost = host;
+            int currentPort = port;
+            std::string currentPath = path;
+            constexpr int MAX_REDIRECTS = 5;
+            int redirectsLeft = MAX_REDIRECTS;
+
             bool shouldNotifyDisconnected = true;
-            if (stopped) {
-                if (socket) {
+            std::vector<uint8_t> buf(100000);
+            std::vector<uint8_t> data;
+            int recvd = 0;
+
+            while (true) {
+                auto z = connectSocket(currentHost, currentPort);
+                if (!z) {
+                    onDisconnected();
+                    return;
+                }
+                socket = z;
+                if (stopped) {
                     socket->close();
                     socket.reset();
                     onDisconnected();
                     return;
                 }
-            }
-            flog::info("WSClient socket connected");
+                flog::info("WSClient socket connected to {}:{}", currentHost, currentPort);
 
-            std::string initHeaders =
-                "Accept-Encoding: gzip, deflate\r\n"
-                "Accept-Language: en-US,en\r\n"
-                "Cache-Control: no-cache\r\n"
-                "Connection: Upgrade\r\n"
-                "Cookie: ident=\r\n"
-                "Pragma: no-cache\r\n"
-                "Sec-GPC: 1\r\n"
-                "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
-                "Sec-WebSocket-Key: tXZvmn8MbkVRhAoczhuyVQ==\r\n"
-                "Sec-WebSocket-Version: 13\r\n"
-                "Upgrade: websocket\r\n"
-                "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36\r\n";
-            initHeaders = "GET " + path + " HTTP/1.1\r\n" + initHeaders;
-            initHeaders += "Host: " + host + ":" + std::to_string(port) + "\r\n";
-            initHeaders += "Origin: http://" + host + ":" + std::to_string(port) + "\r\n";
-            initHeaders += "\r\n";
+                std::string initHeaders =
+                    "Accept-Encoding: gzip, deflate\r\n"
+                    "Accept-Language: en-US,en\r\n"
+                    "Cache-Control: no-cache\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Cookie: ident=\r\n"
+                    "Pragma: no-cache\r\n"
+                    "Sec-GPC: 1\r\n"
+                    "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
+                    "Sec-WebSocket-Key: tXZvmn8MbkVRhAoczhuyVQ==\r\n"
+                    "Sec-WebSocket-Version: 13\r\n"
+                    "Upgrade: websocket\r\n"
+                    "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36\r\n";
+                initHeaders = "GET " + currentPath + " HTTP/1.1\r\n" + initHeaders;
+                // RFC 7230 §5.4: omit the port from Host/Origin when it matches the scheme default,
+                // otherwise reverse proxies (e.g. *.proxy.kiwisdr.com) fail to match server_name.
+                const std::string hostHeader = (currentPort == 80) ? currentHost : (currentHost + ":" + std::to_string(currentPort));
+                initHeaders += "Host: " + hostHeader + "\r\n";
+                initHeaders += "Origin: http://" + hostHeader + "\r\n";
+                initHeaders += "\r\n";
 
-            int len = socket->sendstr(initHeaders);
-            int senderr = errno;
-            flog::info("sent: {} of {}", len, (int64_t)initHeaders.size());
+                int len = socket->sendstr(initHeaders);
+                int senderr = errno;
+                flog::info("sent: {} of {}", len, (int64_t)initHeaders.size());
 
-            std::vector<uint8_t> buf(100000);
+                // Accumulate the upgrade response until we see the \r\n\r\n header terminator.
+                // The response can be split across multiple TCP segments (e.g. direct KiwiSDRs
+                // send the 101 in fragments), so a single recv is not enough.
+                recvd = 0;
+                size_t pos = std::string::npos;
+                while (!stopped) {
+                    if ((size_t)recvd + 1 >= buf.size()) {
+                        socket->close();
+                        throw std::runtime_error("websock: upgrade response headers too large");
+                    }
+                    int n = socket->recv(buf.data() + recvd, buf.size() - 1 - recvd, false, 100);
+                    if (n < 0) {
+                        std::string msg = "websock: recv failed, errno=" + std::to_string(errno)+" (recvd="+std::to_string(recvd)+
+                                          " sent="+std::to_string(len)+" senderr="+std::to_string(senderr)+")";
+                        socket->close();
+                        throw std::runtime_error(msg);
+                    }
+                    if (n == 0) {
+                        continue; // recv timeout; keep waiting until stopped
+                    }
+                    recvd += n;
+                    buf[recvd] = 0;
+                    std::string view((char*)buf.data(), recvd);
+                    pos = view.find("\r\n\r\n");
+                    if (pos != std::string::npos) {
+                        break;
+                    }
+                }
+                if (stopped) {
+                    socket->close();
+                    onDisconnected();
+                    return;
+                }
+                flog::info("recvd: {}", recvd);
+                std::vector<std::string> recvHeaders;
+                std::string bufs((char*)buf.data(), recvd);
+                bufs.resize(pos + 2);
+                splitStringV(bufs, "\r\n", recvHeaders);
+                for (size_t i = 0; i < recvHeaders.size(); i++) {
+                    printf("%s\n", recvHeaders[i].c_str());
+                }
 
-            int recvd = 0;
-            while (!stopped) {
-                recvd = socket->recv(buf.data(), buf.size() - 1, false, 100);
-                if (recvd != 0) {
+                int status = recvHeaders.empty() ? -1 : parseStatusCode(recvHeaders[0]);
+                if (status == 101) {
+                    data.clear();
+                    for (int i = (int)pos + 4; i < recvd; i++) {
+                        data.push_back(buf[i]);
+                    }
                     break;
                 }
-            }
-            if (stopped) {
+
+                const bool isRedirect = (status == 301 || status == 302 || status == 303 ||
+                                         status == 307 || status == 308);
+                if (isRedirect && redirectsLeft > 0) {
+                    std::string location = findHeaderValue(recvHeaders, "Location");
+                    if (location.empty()) {
+                        socket->close();
+                        throw std::runtime_error("websock: redirect without Location header");
+                    }
+                    auto parsed = url::parseHttpHostPort(location);
+                    if (!parsed) {
+                        socket->close();
+                        throw std::runtime_error("websock: cannot parse redirect Location: " + location);
+                    }
+                    socket->close();
+                    socket.reset();
+                    flog::info("websock: following redirect ({} left) to {}:{}{}", redirectsLeft, parsed->host, parsed->port, parsed->path);
+                    currentHost = parsed->host;
+                    currentPort = parsed->port;
+                    currentPath = parsed->path;
+                    redirectsLeft--;
+                    continue;
+                }
+
                 socket->close();
-                onDisconnected();
-                return;
+                throw std::runtime_error("websock: upgrade failed: " +
+                    (recvHeaders.empty() ? std::string("(no status line)") : recvHeaders[0]));
             }
-            if (recvd <= 0) {
-                std::string msg = "websock: recv failed, errno=" + std::to_string(errno)+" (recvd="+std::to_string(recvd)+
-                                  " sent="+std::to_string(len)+" senderr="+std::to_string(senderr)+")";
-                socket->close();
-                throw std::runtime_error(msg);
-            }
-            buf[recvd] = 0;
-            flog::info("recvd: {}", recvd);
-            std::vector<std::string> recvHeaders;
-            std::string bufs = (char*)buf.data();
-            auto pos = bufs.find("\r\n\r\n");
-            if (pos == std::string::npos) {
-                socket->close();
-                throw std::runtime_error("websock: invalid response");
-            }
-            bufs.resize(pos + 2);
-            splitStringV(bufs, "\r\n", recvHeaders);
-            for (int i = 0; i < recvHeaders.size(); i++) {
-                printf("%s\n", recvHeaders[i].c_str());
-            }
-            std::vector<uint8_t> data;
-            for (int i = (int)pos + 4; i < recvd; i++) {
-                data.push_back(buf[i]);
-            }
+
             onConnected();
             while (!stopped) {
                 int len0 = 0;

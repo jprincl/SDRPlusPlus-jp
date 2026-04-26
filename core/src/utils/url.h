@@ -7,16 +7,17 @@ namespace url {
     struct HttpHostPort {
         std::string host;
         int port;
+        std::string path;   // includes any "?query" / "#fragment"; defaults to "/"
     };
 
     /**
-     * Parse an http:// URL into host and port.
-     * Strips any path / query / fragment suffix and defaults the port to 80
-     * when not present in the URL.
+     * Parse an http:// URL into host, port, and path.
+     * The port defaults to 80 when not present, and the path defaults to "/"
+     * when not present.
      *
      * IPv4 addresses and hostnames only — IPv6 bracketed URLs are not supported.
      *
-     * @return The parsed host and port, or std::nullopt if the input does not
+     * @return The parsed components, or std::nullopt if the input does not
      *         start with "http://" or is otherwise malformed.
      */
     std::optional<HttpHostPort> parseHttpHostPort(const std::string& url);
