@@ -18,21 +18,18 @@ namespace flog {
     // Conversion functions
     std::string __toString__(bool value);
     std::string __toString__(char value);
-    std::string __toString__(int8_t value);
-    std::string __toString__(int16_t value);
-    std::string __toString__(int32_t value);
-    std::string __toString__(int64_t value);
-    std::string __toString__(uint8_t value);
-    std::string __toString__(uint16_t value);
-    std::string __toString__(uint32_t value);
-    std::string __toString__(uint64_t value);
-    std::string __toString__(float value);
-    std::string __toString__(double value);
+    // Arithmetic types are handled by the template version below
     std::string __toString__(const char* value);
     std::string __toString__(const void* value);
     template <class T>
     std::string __toString__(const T& value) {
-        return (std::string)value;
+        if constexpr (std::is_arithmetic<T>::value) {
+            return std::to_string(value);
+        } else if constexpr (std::is_same<T, std::string>::value) {
+            return value;
+        } else {
+            static_assert(sizeof(T) == 0, "No __toString__ conversion available for this type");
+        }
     }
 
     // Utility to generate a list from arguments
