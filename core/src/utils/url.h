@@ -30,4 +30,12 @@ namespace url {
      */
     std::optional<HttpHostPort> splitHostPort(const std::string& hostPort);
 
+    /**
+     * Decode a percent-encoded string (application/x-www-form-urlencoded
+     * style): "%XX" hex escapes become the corresponding byte, and "+" is
+     * treated as space. Malformed "%" escapes (incomplete or non-hex) are
+     * passed through unchanged.
+     */
+    std::string decode(const std::string& in);
+
 }

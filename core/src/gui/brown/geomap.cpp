@@ -1,6 +1,9 @@
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <gui/brown/geomap.h>
+#include <gui/brown/earcut.hpp>
+#include <cmath>
+#include <ctime>
 #include <fstream>
 #include <core.h>
 #include <utils/flog.h>
@@ -10,13 +13,121 @@
 #include <random>
 #include <imgui/imgui_internal.h>
 
+// earcut adapter so the triangulator can read x/y from CartesianCoordinates.
+namespace mapbox { namespace util {
+    template <std::size_t I> struct nth<I, geomap::CartesianCoordinates> {
+        static auto get(const geomap::CartesianCoordinates& t) {
+            if constexpr (I == 0) return t.x;
+            else return t.y;
+        }
+    };
+}}
+
 namespace geomap {
 
 
     // Converts degrees to radians
 
     nlohmann::json geoJSON;
-    std::vector<std::vector<std::vector<CartesianCoordinates>>> countriesGeo;
+    // [country][polygon] → border + triangles. Triangulated once at load.
+    std::vector<std::vector<Polygon>> countriesGeo;
+
+    // Day/night terminator overlay. Recomputed roughly once per minute from
+    // the current UTC time; rendered as a translucent dark fill over the
+    // night side of the world.
+    Polygon terminatorPolygon;
+    std::tm  terminatorPolygonTime{};
+
+    static std::tm getTimeUtc() {
+        std::time_t now = std::time(nullptr);
+        std::tm utc{};
+#if defined(_WIN32) || defined(_WIN64)
+        gmtime_s(&utc, &now);
+#else
+        gmtime_r(&now, &utc);
+#endif
+        return utc;
+    }
+
+    // Day-of-year (1..366); used by the solar-declination approximation.
+    static int dayOfYear(int year, int month, int day) {
+        static const int monthDays[12] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+        int doy = 0;
+        for (int m = 0; m < month - 1; ++m) doy += monthDays[m];
+        doy += day;
+        if (month > 2 && ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0))) doy += 1;
+        return doy;
+    }
+
+    // Solar declination in radians (Spencer 1971 approximation).
+    static double solarDeclination(int year, int month, int day) {
+        const int N = dayOfYear(year, month, day);
+        const double gamma = 2.0 * pi / 365.0 * (N - 1);
+        return 0.006918 - 0.399912 * std::cos(gamma) + 0.070257 * std::sin(gamma)
+             - 0.006758 * std::cos(2 * gamma) + 0.000907 * std::sin(2 * gamma)
+             - 0.002697 * std::cos(3 * gamma) + 0.001480 * std::sin(3 * gamma);
+    }
+
+    // Builds the closed polygon describing the night side of the planet for
+    // the given UTC time: the terminator curve in longitude steps, closed
+    // along whichever pole is in shadow.
+    static std::vector<GeoCoordinates> buildNightPolygon(const std::tm& utc) {
+        std::vector<GeoCoordinates> polygon;
+        const double decl = solarDeclination(utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday);
+        const int lonStep = 2;
+        const double utcHours = utc.tm_hour + utc.tm_min / 60.0 + utc.tm_sec / 3600.0;
+
+        for (int lon = -180; lon <= 180; lon += lonStep) {
+            const double lst = utcHours + lon / 15.0;
+            const double H = degToRad((lst - 12.0) * 15.0);
+            double lat;
+            if (std::fabs(std::cos(decl)) < 1e-6) {
+                lat = (decl > 0) ? 90.0 : -90.0;
+            }
+            else {
+                lat = radToDeg(std::atan(-std::cos(H) / std::tan(decl)));
+            }
+            if (lat > 90.0) lat = 90.0;
+            if (lat < -90.0) lat = -90.0;
+            polygon.push_back({ lat, double(lon) });
+        }
+        // Close along the pole that is currently in shadow.
+        const bool northInShadow = !(decl > 0);
+        const double poleLat = northInShadow ? 90.0 : -90.0;
+        polygon.push_back({ poleLat,  180.0 });
+        polygon.push_back({ poleLat, -180.0 });
+        polygon.push_back(polygon.front());
+        return polygon;
+    }
+
+    static void updateTerminatorPolygon(const std::tm& utc) {
+        const auto geo = buildNightPolygon(utc);
+        Polygon poly;
+        poly.border.reserve(geo.size());
+        for (const auto& g : geo) {
+            poly.border.emplace_back(geoToCartesian(g));
+        }
+        if (poly.border.size() >= 3) {
+            std::vector<std::vector<CartesianCoordinates>> rings = { poly.border };
+            poly.triangles = mapbox::earcut<uint32_t>(rings);
+        }
+        terminatorPolygon = std::move(poly);
+        terminatorPolygonTime = utc;
+    }
+
+    static void checkTerminatorPolygon() {
+        const std::tm utc = getTimeUtc();
+        const std::tm& old = terminatorPolygonTime;
+        // Update once per minute — the terminator moves at ~0.25°/min so
+        // sub-minute updates would be wasted recomputation.
+        const bool sameMinute =
+            utc.tm_year == old.tm_year && utc.tm_mon == old.tm_mon && utc.tm_mday == old.tm_mday &&
+            utc.tm_hour == old.tm_hour && utc.tm_min == old.tm_min;
+        if (sameMinute && !terminatorPolygon.border.empty()) {
+            return;
+        }
+        updateTerminatorPolygon(utc);
+    }
 
     nlohmann::json readGeoJSONFile(const std::string& filePath) {
         std::ifstream fileStream(filePath);
@@ -40,39 +151,39 @@ namespace geomap {
 
 
             for (const auto& feature : geoJSON["features"]) {
-                //                std::string countryID = feature["properties"]["NAME"];
                 countriesGeo.emplace_back();
 
                 for (const auto& coordinates : feature["geometry"]["coordinates"]) {
-
                     countriesGeo.back().emplace_back();
+                    Polygon& dest = countriesGeo.back().back();
                     for (const auto& coord0 : coordinates) {
-
-                        auto& dest = countriesGeo.back().back();
                         if (coord0.is_array() && !coord0.empty() && coord0[0].is_array()) {
-                            // multy poligon
+                            // MultiPolygon-style: coord0 is a ring of [lon,lat] pairs
                             for (const auto& coord1 : coord0) {
                                 double longitude = coord1[0].get<double>();
                                 double latitude = coord1[1].get<double>();
-                                CartesianCoordinates cartesian = geoToCartesian({ latitude, longitude });
-
-                                dest.emplace_back(cartesian);
+                                dest.border.emplace_back(geoToCartesian({ latitude, longitude }));
                             }
                         }
                         else if (coord0.is_array() && !coord0.empty() && !coord0[0].is_array() && coord0.size() == 2) {
-
+                            // Polygon-style: coordinates is the ring directly; iterate the parent
                             for (const auto& coord1 : coordinates) {
                                 double longitude = coord1[0].get<double>();
                                 double latitude = coord1[1].get<double>();
-                                CartesianCoordinates cartesian = geoToCartesian({ latitude, longitude });
-
-                                dest.emplace_back(cartesian);
+                                dest.border.emplace_back(geoToCartesian({ latitude, longitude }));
                             }
                             break;
                         }
                         else {
                             break;
                         }
+                    }
+                    // Triangulate the just-built polygon. Earcut wants outer
+                    // ring + optional holes; we don't model holes here, so
+                    // pass a single-element rings list.
+                    if (dest.border.size() >= 3) {
+                        std::vector<std::vector<CartesianCoordinates>> rings = { dest.border };
+                        dest.triangles = mapbox::earcut<uint32_t>(rings);
                     }
                 }
             }
@@ -130,16 +241,48 @@ namespace geomap {
         drawList->AddRectFilled(recentCanvasPos + ImVec2(0, 0), recentCanvasPos + ImGui::GetContentRegionAvail(), ImColor(0, 0, 0));
 
         for (auto& country : countriesGeo) {
-            const ImColor& thisColor = ImColor(colors[(++count) % colors.size()]);
+            const ImColor lineColor = ImColor(colors[(++count) % colors.size()]);
+            // Fill is the same hue as the outline but heavily diluted so the
+            // map stays readable under a busy marker layer.
+            const ImU32 fillCol = ImGui::ColorConvertFloat4ToU32(
+                ImVec4(lineColor.Value.x, lineColor.Value.y, lineColor.Value.z, 0.18f));
+            const ImU32 lineCol = ImColor(lineColor);
             for (auto& polygon : country) {
-                if (polygon.size() > 1) {
-                    for (int i = 0; i < polygon.size() - 1; i++) {
-                        auto& cartesian = polygon[i];
-                        auto& cartesian2 = polygon[i + 1];
-                        drawList->AddLine(recentCanvasPos + toView(cartesian.toImVec2()), recentCanvasPos + toView(cartesian2.toImVec2()), thisColor, 1.0f);
+                // Filled triangles first, outline on top.
+                for (size_t t = 0; t + 2 < polygon.triangles.size(); t += 3) {
+                    const auto& a = polygon.border[polygon.triangles[t]];
+                    const auto& b = polygon.border[polygon.triangles[t + 1]];
+                    const auto& c = polygon.border[polygon.triangles[t + 2]];
+                    drawList->AddTriangleFilled(
+                        recentCanvasPos + toView(a.toImVec2()),
+                        recentCanvasPos + toView(b.toImVec2()),
+                        recentCanvasPos + toView(c.toImVec2()),
+                        fillCol);
+                }
+                if (polygon.border.size() > 1) {
+                    for (size_t i = 0; i + 1 < polygon.border.size(); i++) {
+                        drawList->AddLine(
+                            recentCanvasPos + toView(polygon.border[i].toImVec2()),
+                            recentCanvasPos + toView(polygon.border[i + 1].toImVec2()),
+                            lineCol, 1.0f);
                     }
                 }
             }
+        }
+
+        // Day/night terminator: shade the night side. Drawn after countries
+        // so it tints the land on the dark side of the planet.
+        checkTerminatorPolygon();
+        const ImU32 nightFill = ImColor(0, 0, 0, 110);
+        for (size_t t = 0; t + 2 < terminatorPolygon.triangles.size(); t += 3) {
+            const auto& a = terminatorPolygon.border[terminatorPolygon.triangles[t]];
+            const auto& b = terminatorPolygon.border[terminatorPolygon.triangles[t + 1]];
+            const auto& c = terminatorPolygon.border[terminatorPolygon.triangles[t + 2]];
+            drawList->AddTriangleFilled(
+                recentCanvasPos + toView(a.toImVec2()),
+                recentCanvasPos + toView(b.toImVec2()),
+                recentCanvasPos + toView(c.toImVec2()),
+                nightFill);
         }
 
         if (ImGui::IsMouseDown(0)) {
@@ -149,7 +292,6 @@ namespace geomap {
             }
             translate = initialTranslate + (ImGui::GetMousePos() - *initialTouchPos) / w2 / scale;
             scaleTranslateDirty = true;
-            flog::info("Translate: {} {}", translate.x, translate.y);
         }
         else {
             initialTouchPos.reset();

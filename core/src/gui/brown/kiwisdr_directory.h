@@ -20,6 +20,9 @@ struct ServerEntry {
     std::string loc;
     std::string url;
     std::string antenna;
+    std::string sdrHardware;   // "sdr_hw" field of kiwisdr_com.js
+    std::string swVersion;     // KiwiSDR firmware version
+    std::string qth;           // 6-char Maidenhead grid square derived from gps
     float maxSnr = 0.0f;
     float secondSnr = 0.0f;
     int users = 0;

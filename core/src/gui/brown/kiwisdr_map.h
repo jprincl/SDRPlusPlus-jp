@@ -25,6 +25,10 @@ private:
     std::vector<ServerEntry> servers;
     bool serversReady = false;
     bool showExtApiOnly = false;
+    bool mapPopupMaximized = false;
+    bool mapPopupRestoreValid = false;
+    ImVec2 mapPopupRestorePos = ImVec2(0.0f, 0.0f);
+    ImVec2 mapPopupRestoreSize = ImVec2(0.0f, 0.0f);
     const std::string configPrefix;
     ConfigManager* config = nullptr;
 

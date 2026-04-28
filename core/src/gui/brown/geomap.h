@@ -7,8 +7,11 @@
 #include <imgui/imgui.h>
 #include <stdint.h>
 #include "config.h"
+#include <algorithm>
+#include <cstdio>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 using nlohmann::json;
@@ -21,6 +24,9 @@ namespace geomap {
     inline double degToRad(double deg) {
         return deg * pi / 180.0;
     }
+    inline double radToDeg(double rad) {
+        return rad * 180.0 / pi;
+    }
 
     struct GeoCoordinates {
         double latitude;
@@ -31,9 +37,19 @@ namespace geomap {
         double x;
         double y;
 
-        ImVec2 toImVec2() {
-            return ImVec2(x, y);
+        ImVec2 toImVec2() const {
+            return ImVec2(static_cast<float>(x), static_cast<float>(y));
         }
+    };
+
+    // One polygon's border plus its earcut-triangulation indices. Used so
+    // we can render filled country shapes (and the day/night terminator)
+    // instead of bare outlines. `triangles` is empty for polygons too small
+    // (< 3 vertices) or where triangulation failed; in that case only the
+    // outline is rendered. Indices are into `border`, three per triangle.
+    struct Polygon {
+        std::vector<CartesianCoordinates> border;
+        std::vector<uint32_t> triangles;
     };
 
 
@@ -45,6 +61,35 @@ namespace geomap {
         double y = latRad / (pi / 2.0);
 
         return { x, y };
+    }
+
+    // Maidenhead 6-character grid square (e.g. "JN78dq") for the given
+    // coordinates. Used by ham operators as a compact location identifier.
+    // Returns the empty string if the coordinates are out of range.
+    inline std::string geoToMaidenhead(const GeoCoordinates& geo) {
+        if (geo.latitude < -90.0 || geo.latitude > 90.0 ||
+            geo.longitude < -180.0 || geo.longitude > 180.0) {
+            return {};
+        }
+        double lon = geo.longitude + 180.0;  // 0..360
+        double lat = geo.latitude  + 90.0;   // 0..180
+
+        const int lonField = std::min(17, (int)(lon / 20.0));
+        const int latField = std::min(17, (int)(lat / 10.0));
+        const int lonSquare = (int)((lon - lonField * 20.0) / 2.0);
+        const int latSquare = (int)(lat - latField * 10.0);
+        const int lonSub = (int)((lon - lonField * 20.0 - lonSquare * 2.0) * 12.0);
+        const int latSub = (int)((lat - latField * 10.0 - latSquare * 1.0) * 24.0);
+
+        char buf[7];
+        std::snprintf(buf, sizeof buf, "%c%c%d%d%c%c",
+                      'A' + lonField,
+                      'A' + latField,
+                      lonSquare,
+                      latSquare,
+                      'a' + lonSub,
+                      'a' + latSub);
+        return std::string(buf);
     }
 
 

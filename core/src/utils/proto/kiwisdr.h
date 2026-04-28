@@ -1,19 +1,27 @@
 #pragma once
 
 #include <dsp/types.h>
-#include <complex>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstdio>
-#include <cstdint>
-#include <thread>
+#include <cmath>
+#include <complex>
 #include <core.h>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
+#include <locale>
+#include <map>
 #include <mutex>
+#include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+#include <json.hpp>
+#include "utils/net.h"
+#include "utils/proto/http.h"
 #include "utils/proto/websock.h"
 #include "utils/url.h"
 
@@ -33,6 +41,36 @@ private:
     char connectionStatus[100] = "Not connected";
     mutable std::mutex connectionStatusLock;
 
+    // Last user-requested tune; remembered so we can re-issue the SET freq
+    // command after the server reports its hardware-converter offset.
+    std::atomic<double> currentFrequency{0.0};
+
+    // Server-reported hardware-converter offset (Hz). Subtracted from the
+    // user-requested frequency before being sent. Updated by MSG/freq_offset.
+    std::atomic<int64_t> serverFrequencyOffset{0};
+
+    // KiwiSDR text-protocol metadata (key=value tokens from MSG frames).
+    // Touched only on the receive thread, so no synchronization needed.
+    std::map<std::string, std::string> keyValues;
+
+public:
+    // AGC configuration; persisted across reconnects and re-sent on
+    // (re)connect or live via setAgc(). Bundled because the six fields
+    // are always read and written as one coherent snapshot — the SET line
+    // sent to the server must reflect a single, consistent setAgc() call.
+    struct AgcSettings {
+        bool enabled = false;       // matches pre-merge default (AGC off)
+        bool hang = false;
+        int  thresholdDb = -100;
+        int  slopeDb = 6;
+        int  decayMs = 1000;
+        int  manualGainDb = 50;
+    };
+
+private:
+    AgcSettings agc;
+    mutable std::mutex agcMutex;
+
 public:
     Clock::time_point lastPing;
     std::atomic<bool> running{false};
@@ -41,6 +79,11 @@ public:
 
     std::function<void()> onConnected = []() {};
     std::function<void()> onDisconnected = []() {};
+    // Fired on hard failures (handshake, connect, /VER lookup) — separate
+    // from onDisconnected so a tester or UI can distinguish "never came up"
+    // from "came up and then went away". The wsClient still fires
+    // onDisconnected too, so handlers don't need to subscribe to both.
+    std::function<void(const std::string&)> onError = [](const std::string&) {};
     std::vector<std::complex<float>> iqData;
     std::mutex iqDataLock;
     std::thread looperThread;
@@ -92,9 +135,9 @@ public:
             wsClient.sendString("SET auth t=kiwi p=#");
             wsClient.sendString("SET AR OK in=" + std::to_string(IQDATA_FREQUENCY) + " out=48000");
             //            x.sendString("SET mod=am low_cut=-4900 high_cut=4900 freq=119604.33");
-            wsClient.sendString("SERVER DE CLIENT sdr++brown SND");
+            wsClient.sendString("SERVER DE CLIENT sdr++iak SND");
             wsClient.sendString("SET compression=0");
-            wsClient.sendString("SET agc=0 hang=0 thresh=-100 slope=6 decay=1000 manGain=50");
+            sendAgcLine();
             connected = true;
             if (this->onConnected) {
                 onConnected();
@@ -112,7 +155,7 @@ public:
                 start = msg.substr(0, 3);
             }
             if (start == "MSG") {
-//                flog::info("=> BIN/MSG: {} text: {}", (int64_t)msg.size(), msg);
+                parseMsgFrame(msg);
             }
             else if (start == "SND") {
                 if ((outCount++) % 50 == 0) {
@@ -199,19 +242,157 @@ public:
 
 
     void tune(double freq, Modulation mod) {
+        currentFrequency.store(freq);
+        currentModulation.store(mod);
+        sendTuneCommand(freq, mod);
+    }
+
+    // Apply new AGC settings. Stored regardless of connection state (so the
+    // values persist across reconnects); sent to the server immediately if
+    // currently connected. Out-of-range numeric inputs are clamped.
+    void setAgc(AgcSettings s) {
+        s.thresholdDb  = std::clamp(s.thresholdDb,  -130, 0);
+        s.slopeDb      = std::clamp(s.slopeDb,      0, 10);
+        s.decayMs      = std::clamp(s.decayMs,      20, 5000);
+        s.manualGainDb = std::clamp(s.manualGainDb, 0, 120);
+        {
+            std::lock_guard<std::mutex> lock(agcMutex);
+            agc = s;
+        }
+        if (connected) {
+            sendAgcLine();
+        }
+    }
+
+    // Coherent snapshot of the current AGC settings.
+    AgcSettings getAgc() const {
+        std::lock_guard<std::mutex> lock(agcMutex);
+        return agc;
+    }
+
+private:
+    // Build the SET freq command, applying the server-reported hardware
+    // offset. Used both by tune() and by the freq_offset MSG handler when it
+    // re-issues the last user-requested tune.
+    void sendTuneCommand(double freq, Modulation mod) {
+        const double serverFreq = freq - static_cast<double>(serverFrequencyOffset.load());
         char buf[1024];
         switch (mod) {
         case Modulation::TUNE_IQ:
-            currentModulation.store(mod);
-            snprintf(buf, sizeof buf, "SET mod=iq low_cut=-7000 high_cut=7000 freq=%0.3f", freq / 1000.0);
+            snprintf(buf, sizeof buf, "SET mod=iq low_cut=-7000 high_cut=7000 freq=%0.3f", serverFreq / 1000.0);
             break;
         case Modulation::TUNE_REAL:
-            currentModulation.store(mod);
-            snprintf(buf, sizeof(buf), "SET mod=usb low_cut=0 high_cut=8000 freq=%0.3f", (freq - 3000) / 1000.0);
+            snprintf(buf, sizeof buf, "SET mod=usb low_cut=0 high_cut=8000 freq=%0.3f", (serverFreq - 3000) / 1000.0);
             break;
         }
         wsClient.sendString(buf);
     }
+
+    void sendAgcLine() {
+        // Take a snapshot under the mutex so the SET line on the wire
+        // always reflects a single, coherent setAgc() — never a mix of
+        // before/after values from an in-flight update on another thread.
+        AgcSettings snap = getAgc();
+        char buf[256];
+        snprintf(buf, sizeof buf, "SET agc=%d hang=%d thresh=%d slope=%d decay=%d manGain=%d",
+                 snap.enabled ? 1 : 0,
+                 snap.hang ? 1 : 0,
+                 snap.thresholdDb,
+                 snap.slopeDb,
+                 snap.decayMs,
+                 snap.manualGainDb);
+        wsClient.sendString(buf);
+    }
+
+    // Tokenize a "MSG key1=v1 key2=v2 ..." text frame from the binary channel
+    // and dispatch each pair through onKeyValue. Values are URL-encoded.
+    void parseMsgFrame(const std::string& msg) {
+        std::istringstream iss(msg);
+        std::string token;
+        iss >> token;  // consume the "MSG" prefix
+        while (iss >> token) {
+            const auto eq = token.find('=');
+            if (eq == std::string::npos) continue;
+            onKeyValue(token.substr(0, eq), url::decode(token.substr(eq + 1)));
+        }
+    }
+
+    void onKeyValue(const std::string& key, const std::string& value) {
+        auto it = keyValues.find(key);
+        if (it != keyValues.end() && it->second == value) {
+            return;
+        }
+        keyValues[key] = value;
+        if (key == "freq_offset") {
+            serverFrequencyOffset.store(parseKhzToHz(value));
+            // Re-issue the last user-requested tune so the displayed
+            // frequency stays correct once the offset is known. Skip if
+            // no tune has happened yet (currentFrequency still default).
+            const double last = currentFrequency.load();
+            if (last != 0.0) {
+                sendTuneCommand(last, currentModulation.load());
+            }
+        }
+    }
+
+    static int64_t parseKhzToHz(const std::string& value) {
+        // KiwiSDR reports frequencies in kHz with up to 3 decimal places
+        // (1 Hz precision). Use the classic locale to avoid surprises with
+        // comma-as-decimal locales.
+        std::istringstream iss(value);
+        iss.imbue(std::locale::classic());
+        double khz = 0.0;
+        iss >> khz;
+        if (!iss) return 0;
+        return static_cast<int64_t>(std::llround(khz * 1000.0));
+    }
+
+    // Synchronously GET http://host:port/VER and return its 'ts' field.
+    // KiwiSDR uses this value in the websocket path (/kiwi/<ts>/SND); some
+    // servers reject paths whose timestamp drifts too far from their own
+    // clock. Falls back to the local epoch ms if the fetch or parse fails —
+    // local-clock ms is still unique enough for session disambiguation.
+    uint64_t fetchServerTimestamp(const std::string& host, int port) {
+        using namespace std::chrono;
+        const uint64_t fallback = static_cast<uint64_t>(
+            duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+        try {
+            auto sock = net::connect(host, port);
+            net::http::Client client(sock);
+            net::http::RequestHeader rqhdr(net::http::METHOD_GET, "/VER", host);
+            client.sendRequestHeader(rqhdr);
+            net::http::ResponseHeader rshdr;
+            client.recvResponseHeader(rshdr, 5000);
+            std::string body;
+            std::vector<uint8_t> buf(1024);
+            while (true) {
+                int n = sock->recv(buf.data(), buf.size());
+                if (n < 1) break;
+                body.append(reinterpret_cast<const char*>(buf.data()), n);
+                if (body.size() > 64 * 1024) break;   // sanity cap; /VER is tiny
+            }
+            sock->close();
+            auto j = nlohmann::json::parse(body, nullptr, /*allow_exceptions=*/false);
+            if (!j.is_discarded() && j.contains("ts")) {
+                const auto& ts = j["ts"];
+                if (ts.is_number_unsigned()) {
+                    return ts.get<uint64_t>();
+                }
+                if (ts.is_string()) {
+                    try { return std::stoull(ts.get<std::string>()); } catch (...) {}
+                }
+            }
+        }
+        catch (const std::exception& e) {
+            flog::warn("KiwiSDRClient: /VER fetch failed: {}", e.what());
+        }
+        catch (...) {
+            flog::warn("KiwiSDRClient: /VER fetch failed: unknown");
+        }
+        return fallback;
+    }
+
+public:
 
     void stop() {
         if (running.load() || looperThread.joinable()) {
@@ -244,9 +425,8 @@ public:
                 if (!parsed) {
                     throw std::runtime_error("KiwiSDRClient: malformed host:port: " + hostPort);
                 }
-                using namespace std::chrono;
-                auto epochMs = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-                wsClient.connectAndReceiveLoop(parsed->host, parsed->port, "/kiwi/" + std::to_string(epochMs) + "/SND");
+                const uint64_t ts = fetchServerTimestamp(parsed->host, parsed->port);
+                wsClient.connectAndReceiveLoop(parsed->host, parsed->port, "/kiwi/" + std::to_string(ts) + "/SND");
                 flog::info("x.connectAndReceiveLoop exited.");
                 setConnectionStatus("Disconnected");
                 connected = false;
@@ -259,6 +439,7 @@ public:
                 setConnectionStatus(status);
                 connected = false;
                 running = false;
+                onError(e.what());
             }
         });
     }

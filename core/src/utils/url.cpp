@@ -1,8 +1,33 @@
 #include "url.h"
 
+#include <cctype>
+#include <cstdlib>
+
 namespace url {
 
     static const std::string HTTP_SCHEME = "http://";
+
+    std::string decode(const std::string& in) {
+        std::string out;
+        out.reserve(in.size());
+        for (size_t i = 0; i < in.size(); i++) {
+            const char c = in[i];
+            if (c == '%' && i + 2 < in.size()
+                && std::isxdigit(static_cast<unsigned char>(in[i + 1]))
+                && std::isxdigit(static_cast<unsigned char>(in[i + 2]))) {
+                const char hex[3] = { in[i + 1], in[i + 2], 0 };
+                out.push_back(static_cast<char>(std::strtol(hex, nullptr, 16)));
+                i += 2;
+            }
+            else if (c == '+') {
+                out.push_back(' ');
+            }
+            else {
+                out.push_back(c);
+            }
+        }
+        return out;
+    }
 
     std::optional<HttpHostPort> parseHttpHostPort(const std::string& url) {
         if (url.compare(0, HTTP_SCHEME.size(), HTTP_SCHEME) != 0) {

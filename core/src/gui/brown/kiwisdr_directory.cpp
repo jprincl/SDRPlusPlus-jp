@@ -124,13 +124,23 @@ namespace {
 
         ServerEntry e;
         e.gps = geomap::geoToCartesian(geo).toImVec2();
+        e.qth = geomap::geoToMaidenhead(geo);
         e.name = entry["name"].get<std::string>();
         e.loc = entry["loc"].get<std::string>();
         e.url = entry["url"].get<std::string>();
         if (entry.contains("antenna")) {
             e.antenna = entry["antenna"].get<std::string>();
         }
+        if (entry.contains("sdr_hw")) {
+            e.sdrHardware = entry["sdr_hw"].get<std::string>();
+        }
+        if (entry.contains("sw_version")) {
+            e.swVersion = entry["sw_version"].get<std::string>();
+        }
         if (entry.contains("bands")) {
+            // Best-effort: a malformed bands string is logged but does not
+            // cause the whole entry to be dropped — the server can still
+            // appear on the map without a usable frequency-band hint.
             const std::string bands_str = entry["bands"].get<std::string>();
             std::stringstream bands(bands_str);
             bands.imbue(std::locale::classic());
@@ -138,11 +148,12 @@ namespace {
             char separator = '\0';
             bands >> band.startHz >> separator >> band.endHz;
             bands >> std::ws;
-            if (!bands.eof() || separator != '-' || band.startHz > band.endHz) {
-                flog::warn("Parsing bands failed: \"{}\"", bands_str);
-                return std::nullopt;
+            if (bands.eof() && separator == '-' && band.startHz <= band.endHz) {    
+                e.band = band;
             }
-            e.band = band;
+            else {
+                flog::warn("Parsing bands failed: \"{}\"", bands_str);
+            }
         }
         sscanf(entry["snr"].get<std::string>().c_str(), "%f,%f", &e.maxSnr, &e.secondSnr);
         e.users = atoi(entry["users"].get<std::string>().c_str());

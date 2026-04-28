@@ -22,6 +22,19 @@ namespace {
         return ImColor(0.3f, 0.3f, 0.3f);
     }
 
+    bool shouldUseFullscreenPopup(ImVec2 displaySize) {
+        const float fontSize = ImGui::GetFontSize();
+        return displaySize.x < fontSize * 56.0f || displaySize.y < fontSize * 36.0f;
+    }
+
+    ImVec2 desktopPopupMinSize(ImVec2 displaySize) {
+        const float fontSize = ImGui::GetFontSize();
+        return ImVec2(
+            ImMin(displaySize.x, ImMax(320.0f, fontSize * 24.0f)),
+            ImMin(displaySize.y, ImMax(240.0f, fontSize * 18.0f))
+        );
+    }
+
 }
 
 
@@ -37,14 +50,43 @@ void KiwiSDRMapSelector::openPopup() {
 }
 
 void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const std::string&)> onSelected) {
-    ImGui::SetNextWindowPos(ImGui::GetIO().DisplaySize * 0.125f);
-    if (!ImGui::BeginPopupModal((configPrefix + ": The KiwiSDR Map").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+#ifdef __ANDROID__
+    const bool desktopPopup = false;
+    const bool fullscreenPopup = shouldUseFullscreenPopup(displaySize);
+#else
+    const bool desktopPopup = true;
+    const bool fullscreenPopup = false;
+#endif
+    const std::string popupTitle = configPrefix + ": The KiwiSDR Map";
+    const bool lockedFullscreenPopup = fullscreenPopup || (desktopPopup && mapPopupMaximized);
+    const ImVec2 popupPos = lockedFullscreenPopup ? ImVec2(0.0f, 0.0f) : displaySize * 0.125f;
+    const ImVec2 popupSize = lockedFullscreenPopup ? displaySize : displaySize * 0.75f;
+    ImGuiWindowFlags popupFlags = 0;
+    if (!desktopPopup) {
+        popupFlags |= ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings;
+    }
+    if (lockedFullscreenPopup) {
+        popupFlags |= ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    }
+    if (fullscreenPopup) {
+        popupFlags |= ImGuiWindowFlags_NoTitleBar;
+    }
+
+    if (desktopPopup && !mapPopupMaximized) {
+        ImGui::SetNextWindowSizeConstraints(desktopPopupMinSize(displaySize), displaySize);
+    }
+
+    const ImGuiCond popupPlacementCond = lockedFullscreenPopup ? ImGuiCond_Always : (desktopPopup ? ImGuiCond_FirstUseEver : ImGuiCond_Always);
+    ImGui::SetNextWindowPos(popupPos, popupPlacementCond);
+    ImGui::SetNextWindowSize(popupSize, popupPlacementCond);
+    if (!ImGui::BeginPopupModal(popupTitle.c_str(), nullptr, popupFlags)) {
         return;
     }
 
-    const ImVec2 ws = ImGui::GetIO().DisplaySize * 0.75f;
-    ImGui::SetWindowSize(ws);
-    ImGui::BeginChild("##geomap-kiwisdr", ws - ImVec2(0, 50), true, 0);
+    const ImVec2 contentSize = ImGui::GetContentRegionAvail();
+    const float footerHeight = getFingerButtonHeight() + ImGui::GetStyle().ItemSpacing.y;
+    ImGui::BeginChild("##geomap-kiwisdr", ImVec2(contentSize.x, ImMax(1.0f, contentSize.y - footerHeight)), true, 0);
     const char* filterButtonLabel = showExtApiOnly ? "Show all stations" : "Show EXT API only";
     geoMap.draw(filterButtonLabel, [this]() {
         showExtApiOnly = !showExtApiOnly;
@@ -87,6 +129,26 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
 
     ImGui::EndChild();
 
+    if (desktopPopup) {
+        if (doFingerButton(mapPopupMaximized ? "Restore" : "Maximize")) {
+            if (mapPopupMaximized) {
+                mapPopupMaximized = false;
+                if (mapPopupRestoreValid) {
+                    ImGui::SetWindowPos(mapPopupRestorePos, ImGuiCond_Always);
+                    ImGui::SetWindowSize(mapPopupRestoreSize, ImGuiCond_Always);
+                }
+            }
+            else {
+                mapPopupRestorePos = ImGui::GetWindowPos();
+                mapPopupRestoreSize = ImGui::GetWindowSize();
+                mapPopupRestoreValid = true;
+                mapPopupMaximized = true;
+                ImGui::SetWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+                ImGui::SetWindowSize(displaySize, ImGuiCond_Always);
+            }
+        }
+        ImGui::SameLine();
+    }
     if (doFingerButton("Cancel")) {
         ImGui::CloseCurrentPopup();
     }
@@ -154,23 +216,35 @@ void KiwiSDRMapSelector::handleHitTest() {
 void KiwiSDRMapSelector::drawSelectionPanel() {
     for (const auto& s : servers) {
         if (!s.selected || !shouldShowServer(s)) continue;
-        ImGui::Text("%s", s.name.c_str());
-        ImGui::Text("%s", s.loc.c_str());
+        // doOverlayText puts a translucent dark backdrop behind each label
+        // so the text stays legible over the colored country fills.
+        doOverlayText("%s", s.name.c_str());
+        doOverlayText("%s", s.loc.c_str());
         if (s.band) {
-            const std::string bandText = "Band: " + std::to_string(s.band->startHz) + "-" + std::to_string(s.band->endHz) + " Hz";
-            ImGui::Text("%s", bandText.c_str());
+            doOverlayText("Band: %llu-%llu Hz",
+                          (unsigned long long)s.band->startHz,
+                          (unsigned long long)s.band->endHz);
         }
         if (!s.antenna.empty()) {
-            ImGui::Text("ANT: %s", s.antenna.c_str());
+            doOverlayText("ANT: %s", s.antenna.c_str());
+        }
+        if (!s.sdrHardware.empty()) {
+            doOverlayText("HW: %s", s.sdrHardware.c_str());
+        }
+        if (!s.swVersion.empty()) {
+            doOverlayText("VER: %s", s.swVersion.c_str());
+        }
+        if (!s.qth.empty()) {
+            doOverlayText("QTH: %s", s.qth.c_str());
         }
         if (s.maxSnr > 0) {
-            ImGui::Text("SNR: %d", (int)s.maxSnr);
+            doOverlayText("SNR: %d", (int)s.maxSnr);
         }
         if (s.usersmax > 0) {
-            ImGui::Text("USR: %d/%d", s.users, s.usersmax);
+            doOverlayText("USR: %d/%d", s.users, s.usersmax);
         }
-        ImGui::Text("EXT API: %d", s.extApi);
-        ImGui::Text("URL: %s", s.url.c_str());
+        doOverlayText("EXT API: %d", s.extApi);
+        doOverlayText("URL: %s", s.url.c_str());
 
         ImGui::BeginDisabled(tester.isInProgress());
         const bool doTest = doFingerButton("Test server");
