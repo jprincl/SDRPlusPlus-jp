@@ -392,6 +392,16 @@ private:
         return fallback;
     }
 
+    void resetSessionState() {
+        {
+            std::lock_guard<std::mutex> lock(iqDataLock);
+            iqData.clear();
+        }
+        keyValues.clear();
+        times.clear();
+        serverFrequencyOffset.store(0);
+    }
+
 public:
 
     void stop() {
@@ -415,6 +425,7 @@ public:
             looperThread.join();
         }
         setConnectionStatus("Connecting..");
+        resetSessionState();
         running = true;
         connected = false;
         wsClient.stopped = false;

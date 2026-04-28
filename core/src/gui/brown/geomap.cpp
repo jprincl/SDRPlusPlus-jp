@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <map>
 #include <random>
+#include <utility>
 #include <imgui/imgui_internal.h>
 
 // earcut adapter so the triangulator can read x/y from CartesianCoordinates.
@@ -31,6 +32,7 @@ namespace geomap {
     nlohmann::json geoJSON;
     // [country][polygon] → border + triangles. Triangulated once at load.
     std::vector<std::vector<Polygon>> countriesGeo;
+    std::vector<std::string> countryNames;
 
     // Day/night terminator overlay. Recomputed roughly once per minute from
     // the current UTC time; rendered as a translucent dark fill over the
@@ -143,6 +145,24 @@ namespace geomap {
         return geoJSON;
     }
 
+    static bool pointInPolygon(const CartesianCoordinates& p, const std::vector<CartesianCoordinates>& polygon) {
+        bool inside = false;
+        const size_t count = polygon.size();
+        if (count < 3) {
+            return false;
+        }
+        for (size_t i = 0, j = count - 1; i < count; j = i++) {
+            const auto& a = polygon[i];
+            const auto& b = polygon[j];
+            const bool crosses = ((a.y > p.y) != (b.y > p.y)) &&
+                (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x);
+            if (crosses) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
     void maybeInit() {
         if (geoJSON.empty()) {
             std::string resDir = core::configManager.conf["resourcesDirectory"];
@@ -152,6 +172,11 @@ namespace geomap {
 
             for (const auto& feature : geoJSON["features"]) {
                 countriesGeo.emplace_back();
+                std::string countryName;
+                if (feature.contains("properties") && feature["properties"].contains("name")) {
+                    countryName = feature["properties"]["name"].get<std::string>();
+                }
+                countryNames.push_back(std::move(countryName));
 
                 for (const auto& coordinates : feature["geometry"]["coordinates"]) {
                     countriesGeo.back().emplace_back();
@@ -231,16 +256,35 @@ namespace geomap {
             auto y1 = static_cast<float>(windowHeight - (c.y * w2.y + w2.y));
             return ImVec2(x1, y1) + translate * w2 * scale;
         };
+        auto toMap = [=](ImVec2 p) {
+            return CartesianCoordinates{
+                (p.x - w2.x) / (w2.x * scale.x) - translate.x,
+                (w2.y - p.y) / (w2.y * scale.y) + translate.y
+            };
+        };
         recentMapToScreen = toView;
 
         if (windowWidth == 0) {
             return;
         }
         int count = 0;
+        const bool mapHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        const CartesianCoordinates mouseMapPos = toMap(ImGui::GetMousePos() - recentCanvasPos);
+        const std::string* hoveredCountry = nullptr;
 
         drawList->AddRectFilled(recentCanvasPos + ImVec2(0, 0), recentCanvasPos + ImGui::GetContentRegionAvail(), ImColor(0, 0, 0));
 
-        for (auto& country : countriesGeo) {
+        // Disable AA fill while triangles are rasterized: each
+        // AddTriangleFilled() with AA on emits a fringe along its edges,
+        // and at every interior triangulation edge the two adjacent
+        // triangles' fringes overlap, double-blending the translucent
+        // fill into a visible seam. AA lines stay enabled, so AddLine()
+        // outlines below remain smooth.
+        const auto savedDrawFlags = drawList->Flags;
+        drawList->Flags &= ~ImDrawListFlags_AntiAliasedFill;
+
+        for (size_t countryIndex = 0; countryIndex < countriesGeo.size(); countryIndex++) {
+            auto& country = countriesGeo[countryIndex];
             const ImColor lineColor = ImColor(colors[(++count) % colors.size()]);
             // Fill is the same hue as the outline but heavily diluted so the
             // map stays readable under a busy marker layer.
@@ -260,6 +304,10 @@ namespace geomap {
                         fillCol);
                 }
                 if (polygon.border.size() > 1) {
+                    if (mapHovered && !hoveredCountry && countryIndex < countryNames.size() &&
+                        !countryNames[countryIndex].empty() && pointInPolygon(mouseMapPos, polygon.border)) {
+                        hoveredCountry = &countryNames[countryIndex];
+                    }
                     for (size_t i = 0; i + 1 < polygon.border.size(); i++) {
                         drawList->AddLine(
                             recentCanvasPos + toView(polygon.border[i].toImVec2()),
@@ -283,6 +331,13 @@ namespace geomap {
                 recentCanvasPos + toView(b.toImVec2()),
                 recentCanvasPos + toView(c.toImVec2()),
                 nightFill);
+        }
+        drawList->Flags = savedDrawFlags;
+
+        if (hoveredCountry) {
+            const GeoCoordinates geoPos = cartesianToGeo(mouseMapPos);
+            const std::string tooltip = *hoveredCountry + "\n" + geoToMaidenhead(geoPos) + "\n" + geoPos.toString();
+            ImGui::SetTooltip("%s", tooltip.c_str());
         }
 
         if (ImGui::IsMouseDown(0)) {

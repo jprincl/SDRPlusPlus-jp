@@ -31,6 +31,12 @@ namespace geomap {
     struct GeoCoordinates {
         double latitude;
         double longitude;
+
+        std::string toString() const {
+            char buf[128];
+            std::snprintf(buf, sizeof buf, "Lat: %.6f, Lon: %.6f", latitude, longitude);
+            return std::string(buf);
+        }
     };
 
     struct CartesianCoordinates {
@@ -61,6 +67,10 @@ namespace geomap {
         double y = latRad / (pi / 2.0);
 
         return { x, y };
+    }
+
+    inline GeoCoordinates cartesianToGeo(const CartesianCoordinates& cart) {
+        return { radToDeg(cart.y * (pi / 2.0)), radToDeg(cart.x * pi) };
     }
 
     // Maidenhead 6-character grid square (e.g. "JN78dq") for the given

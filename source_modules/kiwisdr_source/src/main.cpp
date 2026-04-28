@@ -309,6 +309,33 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         char streamTime[64];
         strftime(streamTime, sizeof(streamTime), "%Y-%m-%d %H:%M:%S", &tmm);
         SmGui::Text(("Stream pos: " + std::string(streamTime)).c_str());
+
+        KiwiSDRClient::AgcSettings agc = _this->kiwiSdrClient.getAgc();
+        bool agcChanged = false;
+        const std::string agcId = "AGC##_kiwisdr_agc_" + _this->name;
+        agcChanged |= SmGui::Checkbox(agcId.c_str(), &agc.enabled);
+        SmGui::SameLine();
+        const std::string hangId = "Hang##_kiwisdr_agc_hang_" + _this->name;
+        agcChanged |= SmGui::Checkbox(hangId.c_str(), &agc.hang);
+
+        auto slider = [&](const char* label, const char* id, int* value, int min, int max, SmGui::FormatString format) {
+            SmGui::LeftLabel(label);
+            SmGui::FillWidth();
+            const std::string sliderId = std::string(id) + _this->name;
+            return SmGui::SliderInt(sliderId.c_str(), value, min, max, format);
+        };
+
+        if (agc.enabled) {
+            agcChanged |= slider("Threshold", "##_kiwisdr_agc_threshold_", &agc.thresholdDb, -130, 0, SmGui::FMT_STR_INT_DB);
+            agcChanged |= slider("Slope", "##_kiwisdr_agc_slope_", &agc.slopeDb, 0, 10, SmGui::FMT_STR_INT_DB);
+            agcChanged |= slider("Decay", "##_kiwisdr_agc_decay_", &agc.decayMs, 20, 5000, SmGui::FMT_STR_INT_DEFAULT);
+        }
+        else {
+            agcChanged |= slider("Gain", "##_kiwisdr_agc_gain_", &agc.manualGainDb, 0, 120, SmGui::FMT_STR_INT_DB);
+        }
+        if (agcChanged) {
+            _this->kiwiSdrClient.setAgc(agc);
+        }
     }
 
 
