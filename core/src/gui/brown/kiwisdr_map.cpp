@@ -6,6 +6,7 @@
 #include "kiwisdr_map.h"
 
 #include <cmath>
+#include <sstream>
 
 #include <core.h>
 #include <imgui.h>
@@ -96,6 +97,16 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
         geoMap.scaleTranslateDirty = false;
     }
 
+    // Marker rendering toggle. Label shows the action — clicking switches
+    // to the other mode.
+    ImGui::SameLine();
+    const char* markerStyleLabel = (markerStyle == MarkerStyle::StatusColored)
+        ? "Hide full servers" : "Show full as red";
+    if (doFingerButton(markerStyleLabel)) {
+        markerStyle = (markerStyle == MarkerStyle::StatusColored)
+            ? MarkerStyle::HideFull : MarkerStyle::StatusColored;
+    }
+
     directory.requestRefresh();
     if (auto fresh = directory.takeIfReady()) {
         servers = std::move(*fresh);
@@ -170,12 +181,38 @@ bool KiwiSDRMapSelector::shouldShowServer(const ServerEntry& server) const {
 void KiwiSDRMapSelector::drawMarkers() {
     const auto sz = style::baseFont->FontSize;
     ImDrawList* drawList = ImGui::GetWindowDrawList();
+#ifndef __ANDROID__
+    // Hover-tooltip is desktop-only: on a touch screen the cursor only
+    // exists while a finger is down, the finger occludes the tooltip,
+    // and the tap is already routed to the click-to-select handler.
+    // Touch users discover server details through the selection panel.
+    const bool windowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    const ImVec2 mousePos = ImGui::GetMousePos();
+    const ServerEntry* hovered = nullptr;
+#endif
+
     for (const auto& s : servers) {
-        if (!shouldShowServer(s) || s.users >= s.usersmax) continue;
+        if (!shouldShowServer(s)) continue;
+        const bool isFull = s.users >= s.usersmax;
+        if (markerStyle == MarkerStyle::HideFull && isFull) continue;
+
+        // Fill: SNR-based by default; in StatusColored mode, extended-freq
+        // servers (>32 MHz, i.e. usable for VHF/FM) are violet, and full
+        // servers are red — overrides applied in priority order.
+        ImColor fill = markerFillForSnr(s.maxSnr);
+        if (markerStyle == MarkerStyle::StatusColored) {
+            if (s.band && s.band->endHz > 32000000ull) {
+                fill = ImColor(0.6f, 0.4f, 1.0f);
+            }
+            if (isFull) {
+                fill = ImColor(0.8f, 0.0f, 0.0f);
+            }
+        }
+
         const auto dest = geoMap.recentMapToScreen(s.gps);
         const auto p0 = geoMap.recentCanvasPos + dest - ImVec2(sz / 2, sz / 2);
         const auto p1 = geoMap.recentCanvasPos + dest + ImVec2(sz / 2, sz / 2);
-        drawList->AddRectFilled(p0, p1, markerFillForSnr(s.maxSnr), sz / 4.0f);
+        drawList->AddRectFilled(p0, p1, fill, sz / 4.0f);
         if (s.selected) {
             drawList->AddRect(p0, p1, ImColor(1.0f, 1.0f, 0.0f), sz / 4.0f);
             drawList->AddRect(p0 + ImVec2(1, 1), p1 - ImVec2(1, 1), ImColor(1.0f, 1.0f, 0.0f), sz / 4.0f);
@@ -183,7 +220,29 @@ void KiwiSDRMapSelector::drawMarkers() {
         else {
             drawList->AddRect(p0, p1, ImColor(0.0f, 0.0f, 0.0f), sz / 4.0f);
         }
+#ifndef __ANDROID__
+        // Track the topmost (last-drawn) marker under the cursor so the
+        // tooltip below picks the same server the click handler would.
+        if (windowHovered &&
+            mousePos.x >= p0.x && mousePos.x <= p1.x &&
+            mousePos.y >= p0.y && mousePos.y <= p1.y) {
+            hovered = &s;
+        }
+#endif
     }
+
+#ifndef __ANDROID__
+    if (hovered) {
+        // Brief tooltip — full details are in the selection panel after click.
+        std::ostringstream ss;
+        ss << hovered->name << "\n"
+           << "Loc: " << hovered->loc;
+        if (hovered->band) {
+            ss << "\nBand: " << hovered->band->startHz << "-" << hovered->band->endHz << " Hz";
+        }
+        ImGui::SetTooltip("%s", ss.str().c_str());
+    }
+#endif
 }
 
 void KiwiSDRMapSelector::handleHitTest() {

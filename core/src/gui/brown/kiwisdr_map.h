@@ -10,10 +10,20 @@
 class ConfigManager;
 
 struct KiwiSDRMapSelector {
+    // How server markers are rendered on the map.
+    enum class MarkerStyle {
+        HideFull,        // original: full servers hidden, fill from SNR
+        StatusColored,   // full = red, extended freq range = violet, else SNR
+    };
+
     KiwiSDRMapSelector(const std::string& root, ConfigManager* config, const std::string& configPrefix);
 
     void openPopup();
     void drawPopup(std::function<void(const std::string&, const std::string&)> onSelected);
+
+    // Runtime-toggleable. Default keeps the original behavior so existing
+    // users see no surprise; a popup button cycles between styles.
+    MarkerStyle markerStyle = MarkerStyle::HideFull;
 
 private:
     bool shouldShowServer(const ServerEntry& server) const;
