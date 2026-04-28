@@ -21,7 +21,7 @@ namespace hrfreq {
         else if (freq >= 1e3) {
             freq /= 1e3;
             maxDecimals = 3;
-            suffix = "KHz";
+            suffix = "kHz";
         }
 
         // Convert to string (TODO: Not sure if limiting the decimals rounds)

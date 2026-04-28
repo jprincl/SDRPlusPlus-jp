@@ -9,7 +9,7 @@ namespace vor {
     public:
         /**
          * Create an instance of a VOR decoder.
-         * @param in Input IQ stream at 22 KHz sampling rate.
+         * @param in Input IQ stream at 22 kHz sampling rate.
          * @param integrationTime Integration time of the bearing data in seconds.
         */
         Decoder(dsp::stream<dsp::complex_t>* in, double integrationTime);
@@ -19,7 +19,7 @@ namespace vor {
 
         /**
          * Set the input stream.
-         * @param in Input IQ stream at 22 KHz sampling rate.
+         * @param in Input IQ stream at 22 kHz sampling rate.
         */
         void setInput(dsp::stream<dsp::complex_t>* in);
 
