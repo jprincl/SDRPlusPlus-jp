@@ -89,9 +89,21 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     const float footerHeight = getFingerButtonHeight() + ImGui::GetStyle().ItemSpacing.y;
     ImGui::BeginChild("##geomap-kiwisdr", ImVec2(contentSize.x, ImMax(1.0f, contentSize.y - footerHeight)), true, 0);
     const char* filterButtonLabel = showExtApiOnly ? "Show all stations" : "Show EXT API only";
-    geoMap.draw(filterButtonLabel, [this]() {
-        showExtApiOnly = !showExtApiOnly;
-    });
+    // Bump button alpha for the whole map control row (Zoom/Reset/filter
+    // submitted inside geoMap.draw, plus the "Hide full" button on the
+    // same line below) — those buttons sit over the map and the default
+    // theme alpha makes them hard to read against the country fills.
+    pushOverlayButtonStyle();
+    // Markers go through geoMap.draw's overlay slot so they paint above
+    // the country fills but below the Zoom/Reset/filter button row in
+    // the same child window. Drawing them after geoMap.draw returns
+    // would put marker rectangles on top of the buttons.
+    geoMap.draw(
+        filterButtonLabel,
+        [this]() { showExtApiOnly = !showExtApiOnly; },
+        [this]() {
+            if (serversReady) drawMarkers();
+        });
     if (geoMap.scaleTranslateDirty) {
         geoMap.saveTo(*config, configPrefix.c_str());
         geoMap.scaleTranslateDirty = false;
@@ -106,6 +118,7 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
         markerStyle = (markerStyle == MarkerStyle::StatusColored)
             ? MarkerStyle::HideFull : MarkerStyle::StatusColored;
     }
+    popOverlayButtonStyle();
 
     directory.requestRefresh();
     if (auto fresh = directory.takeIfReady()) {
@@ -124,7 +137,9 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     }
     else {
         ImGui::Text("Loaded servers list");
-        drawMarkers();
+        // Markers are drawn from inside geoMap.draw via the overlay slot
+        // so they sit under the button row. handleHitTest is input-only
+        // and runs here.
         handleHitTest();
         drawSelectionPanel();
 
@@ -186,7 +201,12 @@ void KiwiSDRMapSelector::drawMarkers() {
     // exists while a finger is down, the finger occludes the tooltip,
     // and the tap is already routed to the click-to-select handler.
     // Touch users discover server details through the selection panel.
-    const bool windowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    //
+    // Gate: cursor in this child window AND not over a registered widget.
+    // Without the !IsAnyItemHovered() check, the marker tooltip would
+    // show through the Zoom/Reset/filter buttons sitting in the same
+    // child window.
+    const bool windowHovered = ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered();
     const ImVec2 mousePos = ImGui::GetMousePos();
     const ServerEntry* hovered = nullptr;
 #endif
@@ -247,6 +267,16 @@ void KiwiSDRMapSelector::drawMarkers() {
 
 void KiwiSDRMapSelector::handleHitTest() {
     if (!(ImGui::IsMouseClicked(0) && ImGui::GetMouseClickedCount(0) == 1)) return;
+    // IsMouseClicked is a global query — without this gate, clicking the
+    // Zoom/Reset/filter buttons sitting in the same child window would
+    // also pick whatever marker happens to lie under the button rect.
+    // AllowWhenBlockedByActiveItem is required because the geomap's drag
+    // handler (running in geoMap.draw() just before us) takes ActiveID on
+    // this same click frame; without the flag, IsWindowHovered would be
+    // suppressed and we'd never pick anything. The IsAnyItemHovered check
+    // still rejects clicks that landed on a real widget.
+    if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
+        ImGui::IsAnyItemHovered()) return;
     const auto sz = style::baseFont->FontSize;
     const auto clickPos = ImGui::GetMousePos() - geoMap.recentCanvasPos;
     auto radius = sz / 2;

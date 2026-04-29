@@ -48,14 +48,25 @@ namespace geomap {
         }
     };
 
-    // One polygon's border plus its earcut-triangulation indices. Used so
-    // we can render filled country shapes (and the day/night terminator)
-    // instead of bare outlines. `triangles` is empty for polygons too small
-    // (< 3 vertices) or where triangulation failed; in that case only the
-    // outline is rendered. Indices are into `border`, three per triangle.
+    // One polygon (outer ring + optional hole rings) with its earcut
+    // triangulation. `border` is the flat vertex list (outer ring first,
+    // then each hole ring concatenated); `ringStarts` records where each
+    // ring begins, with a final sentinel equal to `border.size()` so a
+    // ring spans `[ringStarts[i], ringStarts[i+1])`. `triangles` indexes
+    // into `border` and excludes hole regions (earcut handles that when
+    // given multiple rings). For the day/night terminator and other
+    // simple shapes there are no holes and `ringStarts == {0, N}`.
+    // `triangles` is empty for degenerate polygons (< 3 outer vertices
+    // or earcut failure); in that case only the outline is rendered.
     struct Polygon {
         std::vector<CartesianCoordinates> border;
+        std::vector<size_t> ringStarts;
         std::vector<uint32_t> triangles;
+        // Axis-aligned bbox of the OUTER ring (holes lie inside it), in
+        // cartesian map space. Cheap reject before point-in-polygon hover
+        // tests. Inverted (min > max) for empty polygons.
+        CartesianCoordinates bbMin{ 1.0, 1.0 };
+        CartesianCoordinates bbMax{ -1.0, -1.0 };
     };
 
 
@@ -115,7 +126,15 @@ namespace geomap {
         std::function <ImVec2(ImVec2)> recentMapToScreen;
         ImVec2 recentCanvasPos;
 
-        void draw(const char* extraButtonLabel = nullptr, std::function<void()> extraButtonAction = {});
+        // `overlayDrawer` is invoked AFTER the map content (background,
+        // countries, terminator) and input handling, but BEFORE the
+        // bottom-row buttons are submitted. Use it to draw map overlays
+        // (markers, route lines, etc.) that should sit above the map but
+        // below the controls — otherwise raw drawList calls submitted
+        // after `draw()` returns would paint on top of the buttons.
+        void draw(const char* extraButtonLabel = nullptr,
+                  std::function<void()> extraButtonAction = {},
+                  std::function<void()> overlayDrawer = {});
         void saveTo(ConfigManager &manager, const char* string);
         void loadFrom(ConfigManager& manager, const char* prefix);
     };

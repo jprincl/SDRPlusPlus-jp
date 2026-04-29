@@ -9,8 +9,6 @@
 #include <utils/flog.h>
 #include <gui/widgets/simple_widgets.h>
 #include <filesystem>
-#include <map>
-#include <random>
 #include <utility>
 #include <imgui/imgui_internal.h>
 
@@ -33,6 +31,9 @@ namespace geomap {
     // [country][polygon] → border + triangles. Triangulated once at load.
     std::vector<std::vector<Polygon>> countriesGeo;
     std::vector<std::string> countryNames;
+    // mapcolor13 index per country (Natural Earth's precomputed graph
+    // coloring — adjacent countries get different indices). 0 if absent.
+    std::vector<int> countryColorIndices;
 
     // Day/night terminator overlay. Recomputed roughly once per minute from
     // the current UTC time; rendered as a translucent dark fill over the
@@ -109,6 +110,8 @@ namespace geomap {
         for (const auto& g : geo) {
             poly.border.emplace_back(geoToCartesian(g));
         }
+        // Single ring, no holes.
+        poly.ringStarts = { 0, poly.border.size() };
         if (poly.border.size() >= 3) {
             std::vector<std::vector<CartesianCoordinates>> rings = { poly.border };
             poly.triangles = mapbox::earcut<uint32_t>(rings);
@@ -145,15 +148,14 @@ namespace geomap {
         return geoJSON;
     }
 
-    static bool pointInPolygon(const CartesianCoordinates& p, const std::vector<CartesianCoordinates>& polygon) {
+    // Span-style ray-casting test so callers can pass any ring (outer or
+    // hole) without copying a sub-vector.
+    static bool pointInPolygon(const CartesianCoordinates& p, const CartesianCoordinates* verts, size_t count) {
+        if (count < 3) return false;
         bool inside = false;
-        const size_t count = polygon.size();
-        if (count < 3) {
-            return false;
-        }
         for (size_t i = 0, j = count - 1; i < count; j = i++) {
-            const auto& a = polygon[i];
-            const auto& b = polygon[j];
+            const auto& a = verts[i];
+            const auto& b = verts[j];
             const bool crosses = ((a.y > p.y) != (b.y > p.y)) &&
                 (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x);
             if (crosses) {
@@ -161,6 +163,22 @@ namespace geomap {
             }
         }
         return inside;
+    }
+
+    // True if `p` is strictly inside the polygon's outer ring AND not
+    // inside any of its holes — i.e. inside the polygon's actual area.
+    static bool pointInPolygonWithHoles(const CartesianCoordinates& p, const Polygon& poly) {
+        if (poly.ringStarts.size() < 2) return false;
+        const auto* base = poly.border.data();
+        const size_t outerStart = poly.ringStarts[0];
+        const size_t outerEnd = poly.ringStarts[1];
+        if (!pointInPolygon(p, base + outerStart, outerEnd - outerStart)) return false;
+        for (size_t r = 1; r + 1 < poly.ringStarts.size(); r++) {
+            const size_t hStart = poly.ringStarts[r];
+            const size_t hEnd = poly.ringStarts[r + 1];
+            if (pointInPolygon(p, base + hStart, hEnd - hStart)) return false;
+        }
+        return true;
     }
 
     void maybeInit() {
@@ -173,72 +191,105 @@ namespace geomap {
             for (const auto& feature : geoJSON["features"]) {
                 countriesGeo.emplace_back();
                 std::string countryName;
-                if (feature.contains("properties") && feature["properties"].contains("name")) {
-                    countryName = feature["properties"]["name"].get<std::string>();
+                int colorIndex = 0;
+                if (feature.contains("properties")) {
+                    const auto& props = feature["properties"];
+                    if (props.contains("name")) {
+                        countryName = props["name"].get<std::string>();
+                    }
+                    if (props.contains("mapcolor13")) {
+                        colorIndex = props["mapcolor13"].get<int>();
+                        if (colorIndex < 0) colorIndex = -colorIndex;
+                    }
                 }
                 countryNames.push_back(std::move(countryName));
+                countryColorIndices.push_back(colorIndex);
 
-                for (const auto& coordinates : feature["geometry"]["coordinates"]) {
-                    countriesGeo.back().emplace_back();
-                    Polygon& dest = countriesGeo.back().back();
-                    for (const auto& coord0 : coordinates) {
-                        if (coord0.is_array() && !coord0.empty() && coord0[0].is_array()) {
-                            // MultiPolygon-style: coord0 is a ring of [lon,lat] pairs
-                            for (const auto& coord1 : coord0) {
-                                double longitude = coord1[0].get<double>();
-                                double latitude = coord1[1].get<double>();
-                                dest.border.emplace_back(geoToCartesian({ latitude, longitude }));
-                            }
-                        }
-                        else if (coord0.is_array() && !coord0.empty() && !coord0[0].is_array() && coord0.size() == 2) {
-                            // Polygon-style: coordinates is the ring directly; iterate the parent
-                            for (const auto& coord1 : coordinates) {
-                                double longitude = coord1[0].get<double>();
-                                double latitude = coord1[1].get<double>();
-                                dest.border.emplace_back(geoToCartesian({ latitude, longitude }));
-                            }
-                            break;
-                        }
-                        else {
-                            break;
+                // Dispatch on GeoJSON geometry type. Polygon coordinates are
+                // [outer_ring, hole_ring…]; MultiPolygon is one nesting deeper:
+                // [polygon, …] where each polygon is itself [outer_ring,
+                // hole_ring…]. Each polygon (with all its rings) becomes one
+                // `Polygon` entry — earcut triangulates outer minus holes.
+                const auto& geometry = feature["geometry"];
+                const std::string type = geometry.contains("type")
+                    ? geometry["type"].get<std::string>() : std::string();
+
+                auto addPolygon = [&](const auto& rings) {
+                    // Build the rings as a nested vector for earcut, then
+                    // flatten into the Polygon's `border` so triangles
+                    // (which are indices into the flat list) point at the
+                    // right vertices.
+                    std::vector<std::vector<CartesianCoordinates>> ringList;
+                    for (const auto& ring : rings) {
+                        ringList.emplace_back();
+                        for (const auto& coord : ring) {
+                            const double longitude = coord[0].get<double>();
+                            const double latitude = coord[1].get<double>();
+                            ringList.back().push_back(geoToCartesian({ latitude, longitude }));
                         }
                     }
-                    // Triangulate the just-built polygon. Earcut wants outer
-                    // ring + optional holes; we don't model holes here, so
-                    // pass a single-element rings list.
-                    if (dest.border.size() >= 3) {
-                        std::vector<std::vector<CartesianCoordinates>> rings = { dest.border };
-                        dest.triangles = mapbox::earcut<uint32_t>(rings);
+                    if (ringList.empty()) return;
+
+                    countriesGeo.back().emplace_back();
+                    Polygon& dest = countriesGeo.back().back();
+                    for (const auto& r : ringList) {
+                        dest.ringStarts.push_back(dest.border.size());
+                        dest.border.insert(dest.border.end(), r.begin(), r.end());
+                    }
+                    dest.ringStarts.push_back(dest.border.size());
+
+                    if (ringList[0].size() >= 3) {
+                        dest.triangles = mapbox::earcut<uint32_t>(ringList);
+                    }
+
+                    // bbox from outer ring; holes lie inside it by definition.
+                    const auto& outer = ringList[0];
+                    if (!outer.empty()) {
+                        dest.bbMin = dest.bbMax = outer.front();
+                        for (const auto& p : outer) {
+                            if (p.x < dest.bbMin.x) dest.bbMin.x = p.x;
+                            if (p.y < dest.bbMin.y) dest.bbMin.y = p.y;
+                            if (p.x > dest.bbMax.x) dest.bbMax.x = p.x;
+                            if (p.y > dest.bbMax.y) dest.bbMax.y = p.y;
+                        }
+                    }
+                };
+
+                if (type == "Polygon") {
+                    addPolygon(geometry["coordinates"]);
+                }
+                else if (type == "MultiPolygon") {
+                    for (const auto& polygon : geometry["coordinates"]) {
+                        addPolygon(polygon);
                     }
                 }
             }
         }
     }
 
-    // Create a color map to store a color for each country
-    std::map<std::string, ImVec4> countryColors;
-
-    ImVec4 randomColor() {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        std::uniform_real_distribution<> dis(0, 1);
-
-        return ImVec4(dis(gen), dis(gen), dis(gen), 1.0f);
-    }
-
-    std::vector<ImVec4> colors = {
-        ImVec4(1.0f, 0.0f, 0.0f, 1.0f),   // Colors.red
-        ImVec4(0.0f, 1.0f, 0.0f, 1.0f),   // Colors.green
-        ImVec4(1.0f, 0.08f, 0.58f, 1.0f), // Colors.pink
-        ImVec4(1.0f, 0.76f, 0.03f, 1.0f), // Colors.amber
-        ImVec4(0.5f, 0.5f, 0.5f, 1.0f),   // Colors.grey
-        ImVec4(0.6f, 0.32f, 0.17f, 1.0f), // Colors.brown
-        ImVec4(1.0f, 0.65f, 0.0f, 1.0f),  // Colors.orange
-        ImVec4(0.56f, 0.93f, 0.56f, 1.0f) // Colors.lightGreen
+    // 13-color palette indexed by Natural Earth's `mapcolor13` property,
+    // a precomputed graph coloring where no two adjacent countries share
+    // a color. Stable across loads — no hue change as data shifts.
+    const std::vector<ImVec4> mapcolor13 = {
+        ImVec4(0.85f, 0.37f, 0.37f, 1.0f),  // 0  red
+        ImVec4(0.37f, 0.85f, 0.37f, 1.0f),  // 1  green
+        ImVec4(0.37f, 0.37f, 0.85f, 1.0f),  // 2  blue
+        ImVec4(0.85f, 0.85f, 0.37f, 1.0f),  // 3  yellow
+        ImVec4(0.85f, 0.37f, 0.85f, 1.0f),  // 4  magenta
+        ImVec4(0.37f, 0.85f, 0.85f, 1.0f),  // 5  cyan
+        ImVec4(0.85f, 0.62f, 0.37f, 1.0f),  // 6  orange
+        ImVec4(0.62f, 0.85f, 0.37f, 1.0f),  // 7  light green
+        ImVec4(0.37f, 0.62f, 0.85f, 1.0f),  // 8  light blue
+        ImVec4(0.85f, 0.37f, 0.62f, 1.0f),  // 9  pink
+        ImVec4(0.62f, 0.37f, 0.85f, 1.0f),  // 10 purple
+        ImVec4(0.37f, 0.85f, 0.62f, 1.0f),  // 11 mint
+        ImVec4(0.85f, 0.85f, 0.85f, 1.0f)   // 12 light grey
     };
 
 
-    void GeoMap::draw(const char* extraButtonLabel, std::function<void()> extraButtonAction) {
+    void GeoMap::draw(const char* extraButtonLabel,
+                      std::function<void()> extraButtonAction,
+                      std::function<void()> overlayDrawer) {
 
         maybeInit();
 
@@ -267,12 +318,22 @@ namespace geomap {
         if (windowWidth == 0) {
             return;
         }
-        int count = 0;
-        const bool mapHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        // Country-tooltip gating: cursor must be inside our pane AND not
+        // over a registered widget. IsWindowHovered alone would also fire
+        // when the cursor is on the Zoom/Reset buttons in this same child
+        // window (the button is "in" the window). IsAnyItemHovered alone
+        // would also fire from buttons in unrelated panes. Both together
+        // is the right condition. Dropping AllowWhenBlockedByActiveItem
+        // also makes the tooltip disappear during a map pan (the drag
+        // owns ActiveID), which is the right UX.
+        const bool mapHovered = ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered();
         const CartesianCoordinates mouseMapPos = toMap(ImGui::GetMousePos() - recentCanvasPos);
         const std::string* hoveredCountry = nullptr;
 
-        drawList->AddRectFilled(recentCanvasPos + ImVec2(0, 0), recentCanvasPos + ImGui::GetContentRegionAvail(), ImColor(0, 0, 0));
+        // Dark-blue "water" — also makes the day/night terminator (drawn
+        // later as semi-transparent black) actually visible. A black
+        // background would blend with the shadow and hide it.
+        drawList->AddRectFilled(recentCanvasPos + ImVec2(0, 0), recentCanvasPos + ImGui::GetContentRegionAvail(), ImColor(10, 30, 60));
 
         // Disable AA fill while triangles are rasterized: each
         // AddTriangleFilled() with AA on emits a fringe along its edges,
@@ -285,7 +346,9 @@ namespace geomap {
 
         for (size_t countryIndex = 0; countryIndex < countriesGeo.size(); countryIndex++) {
             auto& country = countriesGeo[countryIndex];
-            const ImColor lineColor = ImColor(colors[(++count) % colors.size()]);
+            const int colorIndex = (countryIndex < countryColorIndices.size())
+                ? countryColorIndices[countryIndex] : 0;
+            const ImColor lineColor = ImColor(mapcolor13[colorIndex % mapcolor13.size()]);
             // Fill is the same hue as the outline but heavily diluted so the
             // map stays readable under a busy marker layer.
             const ImU32 fillCol = ImGui::ColorConvertFloat4ToU32(
@@ -303,16 +366,34 @@ namespace geomap {
                         recentCanvasPos + toView(c.toImVec2()),
                         fillCol);
                 }
-                if (polygon.border.size() > 1) {
-                    if (mapHovered && !hoveredCountry && countryIndex < countryNames.size() &&
-                        !countryNames[countryIndex].empty() && pointInPolygon(mouseMapPos, polygon.border)) {
+                if (polygon.ringStarts.size() >= 2) {
+                    const size_t outerStart = polygon.ringStarts[0];
+                    const size_t outerEnd = polygon.ringStarts[1];
+
+                    // Bbox reject before the O(N) point-in-polygon. With ~200
+                    // countries × dozens of polygons each, this is a real
+                    // per-frame win.
+                    const bool inBBox =
+                        mouseMapPos.x >= polygon.bbMin.x && mouseMapPos.x <= polygon.bbMax.x &&
+                        mouseMapPos.y >= polygon.bbMin.y && mouseMapPos.y <= polygon.bbMax.y;
+                    if (mapHovered && !hoveredCountry && inBBox &&
+                        countryIndex < countryNames.size() && !countryNames[countryIndex].empty() &&
+                        pointInPolygonWithHoles(mouseMapPos, polygon)) {
                         hoveredCountry = &countryNames[countryIndex];
                     }
-                    for (size_t i = 0; i + 1 < polygon.border.size(); i++) {
-                        drawList->AddLine(
-                            recentCanvasPos + toView(polygon.border[i].toImVec2()),
-                            recentCanvasPos + toView(polygon.border[i + 1].toImVec2()),
-                            lineCol, 1.0f);
+
+                    // Outline the outer ring only. A hole's outline belongs
+                    // to whatever country fills that void (Lesotho draws its
+                    // own boundary as a separate Polygon feature); drawing
+                    // it here too would paint a duplicate outline in the
+                    // wrong color.
+                    if (outerEnd > outerStart + 1) {
+                        for (size_t i = outerStart; i + 1 < outerEnd; i++) {
+                            drawList->AddLine(
+                                recentCanvasPos + toView(polygon.border[i].toImVec2()),
+                                recentCanvasPos + toView(polygon.border[i + 1].toImVec2()),
+                                lineCol, 1.0f);
+                        }
                     }
                 }
             }
@@ -340,16 +421,60 @@ namespace geomap {
             ImGui::SetTooltip("%s", tooltip.c_str());
         }
 
-        if (ImGui::IsMouseDown(0)) {
-            if (!initialTouchPos) {
-                initialTouchPos = std::make_shared<ImVec2>(ImGui::GetMousePos());
-                initialTranslate = translate;
+        // Mouse-wheel zoom anchored to the cursor: compute the map coord
+        // under the cursor before and after the scale change and adjust
+        // translate so that point stays put. The y delta has the opposite
+        // sign of x because our projection inverts the screen y axis.
+        if (mapHovered) {
+            const float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) {
+                const ImVec2 mouseRel = ImGui::GetMousePos() - recentCanvasPos;
+                const float zoomFactor = (wheel > 0.0f) ? 1.2f : (1.0f / 1.2f);
+                const CartesianCoordinates mapBefore = toMap(mouseRel);
+                scale = scale * zoomFactor;
+                const CartesianCoordinates mapAfter = {
+                    (mouseRel.x - w2.x) / (w2.x * scale.x) - translate.x,
+                    (w2.y - mouseRel.y) / (w2.y * scale.y) + translate.y
+                };
+                translate.x += float(mapAfter.x - mapBefore.x);
+                translate.y -= float(mapAfter.y - mapBefore.y);
+                scaleTranslateDirty = true;
             }
-            translate = initialTranslate + (ImGui::GetMousePos() - *initialTouchPos) / w2 / scale;
-            scaleTranslateDirty = true;
         }
-        else {
-            initialTouchPos.reset();
+
+        // Drag-to-pan, gated on a synthetic ActiveID. Without this:
+        //   - clicks anywhere on screen with the mouse already down would
+        //     pan the map (e.g. a click started on a button outside the
+        //     popup, then dragged in, would pan);
+        //   - the parent popup window could be moved while the user
+        //     intended to drag the map.
+        // We only initiate when the click *starts* over the map area with
+        // no other widget hovered, take the ActiveID for the duration, and
+        // release it when the mouse comes up.
+        const ImGuiID dragId = ImGui::GetCurrentWindow()->GetID("geomap_drag");
+        const bool dragActive = (ImGui::GetActiveID() == dragId);
+        if (!dragActive && ImGui::IsMouseClicked(0) && mapHovered && !ImGui::IsAnyItemHovered()) {
+            ImGui::SetActiveID(dragId, ImGui::GetCurrentWindow());
+            ImGui::FocusWindow(ImGui::GetCurrentWindow());
+            initialTouchPos = std::make_shared<ImVec2>(ImGui::GetMousePos());
+            initialTranslate = translate;
+        }
+        else if (dragActive) {
+            if (ImGui::IsMouseReleased(0)) {
+                ImGui::ClearActiveID();
+                initialTouchPos.reset();
+            }
+            else if (initialTouchPos) {
+                translate = initialTranslate + (ImGui::GetMousePos() - *initialTouchPos) / w2 / scale;
+                scaleTranslateDirty = true;
+            }
+        }
+
+        // Map overlays (markers, route lines, etc.) draw here — between
+        // the map content and the button row, so the buttons end up on
+        // top of any overlay rectangles that happen to lie under them.
+        if (overlayDrawer) {
+            overlayDrawer();
         }
 
         ImGui::SetCursorPos(curpos);
