@@ -223,8 +223,8 @@ namespace geomap {
                     for (const auto& ring : rings) {
                         ringList.emplace_back();
                         for (const auto& coord : ring) {
-                            const double longitude = coord[0].get<double>();
-                            const double latitude = coord[1].get<double>();
+                            const double longitude = coord[0].template get<double>();
+                            const double latitude = coord[1].template get<double>();
                             ringList.back().push_back(geoToCartesian({ latitude, longitude }));
                         }
                     }
