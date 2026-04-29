@@ -10,6 +10,8 @@
 
 #include "../net.h"
 
+namespace net::http { class ResponseHeader; }
+
 namespace net::websock {
 
     struct WSClient {
@@ -30,14 +32,17 @@ namespace net::websock {
         void sendBinary(const std::vector<uint8_t>& data);
 
         // Signals the receive loop to exit. Safe to call from any thread,
-        // including from inside a callback. The loop notices `stopped` on its
+        // including from inside a callback. The loop notices the stop on its
         // next 100 ms recv-timeout tick, then closes the socket under the
         // same mutex used by send/recv.
         void stopSocket();
 
-        // External "user asked stop" flag; reset to false before calling
-        // connectAndReceiveLoop() again on the same instance.
-        std::atomic<bool> stopped{false};
+        // Clear the stopped flag so connectAndReceiveLoop() can be called
+        // again on this instance after a previous stopSocket() / disconnect.
+        void reset();
+
+        // True iff the receive loop has been asked to stop or has terminated.
+        bool isStopped() const { return stopped.load(); }
 
         std::function<void(const std::string&)> onTextMessage   = [](auto){};
         std::function<void(const std::string&)> onBinaryMessage = [](auto){};
@@ -67,7 +72,7 @@ namespace net::websock {
         std::string secKey;
         std::string fragmentBuffer;
         int fragmentOpcode = 0;
-        int count = 0;
+        std::atomic<bool> stopped{false};
         std::atomic<bool> websocketReady{false};
 
         int maybeDecodeBuffer(const std::vector<uint8_t>& data);
@@ -82,6 +87,24 @@ namespace net::websock {
         void emplaceSocket(::net::SockHandle_t sock, const ::net::Address& addr);
         void closeCurrentSocket(bool markStopped);
         int recvSocket(uint8_t* data, size_t len, int timeout);
+
+        // Handshake helpers — see websock.cpp for the full flow.
+        // performHandshake returns the residual bytes received after the
+        // 101 response headers, or std::nullopt if stopped / connect failed.
+        // It follows redirects internally and throws on hard failure.
+        std::optional<std::vector<uint8_t>> performHandshake(
+            const std::string& host, int port, const std::string& path);
+        // Read upgrade-response bytes until "\r\n\r\n". Returns false if
+        // stopped before completion; throws on size cap / recv error.
+        // On success, headerEnd is the byte offset of the "\r\n\r\n".
+        bool readUpgradeResponse(std::vector<uint8_t>& buf, size_t& recvd, size_t& headerEnd);
+        void validateUpgradeHeaders(const net::http::ResponseHeader& header);
+        std::string generateSecKey();
+        static std::string buildUpgradeRequest(const std::string& host, int port,
+                                               const std::string& path, const std::string& secKey);
+        // Receive-loop body. Throws on protocol errors; returns normally on
+        // stopped / peer-close.
+        void runReceiveLoop(std::vector<uint8_t> initial);
         // Handshake path: takes sendMutex, then writes raw bytes (no frame wrapping).
         void sendAllRaw(const uint8_t* data, size_t len);
         // Caller must hold sendMutex. Pure short-write retry loop.

@@ -1,40 +1,25 @@
 #include "http.h"
 #include <algorithm>
 #include <chrono>
-#include <cctype>
+#include <cstdint>
+#include <functional>
 #include <inttypes.h>
 #include <stdexcept>
 #include <thread>
 #include <vector>
 
+#include "../ascii.h"
+
 namespace net::http {
     namespace {
-        std::string trimAscii(const std::string& value) {
-            const auto begin = value.find_first_not_of(" \t\r\n");
-            if (begin == std::string::npos) { return {}; }
-            const auto end = value.find_last_not_of(" \t\r\n");
-            return value.substr(begin, end - begin + 1);
-        }
-
-        bool equalsIgnoreAsciiCase(const std::string& a, const std::string& b) {
-            if (a.size() != b.size()) { return false; }
-            for (size_t i = 0; i < a.size(); i++) {
-                if (std::tolower(static_cast<unsigned char>(a[i])) !=
-                    std::tolower(static_cast<unsigned char>(b[i]))) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
         bool containsHeaderToken(const std::string& value, const std::string& token) {
             size_t start = 0;
             while (start <= value.size()) {
                 const size_t end = value.find(',', start);
-                std::string part = trimAscii(value.substr(
+                std::string part = ascii::trim(value.substr(
                     start,
                     end == std::string::npos ? std::string::npos : end - start));
-                if (equalsIgnoreAsciiCase(part, token)) {
+                if (ascii::equalsIgnoreCase(part, token)) {
                     return true;
                 }
                 if (end == std::string::npos) { break; }
@@ -89,24 +74,37 @@ namespace net::http {
             }
         }
 
+        // Read header lines into `data` until a blank terminator (bare "\r"
+        // for CRLF servers, or empty for LF-only servers). Returns 0 on
+        // success, or the recvline result (<=0) on read failure so callers
+        // can distinguish timeout (0) from socket error (<0). Throws if
+        // maxSize is exceeded. The timeout for each recvline is taken from
+        // nextTimeoutMs, allowing per-call or deadline-based policy.
+        int recvHeaderBytes(Socket& sock, std::string& data,
+                            const std::function<int()>& nextTimeoutMs,
+                            size_t maxSize, int maxLineLen) {
+            while (sock.isOpen()) {
+                std::string line;
+                const int n = sock.recvline(line, maxLineLen, nextTimeoutMs());
+                if (n <= 0) { return n; }
+                if (line.empty() || line == "\r") { return 0; }
+                data += line + "\n";
+                if (data.size() > maxSize) {
+                    throw std::runtime_error("http: header too large");
+                }
+            }
+            return 0;
+        }
+
         ResponseHeader recvResponseHeader(std::shared_ptr<Socket>& sock,
                                           std::chrono::steady_clock::time_point deadline) {
             std::string data;
-            while (sock->isOpen()) {
-                std::string line;
-                int n = sock->recvline(line, 8192, remainingMsOrThrow(deadline, "header read"));
-                if (n <= 0) {
-                    throw std::runtime_error("http: response header read failed");
-                }
-                if (line == "\r" || line.empty()) {
-                    break;
-                }
-                data += line + "\n";
-                if (data.size() > 64 * 1024) {
-                    throw std::runtime_error("http: response header too large");
-                }
+            const int err = recvHeaderBytes(*sock, data,
+                [&] { return remainingMsOrThrow(deadline, "header read"); },
+                64 * 1024, 8192);
+            if (err != 0) {
+                throw std::runtime_error("http: response header read failed");
             }
-
             ResponseHeader header;
             header.deserialize(data);
             return header;
@@ -140,7 +138,7 @@ namespace net::http {
                     throw std::runtime_error("http: chunk header read failed");
                 }
 
-                line = trimAscii(line);
+                line = ascii::trim(line);
                 const auto extension = line.find(';');
                 if (extension != std::string::npos) { line.resize(extension); }
 
@@ -271,21 +269,21 @@ namespace net::http {
         }
     }
 
-    std::map<std::string, std::string>& MessageHeader::getFields() {
+    MessageHeader::FieldMap& MessageHeader::getFields() {
         return fields;
     }
 
-    const std::map<std::string, std::string>& MessageHeader::getFields() const {
+    const MessageHeader::FieldMap& MessageHeader::getFields() const {
         return fields;
     }
 
-    bool MessageHeader::hasField(const std::string& name) {
+    bool MessageHeader::hasField(const std::string& name) const {
         return fields.find(name) != fields.end();
     }
 
-    std::string MessageHeader::getField(const std::string name) {
-        // TODO: Check if exists
-        return fields[name];
+    std::string MessageHeader::getField(const std::string& name) const {
+        const auto it = fields.find(name);
+        return it == fields.end() ? std::string{} : it->second;
     }
 
     void MessageHeader::setField(const std::string& name, const std::string& value) {
@@ -293,25 +291,17 @@ namespace net::http {
     }
 
     void MessageHeader::clearField(const std::string& name) {
-        // TODO: Check if exists (but maybe no error?)
         fields.erase(name);
     }
 
     int MessageHeader::readLine(const std::string& str, std::string& line, int start) {
-        // Get line length
-        int len = 0;
-        bool cr = false;
-        for (int i = start; i < str.size(); i++) {
-            if (str[i] == '\n') {
-                if (len && str[i-1] == '\r') { cr = true; }
-                break;
-            }
-            len++;
-        }
-
-        // Copy line
-        line = str.substr(start, len - (cr ? 1:0));
-        return start + len + 1;
+        const auto lf = str.find('\n', start);
+        const int len = lf == std::string::npos
+                            ? static_cast<int>(str.size()) - start
+                            : static_cast<int>(lf) - start;
+        const bool cr = len > 0 && str[start + len - 1] == '\r';
+        line = str.substr(start, len - (cr ? 1 : 0));
+        return lf == std::string::npos ? static_cast<int>(str.size()) : start + len + 1;
     }
 
     RequestHeader::RequestHeader(Method method, std::string uri, std::string host) {
@@ -341,7 +331,34 @@ namespace net::http {
     }
 
     void RequestHeader::deserializeStartLine(const std::string& data) {
-        // TODO
+        // Request line: METHOD SP URI SP HTTP/<version>
+        const auto methodEnd = data.find(' ');
+        if (methodEnd == std::string::npos) {
+            throw std::runtime_error("http: malformed request line");
+        }
+        const std::string methodStr = data.substr(0, methodEnd);
+        const auto uriStart = data.find_first_not_of(" \t", methodEnd);
+        if (uriStart == std::string::npos) {
+            throw std::runtime_error("http: malformed request line");
+        }
+        const auto uriEnd = data.find(' ', uriStart);
+        if (uriEnd == std::string::npos) {
+            throw std::runtime_error("http: malformed request line");
+        }
+        uri = data.substr(uriStart, uriEnd - uriStart);
+
+        method = METHOD_GET;
+        bool methodFound = false;
+        for (const auto& [code, name] : MethodStrings) {
+            if (name == methodStr) {
+                method = code;
+                methodFound = true;
+                break;
+            }
+        }
+        if (!methodFound) {
+            throw std::runtime_error("http: unknown HTTP method '" + methodStr + "'");
+        }
     }
 
     std::string RequestHeader::serializeStartLine() {
@@ -385,45 +402,32 @@ namespace net::http {
     }
 
     void ResponseHeader::deserializeStartLine(const std::string& data) {
-        // Parse version
-        int offset = 0;
-        for (; offset < data.size(); offset++) {
-            if (data[offset] == ' ') { break; }
+        // Status line: HTTP/<version> SP <code> SP <reason-phrase>
+        // The reason phrase may contain spaces, so it is the entire remainder.
+        const auto versionEnd = data.find(' ');
+        if (versionEnd == std::string::npos) {
+            throw std::runtime_error("http: malformed status line");
         }
-        // TODO: Error if null length
-        // TODO: Parse version
+        size_t codeStart = data.find_first_not_of(" \t", versionEnd);
+        if (codeStart == std::string::npos) {
+            throw std::runtime_error("http: malformed status line");
+        }
+        const auto codeEnd = data.find(' ', codeStart);
+        const std::string codeStr = data.substr(codeStart,
+            codeEnd == std::string::npos ? std::string::npos : codeEnd - codeStart);
+        statusCode = static_cast<StatusCode>(std::stoi(codeStr));
 
-        // Skip spaces
-        for (; offset < data.size(); offset++) {
-            if (data[offset] != ' ' && data[offset] != '\t') { break; }
+        if (codeEnd == std::string::npos) {
+            statusString.clear();
         }
-        
-        // Parse status code
-        int codeOffset = offset;
-        for (; offset < data.size(); offset++) {
-            if (data[offset] == ' ') { break; }
+        else {
+            const size_t reasonStart = data.find_first_not_of(" \t", codeEnd);
+            statusString = reasonStart == std::string::npos ? std::string{} : data.substr(reasonStart);
         }
-        // TODO: Error if null length
-        statusCode = (StatusCode)std::stoi(data.substr(codeOffset, codeOffset - offset));
-    
-        // Skip spaces
-        for (; offset < data.size(); offset++) {
-            if (data[offset] != ' ' && data[offset] != '\t') { break; }
-        }
-        
-        // Parse status string
-        int stringOffset = offset;
-        for (; offset < data.size(); offset++) {
-            if (data[offset] == ' ') { break; }
-        }
-        // TODO: Error if null length (maybe?)
-        statusString = data.substr(stringOffset, stringOffset - offset);
     }
 
     std::string ResponseHeader::serializeStartLine() {
-        char buf[1024];
-        sprintf(buf, "%d %s", (int)statusCode, statusString.c_str());
-        return buf;
+        return std::to_string(static_cast<int>(statusCode)) + " " + statusString;
     }
 
     ChunkHeader::ChunkHeader(size_t length) {
@@ -441,15 +445,19 @@ namespace net::http {
     }
 
     void ChunkHeader::deserialize(const std::string& data) {
-        // Parse length
-        int offset = 0;
-        for (; offset < data.size(); offset++) {
-            if (data[offset] == ' ') { break; }
+        // RFC 7230 §4.1: chunk-size [ ";" chunk-ext ]. We only need the size;
+        // any extension after the first ';' is discarded.
+        const auto extension = data.find(';');
+        const std::string sizeStr = ascii::trim(
+            extension == std::string::npos ? data : data.substr(0, extension));
+        if (sizeStr.empty()) {
+            throw std::runtime_error("http: malformed chunk size");
         }
-        // TODO: Error if null length
-        length = (StatusCode)std::stoull(data.substr(0, offset), nullptr, 16);
-
-        // TODO: Parse rest
+        size_t consumed = 0;
+        length = std::stoull(sizeStr, &consumed, 16);
+        if (consumed != sizeStr.size()) {
+            throw std::runtime_error("http: malformed chunk size");
+        }
     }
 
     size_t ChunkHeader::getLength() {
@@ -516,14 +524,10 @@ namespace net::http {
     }
 
     int Client::recvHeader(std::string& data, int timeout) {
-        while (sock->isOpen()) {
-            std::string line;
-            int ret = sock->recvline(line, 0, timeout);
-            if (line == "\r") { break; }
-            if (ret <= 0) { return ret; }
-            data += line + "\n";
-        }
-        return 0;
+        // Per-call timeout, no size cap, no line-length cap. Propagates the
+        // recvline error code so callers can distinguish timeout from error.
+        return recvHeaderBytes(*sock, data, [timeout] { return timeout; },
+                               SIZE_MAX, 0);
     }
 
     std::string hostHeaderFor(const url::HttpHostPort& endpoint) {
@@ -531,12 +535,7 @@ namespace net::http {
     }
 
     std::string getHeaderValue(const MessageHeader& header, const std::string& name) {
-        for (const auto& [key, value] : header.getFields()) {
-            if (equalsIgnoreAsciiCase(key, name)) {
-                return trimAscii(value);
-            }
-        }
-        return {};
+        return ascii::trim(header.getField(name));
     }
 
     bool isRedirectStatus(int status) {

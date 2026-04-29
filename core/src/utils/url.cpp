@@ -3,32 +3,11 @@
 #include <cctype>
 #include <cstdlib>
 
+#include "ascii.h"
+
 namespace url {
 
     static const std::string HTTP_SCHEME = "http://";
-
-    static bool equalsIgnoreAsciiCase(const std::string& a, const std::string& b) {
-        if (a.size() != b.size()) { return false; }
-        for (size_t i = 0; i < a.size(); i++) {
-            if (std::tolower(static_cast<unsigned char>(a[i])) !=
-                std::tolower(static_cast<unsigned char>(b[i]))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    static bool startsWithIgnoreAsciiCase(const std::string& value, const std::string& prefix) {
-        return value.size() >= prefix.size() &&
-               equalsIgnoreAsciiCase(value.substr(0, prefix.size()), prefix);
-    }
-
-    static std::string trimAscii(const std::string& value) {
-        const auto begin = value.find_first_not_of(" \t\r\n");
-        if (begin == std::string::npos) { return {}; }
-        const auto end = value.find_last_not_of(" \t\r\n");
-        return value.substr(begin, end - begin + 1);
-    }
 
     static std::string normalizeHttpPath(std::string path) {
         if (path.empty()) { return "/"; }
@@ -59,7 +38,7 @@ namespace url {
     }
 
     std::optional<HttpHostPort> parseHttpHostPort(const std::string& url) {
-        if (!startsWithIgnoreAsciiCase(url, HTTP_SCHEME)) {
+        if (!ascii::startsWithIgnoreCase(url, HTTP_SCHEME)) {
             return std::nullopt;
         }
         std::string rest = url.substr(HTTP_SCHEME.size());
@@ -119,10 +98,10 @@ namespace url {
     std::optional<HttpHostPort> resolveHttpLocation(
         const HttpHostPort& current,
         const std::string& location) {
-        std::string loc = trimAscii(location);
+        std::string loc = ascii::trim(location);
         if (loc.empty()) { return std::nullopt; }
 
-        if (startsWithIgnoreAsciiCase(loc, "http://")) {
+        if (ascii::startsWithIgnoreCase(loc, "http://")) {
             auto parsed = parseHttpHostPort(loc);
             if (!parsed) { return std::nullopt; }
             parsed->path = normalizeHttpPath(parsed->path);

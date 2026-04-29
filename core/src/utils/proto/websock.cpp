@@ -1,12 +1,13 @@
 #include "websock.h"
 
-#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
+#include "../ascii.h"
 #include "../base64.h"
 #include "http.h"
 #include "picohash.h"
@@ -46,16 +47,6 @@ namespace net::websock {
             uint8_t digest[PICOHASH_SHA1_DIGEST_LENGTH];
             _picohash_sha1_final(&ctx, digest);
             return base64::encode(digest, PICOHASH_SHA1_DIGEST_LENGTH);
-        }
-
-        bool equalsIgnoreAsciiCase(const std::string& a, const std::string& b) {
-            if (a.size() != b.size()) { return false; }
-            for (size_t i = 0; i < a.size(); i++) {
-                if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) {
-                    return false;
-                }
-            }
-            return true;
         }
 
         void closeRawSocket(::net::SockHandle_t sock) {
@@ -164,7 +155,6 @@ namespace net::websock {
         Inbound kind = getFrame((unsigned char*)data.data(), (int)data.size(),
                                 (unsigned char*)buffer.data(), (int)buffer.length(),
                                 &outLen, &skipSize);
-//        printf("(%d) Handling frame kind: %d, skipsize = %d ...\n", count, (int)kind, skipSize);
         auto appendFragment = [&]() {
             if (outLen > 1) {
                 if (fragmentBuffer.size() + (size_t)(outLen - 1) > (size_t)MAX_FRAME_PAYLOAD) {
@@ -238,7 +228,6 @@ namespace net::websock {
             // client never sends Pings, so any Pong is ignored.
             break;
         }
-        count++;
         return skipSize;
     }
 
@@ -537,150 +526,139 @@ namespace net::websock {
         return invalidSocketHandle();
     }
 
-    void WSClient::connectAndReceiveLoop(const std::string& host, int port, const std::string& path) {
-        flog::info("WSClient connectAndReceiveLoop: inst={}", (uint64_t)(uintptr_t)this);
+    std::string WSClient::generateSecKey() {
+        uint8_t keyBytes[16];
+        for (int i = 0; i < 16; i++) { keyBytes[i] = (uint8_t)uniform_dist(e1); }
+        return base64::encode(keyBytes, 16);
+    }
 
-        websocketReady = false;
+    std::string WSClient::buildUpgradeRequest(const std::string& host, int port,
+                                              const std::string& path, const std::string& secKey) {
+        // RFC 7230 §5.4: omit the port from Host/Origin when it matches the scheme default,
+        // otherwise reverse proxies (e.g. *.proxy.kiwisdr.com) fail to match server_name.
+        const std::string hostHeader = net::http::hostHeaderFor({ host, port, path });
+        std::string req = "GET " + path + " HTTP/1.1\r\n"
+            "Accept-Encoding: gzip, deflate\r\n"
+            "Accept-Language: en-US,en\r\n"
+            "Cache-Control: no-cache\r\n"
+            "Connection: Upgrade\r\n"
+            "Cookie: ident=\r\n"
+            "Pragma: no-cache\r\n"
+            "Sec-GPC: 1\r\n"
+            // permessage-deflate (RFC 7692) is intentionally NOT advertised: getFrame()
+            // ignores RSV1 and there is no inflate path, so accepting the extension
+            // would silently feed compressed bytes to the message callbacks.
+            "Sec-WebSocket-Version: 13\r\n"
+            "Upgrade: websocket\r\n"
+            "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36\r\n";
+        req += "Sec-WebSocket-Key: " + secKey + "\r\n";
+        req += "Host: " + hostHeader + "\r\n";
+        req += "Origin: http://" + hostHeader + "\r\n";
+        req += "\r\n";
+        return req;
+    }
+
+    bool WSClient::readUpgradeResponse(std::vector<uint8_t>& buf, size_t& recvd, size_t& headerEnd) {
+        // Accumulate the upgrade response until we see the \r\n\r\n header terminator.
+        // The response can be split across multiple TCP segments (e.g. direct KiwiSDRs
+        // send the 101 in fragments), so a single recv is not enough.
+        recvd = 0;
+        while (!stopped) {
+            if (recvd + 1 >= buf.size()) {
+                closeCurrentSocket(true);
+                throw std::runtime_error("websock: upgrade response headers too large");
+            }
+            int n = recvSocket(buf.data() + recvd, buf.size() - 1 - recvd, 100);
+            if (n < 0) {
+                closeCurrentSocket(true);
+                throw std::runtime_error("websock: upgrade-response recv failed");
+            }
+            if (n == 0) { continue; } // timeout — keep waiting unless stopped
+            recvd += n;
+            const auto pos = std::string_view((const char*)buf.data(), recvd).find("\r\n\r\n");
+            if (pos != std::string_view::npos) {
+                headerEnd = pos;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void WSClient::validateUpgradeHeaders(const net::http::ResponseHeader& header) {
+        const std::string upgradeHdr = net::http::getHeaderValue(header, "Upgrade");
+        if (!ascii::equalsIgnoreCase(upgradeHdr, "websocket")) {
+            closeCurrentSocket(true);
+            throw std::runtime_error("websock: handshake failed: missing or wrong Upgrade header (got '" + upgradeHdr + "')");
+        }
+        const std::string accept = net::http::getHeaderValue(header, "Sec-WebSocket-Accept");
+        const std::string expected = sha1Base64(secKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+        if (accept != expected) {
+            closeCurrentSocket(true);
+            throw std::runtime_error("websock: handshake failed: bad Sec-WebSocket-Accept (got '" + accept + "', expected '" + expected + "')");
+        }
+    }
+
+    std::optional<std::vector<uint8_t>> WSClient::performHandshake(
+            const std::string& host, int port, const std::string& path) {
+        constexpr int MAX_REDIRECTS = 5;
+        int redirectsLeft = MAX_REDIRECTS;
         std::string currentHost = host;
         int currentPort = port;
         std::string currentPath = path;
-        constexpr int MAX_REDIRECTS = 5;
-        int redirectsLeft = MAX_REDIRECTS;
-
-        bool shouldNotifyDisconnected = true;
-        std::vector<uint8_t> buf(100000);
-        std::vector<uint8_t> data;
-        int recvd = 0;
 
         while (true) {
             ::net::Address addr(currentHost, currentPort);
-            RawSocketGuard z(connectSocket(addr));
-            if (!z) {
-                onDisconnected();
-                return;
-            }
-            emplaceSocket(z.get(), addr);
-            z.release();
+            RawSocketGuard sock(connectSocket(addr));
+            if (!sock) { return std::nullopt; }
+            emplaceSocket(sock.get(), addr);
+            sock.release();
             if (stopped) {
                 closeCurrentSocket(false);
-                onDisconnected();
-                return;
+                return std::nullopt;
             }
             flog::info("WSClient socket connected to {}:{}", currentHost, currentPort);
 
-            {
-                uint8_t keyBytes[16];
-                for (int i = 0; i < 16; i++) { keyBytes[i] = (uint8_t)uniform_dist(e1); }
-                secKey = base64::encode(keyBytes, 16);
-            }
+            secKey = generateSecKey();
             fragmentOpcode = 0;
             fragmentBuffer.clear();
 
-            std::string initHeaders =
-                "Accept-Encoding: gzip, deflate\r\n"
-                "Accept-Language: en-US,en\r\n"
-                "Cache-Control: no-cache\r\n"
-                "Connection: Upgrade\r\n"
-                "Cookie: ident=\r\n"
-                "Pragma: no-cache\r\n"
-                "Sec-GPC: 1\r\n"
-                // permessage-deflate (RFC 7692) is intentionally NOT advertised: getFrame()
-                // ignores RSV1 and there is no inflate path, so accepting the extension
-                // would silently feed compressed bytes to the message callbacks.
-                // "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
-                "Sec-WebSocket-Version: 13\r\n"
-                "Upgrade: websocket\r\n"
-                "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36\r\n";
-            initHeaders = "GET " + currentPath + " HTTP/1.1\r\n" + initHeaders;
-            initHeaders += "Sec-WebSocket-Key: " + secKey + "\r\n";
-            // RFC 7230 §5.4: omit the port from Host/Origin when it matches the scheme default,
-            // otherwise reverse proxies (e.g. *.proxy.kiwisdr.com) fail to match server_name.
-            const std::string hostHeader = net::http::hostHeaderFor({ currentHost, currentPort, currentPath });
-            initHeaders += "Host: " + hostHeader + "\r\n";
-            initHeaders += "Origin: http://" + hostHeader + "\r\n";
-            initHeaders += "\r\n";
+            const std::string req = buildUpgradeRequest(currentHost, currentPort, currentPath, secKey);
+            sendAllRaw((const uint8_t*)req.data(), req.size());
+            flog::info("sent {} bytes of upgrade request", (int64_t)req.size());
 
-            sendAllRaw((const uint8_t*)initHeaders.data(), initHeaders.size());
-            int senderr = errno;
-            flog::info("sent {} bytes of upgrade request", (int64_t)initHeaders.size());
-
-            // Accumulate the upgrade response until we see the \r\n\r\n header terminator.
-            // The response can be split across multiple TCP segments (e.g. direct KiwiSDRs
-            // send the 101 in fragments), so a single recv is not enough.
-            recvd = 0;
-            size_t pos = std::string::npos;
-            while (!stopped) {
-                if ((size_t)recvd + 1 >= buf.size()) {
-                    closeCurrentSocket(true);
-                    throw std::runtime_error("websock: upgrade response headers too large");
-                }
-                int n = recvSocket(buf.data() + recvd, buf.size() - 1 - recvd, 100);
-                if (n < 0) {
-                    std::string msg = "websock: recv failed, errno=" + std::to_string(errno) + " (recvd=" + std::to_string(recvd) +
-                                      " senderr=" + std::to_string(senderr) + ")";
-                    closeCurrentSocket(true);
-                    throw std::runtime_error(msg);
-                }
-                if (n == 0) {
-                    continue; // recv timeout; keep waiting until stopped
-                }
-                recvd += n;
-                buf[recvd] = 0;
-                std::string view((char*)buf.data(), recvd);
-                pos = view.find("\r\n\r\n");
-                if (pos != std::string::npos) {
-                    break;
-                }
-            }
-            if (stopped) {
+            std::vector<uint8_t> buf(100000);
+            size_t recvd = 0;
+            size_t headerEnd = 0;
+            if (!readUpgradeResponse(buf, recvd, headerEnd)) {
                 closeCurrentSocket(false);
-                onDisconnected();
-                return;
+                return std::nullopt;
             }
             flog::info("recvd: {}", recvd);
-            std::string headerData((char*)buf.data(), pos + 2);
-            const auto statusEnd = headerData.find("\r\n");
-            const std::string statusLine = statusEnd == std::string::npos ? headerData : headerData.substr(0, statusEnd);
-            net::http::ResponseHeader responseHeader;
-            try {
-                responseHeader.deserialize(headerData);
-            }
+
+            const std::string headerData((const char*)buf.data(), headerEnd + 2);
+            net::http::ResponseHeader header;
+            try { header.deserialize(headerData); }
             catch (...) {
                 closeCurrentSocket(true);
                 throw std::runtime_error("websock: upgrade failed: malformed HTTP response");
             }
 
-            int status = static_cast<int>(responseHeader.getStatusCode());
+            const int status = static_cast<int>(header.getStatusCode());
             if (status == 101) {
-                std::string upgradeHdr = net::http::getHeaderValue(responseHeader, "Upgrade");
-                if (!equalsIgnoreAsciiCase(upgradeHdr, "websocket")) {
-                    closeCurrentSocket(true);
-                    throw std::runtime_error("websock: handshake failed: missing or wrong Upgrade header (got '" + upgradeHdr + "')");
-                }
-                std::string accept = net::http::getHeaderValue(responseHeader, "Sec-WebSocket-Accept");
-                std::string expected = sha1Base64(secKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-                if (accept != expected) {
-                    closeCurrentSocket(true);
-                    throw std::runtime_error("websock: handshake failed: bad Sec-WebSocket-Accept (got '" + accept + "', expected '" + expected + "')");
-                }
-                data.clear();
-                for (int i = (int)pos + 4; i < recvd; i++) {
-                    data.push_back(buf[i]);
-                }
-                websocketReady = true;
-                break;
+                validateUpgradeHeaders(header);
+                return std::vector<uint8_t>(buf.begin() + headerEnd + 4, buf.begin() + recvd);
             }
 
             if (net::http::isRedirectStatus(status) && redirectsLeft > 0) {
-                auto parsed = net::http::resolveRedirectLocation({ currentHost, currentPort, currentPath }, responseHeader);
+                auto parsed = net::http::resolveRedirectLocation({ currentHost, currentPort, currentPath }, header);
                 if (!parsed) {
                     closeCurrentSocket(true);
                     throw std::runtime_error("websock: cannot parse redirect Location: " +
-                                             net::http::getHeaderValue(responseHeader, "Location"));
+                                             net::http::getHeaderValue(header, "Location"));
                 }
                 closeCurrentSocket(false);
                 std::string redirectPath = parsed->path;
-                if (redirectPath != currentPath && equalsIgnoreAsciiCase(redirectPath, currentPath)) {
+                if (redirectPath != currentPath && ascii::equalsIgnoreCase(redirectPath, currentPath)) {
                     flog::info("websock: preserving redirect path case: {} -> {}", redirectPath, currentPath);
                     redirectPath = currentPath;
                 }
@@ -692,56 +670,58 @@ namespace net::websock {
                 continue;
             }
 
+            const auto firstCr = headerData.find("\r\n");
+            const std::string statusLine = firstCr == std::string::npos
+                ? headerData : headerData.substr(0, firstCr);
             closeCurrentSocket(true);
             throw std::runtime_error("websock: upgrade failed: " + statusLine);
         }
+    }
 
-        onConnected();
+    void WSClient::runReceiveLoop(std::vector<uint8_t> initial) {
+        std::vector<uint8_t> buf(100000);
+        std::vector<uint8_t> data = std::move(initial);
         while (!stopped) {
-            int len0 = 0;
-            try {
-                len0 = maybeDecodeBuffer(data);
-            }
-            catch (...) {
-                closeCurrentSocket(true);
-                onDisconnected();
-                shouldNotifyDisconnected = false;
-                throw;
-            }
+            const int len0 = maybeDecodeBuffer(data);
             if (len0 > 0) {
-//                printf("decoded/dropping bytes: %d\n", len0);
                 data.erase(data.begin(), data.begin() + len0);
                 continue;
             }
-            recvd = recvSocket(buf.data(), buf.size(), 100); // 100 msec
-            if (stopped) {
-                break;
-            }
-            if (recvd == 0) {
-                continue;
-            }
-//            printf("recvd bytes in loop: %d\n", recvd);
-            if (recvd <= 0) {
-                closeCurrentSocket(true);
-                onDisconnected();
-                shouldNotifyDisconnected = false;
-                break;
-            }
+            const int recvd = recvSocket(buf.data(), buf.size(), 100);
+            if (stopped) { return; }
+            if (recvd == 0) { continue; }
+            if (recvd < 0) { return; } // peer closed or recv error
             onEveryReceive();
-            if (data.size() + recvd > MAX_FRAME_PAYLOAD + 16) {
-                closeCurrentSocket(true);
-                onDisconnected();
-                shouldNotifyDisconnected = false;
+            if (data.size() + (size_t)recvd > MAX_FRAME_PAYLOAD + 16) {
                 throw std::runtime_error("websock: frame too large");
             }
-            for (int i = 0; i < recvd; i++) {
-                data.push_back(buf[i]);
-            }
+            data.insert(data.end(), buf.begin(), buf.begin() + recvd);
         }
-        if (shouldNotifyDisconnected) {
+    }
+
+    void WSClient::connectAndReceiveLoop(const std::string& host, int port, const std::string& path) {
+        flog::info("WSClient connectAndReceiveLoop: inst={}", (uint64_t)(uintptr_t)this);
+        websocketReady = false;
+
+        auto residual = performHandshake(host, port, path);
+        if (!residual) {
+            // Stopped or connect failed; performHandshake already cleaned up.
+            onDisconnected();
+            return;
+        }
+
+        websocketReady = true;
+        onConnected();
+        try {
+            runReceiveLoop(std::move(*residual));
+        }
+        catch (...) {
             closeCurrentSocket(true);
             onDisconnected();
+            throw;
         }
+        closeCurrentSocket(true);
+        onDisconnected();
     }
 
     void WSClient::stopSocket() {
@@ -749,6 +729,10 @@ namespace net::websock {
         // out. Socket method calls are serialized by socketMutex, so no
         // thread closes while another is inside send/recv.
         stopped = true;
+    }
+
+    void WSClient::reset() {
+        stopped = false;
     }
 
 }

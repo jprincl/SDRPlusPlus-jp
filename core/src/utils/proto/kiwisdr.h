@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <locale>
 #include <map>
@@ -76,7 +77,9 @@ public:
     Clock::time_point lastPing;
     std::atomic<bool> running{false};
     std::atomic<Modulation> currentModulation{TUNE_IQ};
-    std::vector<Clock::time_point> times;
+    // deque, not vector: front entries are popped on every packet, and a
+    // vector::erase(begin) shift would be O(n) per packet.
+    std::deque<Clock::time_point> times;
 
     std::function<void()> onConnected = []() {};
     std::function<void()> onDisconnected = []() {};
@@ -121,9 +124,6 @@ public:
 
         this->hostPort = hostport;
         setConnectionStatus("Not connected");
-        static std::atomic_int outCount;
-
-        outCount = 0;
 
         wsClient.onDisconnected = [&]() {
             connected = false;
@@ -159,9 +159,6 @@ public:
                 parseMsgFrame(msg);
             }
             else if (start == "SND") {
-                if ((outCount++) % 50 == 0) {
-//                    flog::info("=> SND (each 50 packets)");
-                }
                 using namespace std::chrono_literals;
                 auto ctm = Clock::now();
                 times.emplace_back(ctm);
@@ -173,7 +170,7 @@ public:
                     lastSecondCount++;
                 }
                 while (!times.empty() && times.front() < ctm - 2s) {
-                    times.erase(times.begin());
+                    times.pop_front();
                 }
                 char status[100];
                 snprintf(status, sizeof status, "Receiving. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
@@ -428,7 +425,7 @@ public:
         resetSessionState();
         running = true;
         connected = false;
-        wsClient.stopped = false;
+        wsClient.reset();
         looperThread = std::thread([this]() {
             flog::info("calling x.connectAndReceiveLoop..");
             try {

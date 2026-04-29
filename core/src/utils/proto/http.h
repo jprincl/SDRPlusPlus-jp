@@ -3,6 +3,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include "../ascii.h"
 #include "../net.h"
 #include "../url.h"
 
@@ -134,6 +135,9 @@ namespace net::http {
      */
     class MessageHeader {
     public:
+        // Field names are looked up case-insensitively per RFC 7230 §3.2.
+        using FieldMap = std::map<std::string, std::string, ascii::CaseInsensitiveLess>;
+
         /**
          * Serialize header to string.
          * @return Header in string form.
@@ -147,24 +151,23 @@ namespace net::http {
         void deserialize(const std::string& data);
 
         /**
-         * Get field list.
-         * @return Map from field name to field.
+         * Get field list. Iteration order is case-insensitive lexicographic.
          */
-        std::map<std::string, std::string>& getFields();
-        const std::map<std::string, std::string>& getFields() const;
+        FieldMap& getFields();
+        const FieldMap& getFields() const;
 
         /**
          * Check if a field exists in the header.
          * @return True if the field exists, false otherwise.
          */
-        bool hasField(const std::string& name);
+        bool hasField(const std::string& name) const;
 
         /**
          * Get field value.
          * @param name Name of the field.
-         * @return Field value.
+         * @return Field value, or empty string if not present.
          */
-        std::string getField(const std::string name);
+        std::string getField(const std::string& name) const;
 
         /**
          * Set field.
@@ -183,7 +186,7 @@ namespace net::http {
         int readLine(const std::string& str, std::string& line, int start = 0);
         virtual std::string serializeStartLine() = 0;
         virtual void deserializeStartLine(const std::string& data) = 0;
-        std::map<std::string, std::string> fields;
+        FieldMap fields;
     };
 
     /**
