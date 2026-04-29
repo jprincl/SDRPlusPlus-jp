@@ -13,7 +13,7 @@ namespace url {
     /**
      * Parse an http:// URL into host, port, and path.
      * The port defaults to 80 when not present, and the path defaults to "/"
-     * when not present.
+     * when not present. The scheme match is case-insensitive.
      *
      * IPv4 addresses and hostnames only — IPv6 bracketed URLs are not supported.
      *
@@ -21,6 +21,16 @@ namespace url {
      *         start with "http://" or is otherwise malformed.
      */
     std::optional<HttpHostPort> parseHttpHostPort(const std::string& url);
+
+    /**
+     * Resolve a Location header value against the current HTTP URL.
+     *
+     * Supports absolute http:// URLs, scheme-relative URLs, absolute paths,
+     * query-only redirects, and relative paths.
+     */
+    std::optional<HttpHostPort> resolveHttpLocation(
+        const HttpHostPort& current,
+        const std::string& location);
 
     /**
      * Split a "host:port" string into host and port.

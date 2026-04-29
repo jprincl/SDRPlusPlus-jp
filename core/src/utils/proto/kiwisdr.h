@@ -15,6 +15,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -357,22 +358,20 @@ private:
         const uint64_t fallback = static_cast<uint64_t>(
             duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
         try {
-            auto sock = net::connect(host, port);
-            net::http::Client client(sock);
-            net::http::RequestHeader rqhdr(net::http::METHOD_GET, "/VER", host);
-            client.sendRequestHeader(rqhdr);
-            net::http::ResponseHeader rshdr;
-            client.recvResponseHeader(rshdr, 5000);
-            std::string body;
-            std::vector<uint8_t> buf(1024);
-            while (true) {
-                int n = sock->recv(buf.data(), buf.size());
-                if (n < 1) break;
-                body.append(reinterpret_cast<const char*>(buf.data()), n);
-                if (body.size() > 64 * 1024) break;   // sanity cap; /VER is tiny
+            net::http::RequestOptions options;
+            options.timeoutMs = 5000;
+            options.maxRedirects = 5;
+            options.maxBody = 64 * 1024;
+            options.headers["Accept"] = "application/json, text/plain, */*";
+            options.headers["User-Agent"] = "SDR++ KiwiSDR client";
+
+            auto response = net::http::get({ host, port, "/VER" }, options);
+            const int status = static_cast<int>(response.header.getStatusCode());
+            if (status != 200) {
+                throw std::runtime_error("KiwiSDRClient: /VER HTTP status " + std::to_string(status));
             }
-            sock->close();
-            auto j = nlohmann::json::parse(body, nullptr, /*allow_exceptions=*/false);
+
+            auto j = nlohmann::json::parse(response.body, nullptr, /*allow_exceptions=*/false);
             if (!j.is_discarded() && j.contains("ts")) {
                 const auto& ts = j["ts"];
                 if (ts.is_number_unsigned()) {
@@ -382,12 +381,13 @@ private:
                     try { return std::stoull(ts.get<std::string>()); } catch (...) {}
                 }
             }
+            throw std::runtime_error("KiwiSDRClient: /VER JSON missing ts");
         }
         catch (const std::exception& e) {
-            flog::warn("KiwiSDRClient: /VER fetch failed: {}", e.what());
+            flog::warn("KiwiSDRClient: /VER fetch failed, using local timestamp fallback: {}", e.what());
         }
         catch (...) {
-            flog::warn("KiwiSDRClient: /VER fetch failed: unknown");
+            flog::warn("KiwiSDRClient: /VER fetch failed, using local timestamp fallback: unknown");
         }
         return fallback;
     }

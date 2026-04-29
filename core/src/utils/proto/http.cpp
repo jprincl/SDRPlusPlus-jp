@@ -1,7 +1,225 @@
 #include "http.h"
+#include <algorithm>
+#include <chrono>
+#include <cctype>
 #include <inttypes.h>
+#include <stdexcept>
+#include <thread>
+#include <vector>
 
 namespace net::http {
+    namespace {
+        std::string trimAscii(const std::string& value) {
+            const auto begin = value.find_first_not_of(" \t\r\n");
+            if (begin == std::string::npos) { return {}; }
+            const auto end = value.find_last_not_of(" \t\r\n");
+            return value.substr(begin, end - begin + 1);
+        }
+
+        bool equalsIgnoreAsciiCase(const std::string& a, const std::string& b) {
+            if (a.size() != b.size()) { return false; }
+            for (size_t i = 0; i < a.size(); i++) {
+                if (std::tolower(static_cast<unsigned char>(a[i])) !=
+                    std::tolower(static_cast<unsigned char>(b[i]))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool containsHeaderToken(const std::string& value, const std::string& token) {
+            size_t start = 0;
+            while (start <= value.size()) {
+                const size_t end = value.find(',', start);
+                std::string part = trimAscii(value.substr(
+                    start,
+                    end == std::string::npos ? std::string::npos : end - start));
+                if (equalsIgnoreAsciiCase(part, token)) {
+                    return true;
+                }
+                if (end == std::string::npos) { break; }
+                start = end + 1;
+            }
+            return false;
+        }
+
+        bool parseContentLength(const std::string& value, size_t& length) {
+            if (value.empty()) { return false; }
+            try {
+                size_t consumed = 0;
+                length = std::stoull(value, &consumed);
+                return consumed == value.size();
+            }
+            catch (...) {
+                return false;
+            }
+        }
+
+        int remainingMsOrThrow(std::chrono::steady_clock::time_point deadline, const char* what) {
+            using namespace std::chrono;
+            const auto remaining = duration_cast<milliseconds>(deadline - steady_clock::now()).count();
+            if (remaining <= 0) {
+                throw std::runtime_error(std::string("http: ") + what + " timed out");
+            }
+            return static_cast<int>(std::min<int64_t>(remaining, 1000));
+        }
+
+        std::string requestPathFor(const url::HttpHostPort& endpoint) {
+            if (endpoint.path.empty()) { return "/"; }
+            if (endpoint.path[0] == '?' || endpoint.path[0] == '#') {
+                return "/" + endpoint.path;
+            }
+            return endpoint.path;
+        }
+
+        void sendAll(std::shared_ptr<Socket>& sock, const std::string& data,
+                     std::chrono::steady_clock::time_point deadline) {
+            size_t sent = 0;
+            while (sent < data.size()) {
+                int n = sock->send(reinterpret_cast<const uint8_t*>(data.data()) + sent, data.size() - sent);
+                if (n > 0) {
+                    sent += static_cast<size_t>(n);
+                    continue;
+                }
+                if (!sock->isOpen()) {
+                    throw std::runtime_error("http: request send failed");
+                }
+                remainingMsOrThrow(deadline, "request send");
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+
+        ResponseHeader recvResponseHeader(std::shared_ptr<Socket>& sock,
+                                          std::chrono::steady_clock::time_point deadline) {
+            std::string data;
+            while (sock->isOpen()) {
+                std::string line;
+                int n = sock->recvline(line, 8192, remainingMsOrThrow(deadline, "header read"));
+                if (n <= 0) {
+                    throw std::runtime_error("http: response header read failed");
+                }
+                if (line == "\r" || line.empty()) {
+                    break;
+                }
+                data += line + "\n";
+                if (data.size() > 64 * 1024) {
+                    throw std::runtime_error("http: response header too large");
+                }
+            }
+
+            ResponseHeader header;
+            header.deserialize(data);
+            return header;
+        }
+
+        void appendBytes(std::shared_ptr<Socket>& sock, std::string& body, size_t count, size_t maxBody,
+                         std::chrono::steady_clock::time_point deadline) {
+            if (body.size() + count > maxBody) {
+                throw std::runtime_error("http: response body too large");
+            }
+
+            std::vector<uint8_t> buf(1024);
+            while (count > 0) {
+                const size_t want = std::min(buf.size(), count);
+                int n = sock->recv(buf.data(), want, false, remainingMsOrThrow(deadline, "body read"));
+                if (n <= 0) {
+                    throw std::runtime_error("http: response body read failed");
+                }
+                body.append(reinterpret_cast<const char*>(buf.data()), n);
+                count -= static_cast<size_t>(n);
+            }
+        }
+
+        std::string recvChunkedBody(std::shared_ptr<Socket>& sock, size_t maxBody,
+                                    std::chrono::steady_clock::time_point deadline) {
+            std::string body;
+            while (true) {
+                std::string line;
+                int n = sock->recvline(line, 8192, remainingMsOrThrow(deadline, "chunk header read"));
+                if (n <= 0) {
+                    throw std::runtime_error("http: chunk header read failed");
+                }
+
+                line = trimAscii(line);
+                const auto extension = line.find(';');
+                if (extension != std::string::npos) { line.resize(extension); }
+
+                size_t consumed = 0;
+                size_t chunkSize = 0;
+                try {
+                    chunkSize = std::stoull(line, &consumed, 16);
+                }
+                catch (...) {
+                    throw std::runtime_error("http: malformed chunk size");
+                }
+                if (consumed != line.size()) {
+                    throw std::runtime_error("http: malformed chunk size");
+                }
+
+                if (chunkSize == 0) {
+                    while (true) {
+                        std::string trailer;
+                        int trailerLen = sock->recvline(trailer, 8192, remainingMsOrThrow(deadline, "chunk trailer read"));
+                        if (trailerLen <= 0) {
+                            throw std::runtime_error("http: chunk trailer read failed");
+                        }
+                        if (trailer == "\r" || trailer.empty()) { break; }
+                    }
+                    break;
+                }
+
+                appendBytes(sock, body, chunkSize, maxBody, deadline);
+
+                std::string crlf;
+                int crlfLen = sock->recvline(crlf, 2, remainingMsOrThrow(deadline, "chunk terminator read"));
+                if (crlfLen <= 0 || crlf != "\r") {
+                    throw std::runtime_error("http: malformed chunk terminator");
+                }
+            }
+            return body;
+        }
+
+        std::string recvBody(std::shared_ptr<Socket>& sock, ResponseHeader& header, size_t maxBody,
+                             std::chrono::steady_clock::time_point deadline) {
+            if (containsHeaderToken(getHeaderValue(header, "Transfer-Encoding"), "chunked")) {
+                return recvChunkedBody(sock, maxBody, deadline);
+            }
+
+            size_t contentLength = 0;
+            const bool hasContentLength = parseContentLength(getHeaderValue(header, "Content-Length"), contentLength);
+            if (hasContentLength && contentLength > maxBody) {
+                throw std::runtime_error("http: response body too large");
+            }
+
+            std::string body;
+            std::vector<uint8_t> buf(1024);
+            while (body.size() < maxBody) {
+                size_t want = buf.size();
+                if (hasContentLength) {
+                    if (body.size() >= contentLength) { break; }
+                    want = std::min(want, contentLength - body.size());
+                }
+
+                int n = sock->recv(buf.data(), want, false, remainingMsOrThrow(deadline, "body read"));
+                if (n < 0) {
+                    throw std::runtime_error("http: response body read failed");
+                }
+                if (n == 0) {
+                    if (hasContentLength && body.size() < contentLength) {
+                        throw std::runtime_error("http: response body ended before Content-Length");
+                    }
+                    break;
+                }
+                body.append(reinterpret_cast<const char*>(buf.data()), n);
+            }
+
+            if (!hasContentLength && body.size() >= maxBody) {
+                throw std::runtime_error("http: response body too large");
+            }
+            return body;
+        }
+    }
+
     std::string MessageHeader::serialize() {
         std::string data;
 
@@ -54,6 +272,10 @@ namespace net::http {
     }
 
     std::map<std::string, std::string>& MessageHeader::getFields() {
+        return fields;
+    }
+
+    const std::map<std::string, std::string>& MessageHeader::getFields() const {
         return fields;
     }
 
@@ -146,7 +368,7 @@ namespace net::http {
         deserialize(data);
     }
 
-    StatusCode ResponseHeader::getStatusCode() {
+    StatusCode ResponseHeader::getStatusCode() const {
         return statusCode;
     }
 
@@ -154,7 +376,7 @@ namespace net::http {
         this->statusCode = statusCode;
     }
 
-    std::string ResponseHeader::getStatusString() {
+    std::string ResponseHeader::getStatusString() const {
         return statusString;
     }
 
@@ -296,11 +518,88 @@ namespace net::http {
     int Client::recvHeader(std::string& data, int timeout) {
         while (sock->isOpen()) {
             std::string line;
-            int ret = sock->recvline(line);
+            int ret = sock->recvline(line, 0, timeout);
             if (line == "\r") { break; }
             if (ret <= 0) { return ret; }
             data += line + "\n";
         }
         return 0;
+    }
+
+    std::string hostHeaderFor(const url::HttpHostPort& endpoint) {
+        return endpoint.port == 80 ? endpoint.host : (endpoint.host + ":" + std::to_string(endpoint.port));
+    }
+
+    std::string getHeaderValue(const MessageHeader& header, const std::string& name) {
+        for (const auto& [key, value] : header.getFields()) {
+            if (equalsIgnoreAsciiCase(key, name)) {
+                return trimAscii(value);
+            }
+        }
+        return {};
+    }
+
+    bool isRedirectStatus(int status) {
+        return status == STATUS_CODE_MOVED_PERMANENTLY ||
+               status == STATUS_CODE_FOUND ||
+               status == STATUS_CODE_SEE_OTHER ||
+               status == STATUS_CODE_TEMP_REDIRECT ||
+               status == STATUS_CODE_PERMANENT_REDIRECT;
+    }
+
+    std::optional<url::HttpHostPort> resolveRedirectLocation(
+        const url::HttpHostPort& current,
+        const ResponseHeader& response) {
+        if (!isRedirectStatus(static_cast<int>(response.getStatusCode()))) {
+            return std::nullopt;
+        }
+        const std::string location = getHeaderValue(response, "Location");
+        if (location.empty()) {
+            return std::nullopt;
+        }
+        return url::resolveHttpLocation(current, location);
+    }
+
+    Response get(const url::HttpHostPort& endpoint, const RequestOptions& options) {
+        url::HttpHostPort current = endpoint;
+        current.path = requestPathFor(current);
+
+        for (int redirectsLeft = options.maxRedirects; redirectsLeft >= 0; redirectsLeft--) {
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(options.timeoutMs);
+            auto sock = net::connect(current.host, current.port);
+
+            RequestHeader request(METHOD_GET, requestPathFor(current), hostHeaderFor(current));
+            request.setField("Connection", "close");
+            for (const auto& [key, value] : options.headers) {
+                request.setField(key, value);
+            }
+
+            sendAll(sock, request.serialize(), deadline);
+
+            Response response;
+            response.header = recvResponseHeader(sock, deadline);
+            response.endpoint = current;
+
+            const int status = static_cast<int>(response.header.getStatusCode());
+            if (isRedirectStatus(status)) {
+                auto redirected = resolveRedirectLocation(current, response.header);
+                if (redirectsLeft == 0 || !redirected) {
+                    sock->close();
+                    throw std::runtime_error("http: redirect cannot be followed: " +
+                                             getHeaderValue(response.header, "Location"));
+                }
+                sock->close();
+                current = *redirected;
+                current.path = requestPathFor(current);
+                continue;
+            }
+
+            response.body = recvBody(sock, response.header, options.maxBody, deadline);
+            sock->close();
+            return response;
+        }
+
+        throw std::runtime_error("http: redirect limit exceeded");
     }
 }

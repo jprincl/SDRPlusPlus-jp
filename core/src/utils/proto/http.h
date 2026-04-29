@@ -1,7 +1,10 @@
 #pragma once
+#include <cstddef>
 #include <map>
+#include <optional>
 #include <string>
 #include "../net.h"
+#include "../url.h"
 
 namespace net::http {
     enum Method {
@@ -45,6 +48,7 @@ namespace net::http {
         STATUS_CODE_NOT_MODIFIED                = 304,
         STATUS_CODE_USE_PROXY                   = 305,
         STATUS_CODE_TEMP_REDIRECT               = 307,
+        STATUS_CODE_PERMANENT_REDIRECT          = 308,
 
         STATUS_CODE_BAD_REQUEST                 = 400,
         STATUS_CODE_UNAUTHORIZED                = 401,
@@ -94,6 +98,7 @@ namespace net::http {
         { STATUS_CODE_NOT_MODIFIED             , "NOT_MODIFIED"             },
         { STATUS_CODE_USE_PROXY                , "USE_PROXY"                },
         { STATUS_CODE_TEMP_REDIRECT            , "TEMP_REDIRECT"            },
+        { STATUS_CODE_PERMANENT_REDIRECT       , "PERMANENT_REDIRECT"       },
 
         { STATUS_CODE_BAD_REQUEST              , "BAD_REQUEST"              },
         { STATUS_CODE_UNAUTHORIZED             , "UNAUTHORIZED"             },
@@ -146,6 +151,7 @@ namespace net::http {
          * @return Map from field name to field.
          */
         std::map<std::string, std::string>& getFields();
+        const std::map<std::string, std::string>& getFields() const;
 
         /**
          * Check if a field exists in the header.
@@ -225,9 +231,9 @@ namespace net::http {
         ResponseHeader(StatusCode statusCode, const std::string& statusString);
         ResponseHeader(const std::string& data);
 
-        StatusCode getStatusCode();
+        StatusCode getStatusCode() const;
         void setStatusCode(StatusCode statusCode);
-        std::string getStatusString();
+        std::string getStatusString() const;
         void setStatusString(const std::string& statusString);
 
     private:
@@ -271,6 +277,27 @@ namespace net::http {
         std::shared_ptr<Socket> sock;
 
     };
+
+    struct RequestOptions {
+        int timeoutMs = 5000;
+        int maxRedirects = 0;
+        size_t maxBody = 64 * 1024;
+        std::map<std::string, std::string> headers;
+    };
+
+    struct Response {
+        ResponseHeader header;
+        std::string body;
+        url::HttpHostPort endpoint;
+    };
+
+    std::string hostHeaderFor(const url::HttpHostPort& endpoint);
+    std::string getHeaderValue(const MessageHeader& header, const std::string& name);
+    bool isRedirectStatus(int status);
+    std::optional<url::HttpHostPort> resolveRedirectLocation(
+        const url::HttpHostPort& current,
+        const ResponseHeader& response);
+    Response get(const url::HttpHostPort& endpoint, const RequestOptions& options = RequestOptions());
 
     
 }

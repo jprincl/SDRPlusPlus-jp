@@ -5,11 +5,10 @@
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
-#include <stdio.h>
 #include <thread>
 
 #include "../base64.h"
-#include "../url.h"
+#include "http.h"
 #include "picohash.h"
 #include <utils/flog.h>
 
@@ -47,46 +46,6 @@ namespace net::websock {
             uint8_t digest[PICOHASH_SHA1_DIGEST_LENGTH];
             _picohash_sha1_final(&ctx, digest);
             return base64::encode(digest, PICOHASH_SHA1_DIGEST_LENGTH);
-        }
-
-        void splitStringV(const std::string& input, const std::string& delimiter, std::vector<std::string>& output) {
-            output.clear();
-            size_t start = 0;
-            while (start <= input.size()) {
-                size_t end = input.find(delimiter, start);
-                if (end == std::string::npos) {
-                    output.push_back(input.substr(start));
-                    break;
-                }
-                output.push_back(input.substr(start, end - start));
-                start = end + delimiter.size();
-            }
-        }
-
-        int parseStatusCode(const std::string& statusLine) {
-            auto sp1 = statusLine.find(' ');
-            if (sp1 == std::string::npos) return -1;
-            auto sp2 = statusLine.find(' ', sp1 + 1);
-            std::string code = (sp2 == std::string::npos)
-                ? statusLine.substr(sp1 + 1)
-                : statusLine.substr(sp1 + 1, sp2 - sp1 - 1);
-            try { return std::stoi(code); } catch (...) { return -1; }
-        }
-
-        std::string findHeaderValue(const std::vector<std::string>& headers, const std::string& name) {
-            for (const auto& h : headers) {
-                auto colon = h.find(':');
-                if (colon == std::string::npos || colon != name.size()) continue;
-                bool match = true;
-                for (size_t i = 0; i < name.size(); i++) {
-                    if (std::tolower((unsigned char)h[i]) != std::tolower((unsigned char)name[i])) { match = false; break; }
-                }
-                if (!match) continue;
-                auto val = h.substr(colon + 1);
-                auto start = val.find_first_not_of(" \t");
-                return start == std::string::npos ? std::string() : val.substr(start);
-            }
-            return std::string();
         }
 
         bool equalsIgnoreAsciiCase(const std::string& a, const std::string& b) {
@@ -636,7 +595,7 @@ namespace net::websock {
             initHeaders += "Sec-WebSocket-Key: " + secKey + "\r\n";
             // RFC 7230 §5.4: omit the port from Host/Origin when it matches the scheme default,
             // otherwise reverse proxies (e.g. *.proxy.kiwisdr.com) fail to match server_name.
-            const std::string hostHeader = (currentPort == 80) ? currentHost : (currentHost + ":" + std::to_string(currentPort));
+            const std::string hostHeader = net::http::hostHeaderFor({ currentHost, currentPort, currentPath });
             initHeaders += "Host: " + hostHeader + "\r\n";
             initHeaders += "Origin: http://" + hostHeader + "\r\n";
             initHeaders += "\r\n";
@@ -679,22 +638,26 @@ namespace net::websock {
                 return;
             }
             flog::info("recvd: {}", recvd);
-            std::vector<std::string> recvHeaders;
-            std::string bufs((char*)buf.data(), recvd);
-            bufs.resize(pos + 2);
-            splitStringV(bufs, "\r\n", recvHeaders);
-            for (size_t i = 0; i < recvHeaders.size(); i++) {
-                printf("%s\n", recvHeaders[i].c_str());
+            std::string headerData((char*)buf.data(), pos + 2);
+            const auto statusEnd = headerData.find("\r\n");
+            const std::string statusLine = statusEnd == std::string::npos ? headerData : headerData.substr(0, statusEnd);
+            net::http::ResponseHeader responseHeader;
+            try {
+                responseHeader.deserialize(headerData);
+            }
+            catch (...) {
+                closeCurrentSocket(true);
+                throw std::runtime_error("websock: upgrade failed: malformed HTTP response");
             }
 
-            int status = recvHeaders.empty() ? -1 : parseStatusCode(recvHeaders[0]);
+            int status = static_cast<int>(responseHeader.getStatusCode());
             if (status == 101) {
-                std::string upgradeHdr = findHeaderValue(recvHeaders, "Upgrade");
+                std::string upgradeHdr = net::http::getHeaderValue(responseHeader, "Upgrade");
                 if (!equalsIgnoreAsciiCase(upgradeHdr, "websocket")) {
                     closeCurrentSocket(true);
                     throw std::runtime_error("websock: handshake failed: missing or wrong Upgrade header (got '" + upgradeHdr + "')");
                 }
-                std::string accept = findHeaderValue(recvHeaders, "Sec-WebSocket-Accept");
+                std::string accept = net::http::getHeaderValue(responseHeader, "Sec-WebSocket-Accept");
                 std::string expected = sha1Base64(secKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
                 if (accept != expected) {
                     closeCurrentSocket(true);
@@ -708,18 +671,12 @@ namespace net::websock {
                 break;
             }
 
-            const bool isRedirect = (status == 301 || status == 302 || status == 303 ||
-                                     status == 307 || status == 308);
-            if (isRedirect && redirectsLeft > 0) {
-                std::string location = findHeaderValue(recvHeaders, "Location");
-                if (location.empty()) {
-                    closeCurrentSocket(true);
-                    throw std::runtime_error("websock: redirect without Location header");
-                }
-                auto parsed = url::parseHttpHostPort(location);
+            if (net::http::isRedirectStatus(status) && redirectsLeft > 0) {
+                auto parsed = net::http::resolveRedirectLocation({ currentHost, currentPort, currentPath }, responseHeader);
                 if (!parsed) {
                     closeCurrentSocket(true);
-                    throw std::runtime_error("websock: cannot parse redirect Location: " + location);
+                    throw std::runtime_error("websock: cannot parse redirect Location: " +
+                                             net::http::getHeaderValue(responseHeader, "Location"));
                 }
                 closeCurrentSocket(false);
                 std::string redirectPath = parsed->path;
@@ -736,8 +693,7 @@ namespace net::websock {
             }
 
             closeCurrentSocket(true);
-            throw std::runtime_error("websock: upgrade failed: " +
-                (recvHeaders.empty() ? std::string("(no status line)") : recvHeaders[0]));
+            throw std::runtime_error("websock: upgrade failed: " + statusLine);
         }
 
         onConnected();
