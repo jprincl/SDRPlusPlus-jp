@@ -3,6 +3,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include "../ascii.h"
 #include "../net.h"
 #include "../url.h"
@@ -19,7 +20,12 @@ namespace net::http {
         METHOD_CONNECT
     };
 
-    inline std::map<Method, std::string> MethodStrings {
+    struct MethodNamePair {
+        Method method;
+        std::string_view name;
+    };
+
+    inline constexpr MethodNamePair MethodStrings[] = {
         { METHOD_OPTIONS,   "OPTIONS" },
         { METHOD_GET,       "GET"     },
         { METHOD_HEAD,      "HEAD"    },
@@ -30,7 +36,16 @@ namespace net::http {
         { METHOD_CONNECT,   "CONNECT" }
     };
 
+    inline constexpr std::string_view methodName(Method m) {
+        for (const auto& e : MethodStrings) {
+            if (e.method == m) { return e.name; }
+        }
+        return {};
+    }
+
     enum StatusCode {
+        STATUS_CODE_INVALID                     = 0,
+
         STATUS_CODE_CONTINUE                    = 100,
         STATUS_CODE_SWITCH_PROTO                = 101,
 
@@ -80,7 +95,12 @@ namespace net::http {
         STATUS_CODE_HTTP_VERSION_UNSUPPORTED    = 505
     };
 
-    inline std::map<StatusCode, std::string> StatusCodeStrings {
+    struct StatusCodeNamePair {
+        StatusCode code;
+        std::string_view name;
+    };
+
+    inline constexpr StatusCodeNamePair StatusCodeStrings[] = {
         { STATUS_CODE_CONTINUE                 , "CONTINUE"                 },
         { STATUS_CODE_SWITCH_PROTO             , "SWITCH_PROTO"             },
 
@@ -91,7 +111,7 @@ namespace net::http {
         { STATUS_CODE_NO_CONTENT               , "NO_CONTENT"               },
         { STATUS_CODE_RESET_CONTENT            , "RESET_CONTENT"            },
         { STATUS_CODE_PARTIAL_CONTENT          , "PARTIAL_CONTENT"          },
-        
+
         { STATUS_CODE_MULTIPLE_CHOICES         , "MULTIPLE_CHOICES"         },
         { STATUS_CODE_MOVED_PERMANENTLY        , "MOVED_PERMANENTLY"        },
         { STATUS_CODE_FOUND                    , "FOUND"                    },
@@ -129,6 +149,13 @@ namespace net::http {
         { STATUS_CODE_GATEWAY_TIMEOUT          , "GATEWAY_TIMEOUT"          },
         { STATUS_CODE_HTTP_VERSION_UNSUPPORTED , "HTTP_VERSION_UNSUPPORTED" }
     };
+
+    inline constexpr std::string_view statusCodeName(StatusCode c) {
+        for (const auto& e : StatusCodeStrings) {
+            if (e.code == c) { return e.name; }
+        }
+        return {};
+    }
 
     /**
      * HTTP Message Header
@@ -194,7 +221,7 @@ namespace net::http {
      */
     class RequestHeader : public MessageHeader {
     public:
-        RequestHeader() {}
+        RequestHeader() = default;
 
         /**
          * Create request header from the mandatory parameters.
@@ -223,13 +250,13 @@ namespace net::http {
         void deserializeStartLine(const std::string& data);
         std::string serializeStartLine();
 
-        Method method;
-        std::string uri;
+        Method method = METHOD_GET;
+        std::string uri = "/";
     };
 
     class ResponseHeader : public MessageHeader {
     public:
-        ResponseHeader() {}
+        ResponseHeader() = default;
         ResponseHeader(StatusCode statusCode);
         ResponseHeader(StatusCode statusCode, const std::string& statusString);
         ResponseHeader(const std::string& data);
@@ -243,13 +270,13 @@ namespace net::http {
         void deserializeStartLine(const std::string& data);
         std::string serializeStartLine();
 
-        StatusCode statusCode;
+        StatusCode statusCode = STATUS_CODE_INVALID;
         std::string statusString;
     };
 
     class ChunkHeader {
     public:
-        ChunkHeader() {}
+        ChunkHeader() = default;
         ChunkHeader(size_t length);
         ChunkHeader(const std::string& data);
 
@@ -260,7 +287,7 @@ namespace net::http {
         void setLength(size_t length);
 
     private:
-        size_t length;
+        size_t length = 0;
     };
 
     class Client {

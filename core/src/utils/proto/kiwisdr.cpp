@@ -1,0 +1,353 @@
+#include "kiwisdr.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <locale>
+#include <sstream>
+#include <stdexcept>
+
+#include <json.hpp>
+
+#include "utils/flog.h"
+#include "utils/proto/http.h"
+#include "utils/url.h"
+
+int16_t KiwiSDRClient::readBE16(const char* data) {
+    const auto* bytes = reinterpret_cast<const uint8_t*>(data);
+    const uint16_t value = (static_cast<uint16_t>(bytes[0]) << 8) | bytes[1];
+    if (value < 0x8000) {
+        return static_cast<int16_t>(value);
+    }
+    return static_cast<int16_t>(static_cast<int>(value) - 0x10000);
+}
+
+void KiwiSDRClient::setConnectionStatus(const char* status) {
+    std::lock_guard<std::mutex> lock(connectionStatusLock);
+    snprintf(connectionStatus, sizeof connectionStatus, "%s", status);
+}
+
+std::string KiwiSDRClient::getConnectionStatus() const {
+    std::lock_guard<std::mutex> lock(connectionStatusLock);
+    return connectionStatus;
+}
+
+KiwiSDRClient::~KiwiSDRClient() {
+    flog::info("KiwiSDRClient: destructor");
+    stop();
+}
+
+void KiwiSDRClient::init(const std::string& hostport) {
+    this->hostPort = hostport;
+    setConnectionStatus("Not connected");
+
+    wsClient.onDisconnected = [&]() {
+        connected = false;
+        this->onDisconnected();
+        setConnectionStatus("Disconnected");
+    };
+
+    wsClient.onConnected = [&]() {
+        // x.sendString("SET mod=usb low_cut=300 high_cut=2700 freq=14100.000");
+        wsClient.sendString("SET auth t=kiwi p=#");
+        wsClient.sendString("SET AR OK in=" + std::to_string(IQDATA_FREQUENCY) + " out=48000");
+        //            x.sendString("SET mod=am low_cut=-4900 high_cut=4900 freq=119604.33");
+        wsClient.sendString("SERVER DE CLIENT sdr++iak SND");
+        wsClient.sendString("SET compression=0");
+        sendAgcLine();
+        connected = true;
+        if (this->onConnected) {
+            onConnected();
+        }
+        setConnectionStatus("Connected, waiting data...");
+        //            wsClient.sendString("SET mod=iq low_cut=-5000 high_cut=5000 freq=14074.000");
+    };
+    wsClient.onTextMessage = [&](const std::string& msg) {
+        flog::info("TEXT: {}", msg);
+    };
+
+    wsClient.onBinaryMessage = [&](const std::string& msg) {
+        std::string start = "???";
+        if (msg.size() > 3) {
+            start = msg.substr(0, 3);
+        }
+        if (start == "MSG") {
+            parseMsgFrame(msg);
+        }
+        else if (start == "SND") {
+            using namespace std::chrono_literals;
+            auto ctm = Clock::now();
+            times.emplace_back(ctm);
+            int lastSecondCount = 0;
+            for (int q = times.size() - 1; q >= 0; q--) {
+                if (times[q] < ctm - 1s) {
+                    break;
+                }
+                lastSecondCount++;
+            }
+            while (!times.empty() && times.front() < ctm - 2s) {
+                times.pop_front();
+            }
+            char status[100];
+            snprintf(status, sizeof status, "Receiving. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
+            setConnectionStatus(status);
+            int IQ_HEADER_SIZE = 20;
+            int REAL_HEADER_SIZE = 10;
+            const Modulation modulation = currentModulation.load();
+            if (modulation == TUNE_REAL && msg.size() == 1024 + REAL_HEADER_SIZE) { // REAL data
+                const char* samples = msg.data() + REAL_HEADER_SIZE;
+                setConnectionStatus("Storing real..");
+                {
+                    std::lock_guard<std::mutex> lock(iqDataLock);
+                    for (int z = 0; z < 512; z++) {
+                        const int16_t sample = readBE16(samples + (z * 2));
+                        iqData.emplace_back(sample / 32767.0f, 0.0f);
+                    }
+                    while (iqData.size() > NETWORK_BUFFER_SIZE * 1.5) {
+                        iqData.erase(iqData.begin(), iqData.begin() + 200);
+                    }
+                }
+                snprintf(status, sizeof status, "Cont Recv. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
+                setConnectionStatus(status);
+            }
+            if (modulation == TUNE_IQ && msg.size() == 2048 + IQ_HEADER_SIZE && msg[3] == 0x08) { // IQ data
+                const char* samples = msg.data() + IQ_HEADER_SIZE;
+                {
+                    std::lock_guard<std::mutex> lock(iqDataLock);
+                    for (int z = 0; z < 512; z++) {
+                        const char* iqsample = samples + (z * 4);
+                        const int16_t i = readBE16(iqsample);
+                        const int16_t q = readBE16(iqsample + 2);
+                        iqData.emplace_back(i / 32767.0f, q / 32767.0f);
+                    }
+                    while (iqData.size() > NETWORK_BUFFER_SIZE * 1.5) {
+                        iqData.erase(iqData.begin(), iqData.begin() + 200);
+                    }
+                }
+                //                    flog::info("{} Got sound: bytes={} , {} samples, buflen now = {} (erased {})", (int64_t)currentTimeMillis(), msg.size(), (msg.size() - HEADER_SIZE) / 4, buflen, erased);
+            }
+        }
+        else {
+            if (msg.size() >= 70) {
+                char buf[100];
+                for (int q = 3; q < 30; q++) {
+                    snprintf(buf, sizeof buf, "%02x ", (unsigned char)msg[q]);
+                    start += buf;
+                }
+                start += "... ";
+                for (int q = -20; q < 0; q++) {
+                    snprintf(buf, sizeof buf, "%02x ", (unsigned char)msg[msg.size() - 1 + q]);
+                    start += buf;
+                }
+            }
+//                flog::info("=> BIN: {} bytes: {}", (int64_t)msg.size(), start);
+        }
+    };
+    using namespace std::chrono_literals;
+    lastPing = Clock::now();
+    wsClient.onEveryReceive = [&]() {
+        auto now = Clock::now();
+        if (now - lastPing > 4s) {
+            wsClient.sendString("SET keepalive");
+            lastPing = now;
+        }
+    };
+}
+
+void KiwiSDRClient::tune(double freq, Modulation mod) {
+    currentFrequency.store(freq);
+    currentModulation.store(mod);
+    if (connected.load()) {
+        sendTuneCommand(freq, mod);
+    }
+}
+
+void KiwiSDRClient::setAgc(AgcSettings s) {
+    s.thresholdDb  = std::clamp(s.thresholdDb,  -130, 0);
+    s.slopeDb      = std::clamp(s.slopeDb,      0, 10);
+    s.decayMs      = std::clamp(s.decayMs,      20, 5000);
+    s.manualGainDb = std::clamp(s.manualGainDb, 0, 120);
+    {
+        std::lock_guard<std::mutex> lock(agcMutex);
+        agc = s;
+    }
+    if (connected) {
+        sendAgcLine();
+    }
+}
+
+KiwiSDRClient::AgcSettings KiwiSDRClient::getAgc() const {
+    std::lock_guard<std::mutex> lock(agcMutex);
+    return agc;
+}
+
+void KiwiSDRClient::sendTuneCommand(double freq, Modulation mod) {
+    const double serverFreq = freq - static_cast<double>(serverFrequencyOffset.load());
+    char buf[1024];
+    switch (mod) {
+    case Modulation::TUNE_IQ:
+        snprintf(buf, sizeof buf, "SET mod=iq low_cut=-7000 high_cut=7000 freq=%0.3f", serverFreq / 1000.0);
+        break;
+    case Modulation::TUNE_REAL:
+        snprintf(buf, sizeof buf, "SET mod=usb low_cut=0 high_cut=8000 freq=%0.3f", (serverFreq - 3000) / 1000.0);
+        break;
+    }
+    wsClient.sendString(buf);
+}
+
+void KiwiSDRClient::sendAgcLine() {
+    // Take a snapshot under the mutex so the SET line on the wire
+    // always reflects a single, coherent setAgc() — never a mix of
+    // before/after values from an in-flight update on another thread.
+    AgcSettings snap = getAgc();
+    char buf[256];
+    snprintf(buf, sizeof buf, "SET agc=%d hang=%d thresh=%d slope=%d decay=%d manGain=%d",
+             snap.enabled ? 1 : 0,
+             snap.hang ? 1 : 0,
+             snap.thresholdDb,
+             snap.slopeDb,
+             snap.decayMs,
+             snap.manualGainDb);
+    wsClient.sendString(buf);
+}
+
+void KiwiSDRClient::parseMsgFrame(const std::string& msg) {
+    std::istringstream iss(msg);
+    std::string token;
+    iss >> token;  // consume the "MSG" prefix
+    while (iss >> token) {
+        const auto eq = token.find('=');
+        if (eq == std::string::npos) continue;
+        onKeyValue(token.substr(0, eq), url::decode(token.substr(eq + 1)));
+    }
+}
+
+void KiwiSDRClient::onKeyValue(const std::string& key, const std::string& value) {
+    auto it = keyValues.find(key);
+    if (it != keyValues.end() && it->second == value) {
+        return;
+    }
+    keyValues[key] = value;
+    if (key == "freq_offset") {
+        serverFrequencyOffset.store(parseKhzToHz(value));
+        // Re-issue the last user-requested tune so the displayed
+        // frequency stays correct once the offset is known. Skip if
+        // no tune has happened yet (currentFrequency still default).
+        const double last = currentFrequency.load();
+        if (last != 0.0 && connected.load()) {
+            sendTuneCommand(last, currentModulation.load());
+        }
+    }
+}
+
+int64_t KiwiSDRClient::parseKhzToHz(const std::string& value) {
+    // KiwiSDR reports frequencies in kHz with up to 3 decimal places
+    // (1 Hz precision). Use the classic locale to avoid surprises with
+    // comma-as-decimal locales.
+    std::istringstream iss(value);
+    iss.imbue(std::locale::classic());
+    double khz = 0.0;
+    iss >> khz;
+    if (!iss) return 0;
+    return static_cast<int64_t>(std::llround(khz * 1000.0));
+}
+
+uint64_t KiwiSDRClient::fetchServerTimestamp(const std::string& host, int port) {
+    using namespace std::chrono;
+    const uint64_t fallback = static_cast<uint64_t>(
+        duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+    try {
+        net::http::RequestOptions options;
+        options.timeoutMs = 5000;
+        options.maxRedirects = 5;
+        options.maxBody = 64 * 1024;
+        options.headers["Accept"] = "application/json, text/plain, */*";
+        options.headers["User-Agent"] = "SDR++ KiwiSDR client";
+
+        auto response = net::http::get({ host, port, "/VER" }, options);
+        const int status = static_cast<int>(response.header.getStatusCode());
+        if (status != 200) {
+            throw std::runtime_error("KiwiSDRClient: /VER HTTP status " + std::to_string(status));
+        }
+
+        auto j = nlohmann::json::parse(response.body, nullptr, /*allow_exceptions=*/false);
+        if (!j.is_discarded() && j.contains("ts")) {
+            const auto& ts = j["ts"];
+            if (ts.is_number_unsigned()) {
+                return ts.get<uint64_t>();
+            }
+            if (ts.is_string()) {
+                try { return std::stoull(ts.get<std::string>()); } catch (...) {}
+            }
+        }
+        throw std::runtime_error("KiwiSDRClient: /VER JSON missing ts");
+    }
+    catch (const std::exception& e) {
+        flog::warn("KiwiSDRClient: /VER fetch failed, using local timestamp fallback: {}", e.what());
+    }
+    catch (...) {
+        flog::warn("KiwiSDRClient: /VER fetch failed, using local timestamp fallback: unknown");
+    }
+    return fallback;
+}
+
+void KiwiSDRClient::resetSessionState() {
+    {
+        std::lock_guard<std::mutex> lock(iqDataLock);
+        iqData.clear();
+    }
+    keyValues.clear();
+    times.clear();
+    serverFrequencyOffset.store(0);
+}
+
+void KiwiSDRClient::stop() {
+    if (running.load() || looperThread.joinable()) {
+        setConnectionStatus("Disconnecting..");
+    }
+    running = false;
+    wsClient.stopSocket();
+    if (looperThread.joinable()) {
+        if (looperThread.get_id() != std::this_thread::get_id()) {
+            looperThread.join();
+        }
+    }
+    connected = false;
+    setConnectionStatus("Disconnected.");
+}
+
+void KiwiSDRClient::start() {
+    if (running.load()) { return; }
+    if (looperThread.joinable()) {
+        looperThread.join();
+    }
+    setConnectionStatus("Connecting..");
+    resetSessionState();
+    running = true;
+    connected = false;
+    wsClient.reset();
+    looperThread = std::thread([this]() {
+        flog::info("calling x.connectAndReceiveLoop..");
+        try {
+            auto parsed = url::splitHostPort(hostPort);
+            if (!parsed) {
+                throw std::runtime_error("KiwiSDRClient: malformed host:port: " + hostPort);
+            }
+            const uint64_t ts = fetchServerTimestamp(parsed->host, parsed->port);
+            wsClient.connectAndReceiveLoop(parsed->host, parsed->port, "/kiwi/" + std::to_string(ts) + "/SND");
+            flog::info("x.connectAndReceiveLoop exited.");
+            setConnectionStatus("Disconnected");
+            connected = false;
+            running = false;
+        }
+        catch (const std::runtime_error& e) {
+            flog::error("KiwiSDRSourceModule: Exception: {}", e.what());
+            char status[100];
+            snprintf(status, sizeof status, "Error: %s", e.what());
+            setConnectionStatus(status);
+            connected = false;
+            running = false;
+            onError(e.what());
+        }
+    });
+}

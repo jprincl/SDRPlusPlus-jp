@@ -73,6 +73,15 @@ namespace net::websock {
 #endif
         }
 
+        constexpr int HANDSHAKE_TIMEOUT_MS = 10000;
+
+        int deadlineSliceMs(std::chrono::steady_clock::time_point deadline) {
+            using namespace std::chrono;
+            const auto remaining = duration_cast<milliseconds>(deadline - steady_clock::now()).count();
+            if (remaining <= 0) { return 0; }
+            return static_cast<int>(remaining < 100 ? remaining : 100);
+        }
+
         class RawSocketGuard {
         public:
             explicit RawSocketGuard(::net::SockHandle_t sock) : sock(sock) {}
@@ -455,7 +464,8 @@ namespace net::websock {
         }
     }
 
-    ::net::SockHandle_t WSClient::connectSocket(const ::net::Address& addr) {
+    ::net::SockHandle_t WSClient::connectSocket(const ::net::Address& addr,
+                                                std::chrono::steady_clock::time_point deadline) {
         ::net::SockHandle_t sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 #ifdef _WIN32
         if (sock == INVALID_SOCKET) {
@@ -486,6 +496,12 @@ namespace net::websock {
         }
 
         while (!stopped) {
+            const int timeoutMs = deadlineSliceMs(deadline);
+            if (timeoutMs <= 0) {
+                closeRawSocket(sock);
+                throw std::runtime_error("websock: connect timed out");
+            }
+
             fd_set writeSet;
             fd_set errorSet;
             FD_ZERO(&writeSet);
@@ -494,8 +510,8 @@ namespace net::websock {
             FD_SET(sock, &errorSet);
 
             timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 100000;
+            tv.tv_sec = timeoutMs / 1000;
+            tv.tv_usec = (timeoutMs % 1000) * 1000;
 #ifdef _WIN32
             int ready = select(0, NULL, &writeSet, &errorSet, &tv);
 #else
@@ -538,7 +554,6 @@ namespace net::websock {
         // otherwise reverse proxies (e.g. *.proxy.kiwisdr.com) fail to match server_name.
         const std::string hostHeader = net::http::hostHeaderFor({ host, port, path });
         std::string req = "GET " + path + " HTTP/1.1\r\n"
-            "Accept-Encoding: gzip, deflate\r\n"
             "Accept-Language: en-US,en\r\n"
             "Cache-Control: no-cache\r\n"
             "Connection: Upgrade\r\n"
@@ -558,7 +573,9 @@ namespace net::websock {
         return req;
     }
 
-    bool WSClient::readUpgradeResponse(std::vector<uint8_t>& buf, size_t& recvd, size_t& headerEnd) {
+    bool WSClient::readUpgradeResponse(std::vector<uint8_t>& buf, size_t& recvd,
+                                       size_t& headerEnd,
+                                       std::chrono::steady_clock::time_point deadline) {
         // Accumulate the upgrade response until we see the \r\n\r\n header terminator.
         // The response can be split across multiple TCP segments (e.g. direct KiwiSDRs
         // send the 101 in fragments), so a single recv is not enough.
@@ -568,7 +585,12 @@ namespace net::websock {
                 closeCurrentSocket(true);
                 throw std::runtime_error("websock: upgrade response headers too large");
             }
-            int n = recvSocket(buf.data() + recvd, buf.size() - 1 - recvd, 100);
+            const int timeoutMs = deadlineSliceMs(deadline);
+            if (timeoutMs <= 0) {
+                closeCurrentSocket(true);
+                throw std::runtime_error("websock: upgrade response timed out");
+            }
+            int n = recvSocket(buf.data() + recvd, buf.size() - 1 - recvd, timeoutMs);
             if (n < 0) {
                 closeCurrentSocket(true);
                 throw std::runtime_error("websock: upgrade-response recv failed");
@@ -607,8 +629,10 @@ namespace net::websock {
         std::string currentPath = path;
 
         while (true) {
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(HANDSHAKE_TIMEOUT_MS);
             ::net::Address addr(currentHost, currentPort);
-            RawSocketGuard sock(connectSocket(addr));
+            RawSocketGuard sock(connectSocket(addr, deadline));
             if (!sock) { return std::nullopt; }
             emplaceSocket(sock.get(), addr);
             sock.release();
@@ -629,7 +653,7 @@ namespace net::websock {
             std::vector<uint8_t> buf(100000);
             size_t recvd = 0;
             size_t headerEnd = 0;
-            if (!readUpgradeResponse(buf, recvd, headerEnd)) {
+            if (!readUpgradeResponse(buf, recvd, headerEnd, deadline)) {
                 closeCurrentSocket(false);
                 return std::nullopt;
             }

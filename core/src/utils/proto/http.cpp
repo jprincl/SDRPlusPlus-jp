@@ -75,11 +75,16 @@ namespace net::http {
         }
 
         // Read header lines into `data` until a blank terminator (bare "\r"
-        // for CRLF servers, or empty for LF-only servers). Returns 0 on
-        // success, or the recvline result (<=0) on read failure so callers
-        // can distinguish timeout (0) from socket error (<0). Throws if
-        // maxSize is exceeded. The timeout for each recvline is taken from
-        // nextTimeoutMs, allowing per-call or deadline-based policy.
+        // for CRLF servers, or empty for LF-only servers).
+        //   1     blank terminator seen (full header complete)
+        //   0     recvline returned 0 (timeout / peer closed before terminator)
+        //         OR the socket was already closed when called
+        //   <0    recvline returned a negative error code
+        // Throws if maxSize is exceeded. The timeout for each recvline is
+        // taken from nextTimeoutMs, allowing per-call or deadline-based
+        // policy. Distinguishing 1 from 0 is important: recvline also returns
+        // 0 on success-with-zero-bytes-read, so the caller cannot use return
+        // value 0 alone to confirm the header is complete.
         int recvHeaderBytes(Socket& sock, std::string& data,
                             const std::function<int()>& nextTimeoutMs,
                             size_t maxSize, int maxLineLen) {
@@ -87,7 +92,7 @@ namespace net::http {
                 std::string line;
                 const int n = sock.recvline(line, maxLineLen, nextTimeoutMs());
                 if (n <= 0) { return n; }
-                if (line.empty() || line == "\r") { return 0; }
+                if (line.empty() || line == "\r") { return 1; }
                 data += line + "\n";
                 if (data.size() > maxSize) {
                     throw std::runtime_error("http: header too large");
@@ -99,10 +104,10 @@ namespace net::http {
         ResponseHeader recvResponseHeader(std::shared_ptr<Socket>& sock,
                                           std::chrono::steady_clock::time_point deadline) {
             std::string data;
-            const int err = recvHeaderBytes(*sock, data,
+            const int rc = recvHeaderBytes(*sock, data,
                 [&] { return remainingMsOrThrow(deadline, "header read"); },
                 64 * 1024, 8192);
-            if (err != 0) {
+            if (rc != 1) {
                 throw std::runtime_error("http: response header read failed");
             }
             ResponseHeader header;
@@ -264,8 +269,17 @@ namespace net::http {
                 if (line[voff] != ' ' && line[voff] != '\t') { break; }
             }
 
-            // Save field
-            fields[line.substr(0, klen)] = line.substr(voff);
+            // Save field. RFC 7230 §3.2.2: repeated field-names with the
+            // same name must be combined into a single comma-separated
+            // value. (Set-Cookie is the documented exception, but this
+            // client does not consume cookies.)
+            std::string name = line.substr(0, klen);
+            std::string value = line.substr(voff);
+            auto [it, inserted] = fields.emplace(std::move(name), std::move(value));
+            if (!inserted) {
+                it->second += ", ";
+                it->second += line.substr(voff);
+            }
         }
     }
 
@@ -349,9 +363,9 @@ namespace net::http {
 
         method = METHOD_GET;
         bool methodFound = false;
-        for (const auto& [code, name] : MethodStrings) {
-            if (name == methodStr) {
-                method = code;
+        for (const auto& e : MethodStrings) {
+            if (e.name == methodStr) {
+                method = e.method;
                 methodFound = true;
                 break;
             }
@@ -363,17 +377,14 @@ namespace net::http {
 
     std::string RequestHeader::serializeStartLine() {
         // TODO: Allow to specify version
-        return MethodStrings[method] + " " + uri + " HTTP/1.1";
+        const auto name = methodName(method);
+        return std::string(name) + " " + uri + " HTTP/1.1";
     }
 
     ResponseHeader::ResponseHeader(StatusCode statusCode) {
         this->statusCode = statusCode;
-        if (StatusCodeStrings.find(statusCode) != StatusCodeStrings.end()) {
-            this->statusString = StatusCodeStrings[statusCode];
-        }
-        else {
-            this->statusString = "UNKNOWN";
-        }
+        const auto name = statusCodeName(statusCode);
+        this->statusString = name.empty() ? std::string("UNKNOWN") : std::string(name);
     }
 
     ResponseHeader::ResponseHeader(StatusCode statusCode, const std::string& statusString) {
@@ -427,7 +438,7 @@ namespace net::http {
     }
 
     std::string ResponseHeader::serializeStartLine() {
-        return std::to_string(static_cast<int>(statusCode)) + " " + statusString;
+        return "HTTP/1.1 " + std::to_string(static_cast<int>(statusCode)) + " " + statusString;
     }
 
     ChunkHeader::ChunkHeader(size_t length) {
@@ -440,7 +451,7 @@ namespace net::http {
 
     std::string ChunkHeader::serialize() {
         char buf[64];
-        sprintf(buf, "%zX\r\n", length);
+        snprintf(buf, sizeof buf, "%zX\r\n", length);
         return buf;
     }
 
@@ -516,18 +527,28 @@ namespace net::http {
         std::string respData;
         int err = sock->recvline(respData, 0, timeout);
         if (err <= 0) { return err; }
-        if (respData[respData.size()-1] == '\r') {
+        if (!respData.empty() && respData[respData.size()-1] == '\r') {
             respData.pop_back();
         }
+        if (respData.empty()) { return -1; }
         chdr.deserialize(respData);
         return 0;
     }
 
     int Client::recvHeader(std::string& data, int timeout) {
-        // Per-call timeout, no size cap, no line-length cap. Propagates the
-        // recvline error code so callers can distinguish timeout from error.
-        return recvHeaderBytes(*sock, data, [timeout] { return timeout; },
-                               SIZE_MAX, 0);
+        // Per-call timeout, no size cap, no line-length cap.
+        //   helper rc == 1   saw terminator → API success (0)
+        //   helper rc <  0   hard recvline error → pass through
+        //   helper rc == 0   recvline returned 0 mid-headers (timeout /
+        //                    peer-close before terminator) → treat as a hard
+        //                    failure (-1) so the caller's `if (err)` check
+        //                    rejects the partial header instead of feeding
+        //                    truncated bytes to deserialize().
+        const int rc = recvHeaderBytes(*sock, data, [timeout] { return timeout; },
+                                       SIZE_MAX, 0);
+        if (rc == 1) { return 0; }
+        if (rc < 0)  { return rc; }
+        return -1;
     }
 
     std::string hostHeaderFor(const url::HttpHostPort& endpoint) {

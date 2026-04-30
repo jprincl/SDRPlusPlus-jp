@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -83,7 +84,8 @@ namespace net::websock {
                          unsigned char* out_buffer, int out_size,
                          int* out_length, int* skipSize);
 
-        ::net::SockHandle_t connectSocket(const ::net::Address& addr);
+        ::net::SockHandle_t connectSocket(const ::net::Address& addr,
+                                          std::chrono::steady_clock::time_point deadline);
         void emplaceSocket(::net::SockHandle_t sock, const ::net::Address& addr);
         void closeCurrentSocket(bool markStopped);
         int recvSocket(uint8_t* data, size_t len, int timeout);
@@ -97,7 +99,9 @@ namespace net::websock {
         // Read upgrade-response bytes until "\r\n\r\n". Returns false if
         // stopped before completion; throws on size cap / recv error.
         // On success, headerEnd is the byte offset of the "\r\n\r\n".
-        bool readUpgradeResponse(std::vector<uint8_t>& buf, size_t& recvd, size_t& headerEnd);
+        bool readUpgradeResponse(std::vector<uint8_t>& buf, size_t& recvd,
+                                 size_t& headerEnd,
+                                 std::chrono::steady_clock::time_point deadline);
         void validateUpgradeHeaders(const net::http::ResponseHeader& header);
         std::string generateSecKey();
         static std::string buildUpgradeRequest(const std::string& host, int port,

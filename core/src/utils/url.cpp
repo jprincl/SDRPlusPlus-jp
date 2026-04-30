@@ -9,6 +9,20 @@ namespace url {
 
     static const std::string HTTP_SCHEME = "http://";
 
+    static std::optional<int> parsePort(const std::string& portStr) {
+        try {
+            size_t pos = 0;
+            const int port = std::stoi(portStr, &pos);
+            if (pos != portStr.size() || port <= 0 || port > 65535) {
+                return std::nullopt;
+            }
+            return port;
+        }
+        catch (...) {
+            return std::nullopt;
+        }
+    }
+
     static std::string normalizeHttpPath(std::string path) {
         if (path.empty()) { return "/"; }
         if (path[0] == '?' || path[0] == '#') { return "/" + path; }
@@ -66,12 +80,11 @@ namespace url {
         if (r.host.empty()) {
             return std::nullopt;
         }
-        try {
-            r.port = std::stoi(rest.substr(colon + 1));
-        }
-        catch (...) {
+        auto port = parsePort(rest.substr(colon + 1));
+        if (!port) {
             return std::nullopt;
         }
+        r.port = *port;
         return r;
     }
 
@@ -86,12 +99,11 @@ namespace url {
         if (r.host.empty()) {
             return std::nullopt;
         }
-        try {
-            r.port = std::stoi(hostPort.substr(colon + 1));
-        }
-        catch (...) {
+        auto port = parsePort(hostPort.substr(colon + 1));
+        if (!port) {
             return std::nullopt;
         }
+        r.port = *port;
         return r;
     }
 
