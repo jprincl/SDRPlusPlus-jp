@@ -69,8 +69,16 @@ jobs:
               exit 0
             fi
             BASE="${{ github.event.pull_request.base.sha }}"
+            # AppImage packaging depends on:
+            #   - the appimage build scripts and reusable workflow
+            #   - the orchestrator workflow (matrix changes)
+            #   - the desktop file (referenced by linuxdeploy)
+            #   - the root and core CMakeLists (install paths, INSTALL_PREFIX define)
+            #   - sdrpp_module.cmake (plugin install destination)
+            #   - core.cpp (resource/module path resolution + APPDIR override)
+            #   - the icon resource (referenced by the desktop file)
             if git diff --name-only "$BASE...HEAD" | \
-               grep -qE '^(docker_builds/appimage/|\.github/workflows/build_appimage\.yml|\.github/workflows/build_all\.yml|sdrpp-iak\.desktop)'; then
+               grep -qE '^(docker_builds/appimage/|\.github/workflows/build_appimage\.yml|\.github/workflows/build_all\.yml|sdrpp-iak\.desktop|CMakeLists\.txt|core/CMakeLists\.txt|sdrpp_module\.cmake|core/src/core\.cpp|root/res/icons/)'; then
               echo "appimage=true" >> $GITHUB_OUTPUT
             else
               echo "appimage=false" >> $GITHUB_OUTPUT

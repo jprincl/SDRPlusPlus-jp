@@ -37,6 +37,11 @@ target_compile_options(sdrpp_core PRIVATE ${SDRPP_COMPILER_FLAGS})
 # Set the install prefix
 target_compile_definitions(sdrpp_core PUBLIC INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}")
 
+# AppImage build: enable runtime code paths that resolve resources via $APPDIR.
+if (OPT_BUILD_APPIMAGE)
+    target_compile_definitions(sdrpp_core PUBLIC BUILD_APPIMAGE)
+endif ()
+
 # Include core headers
 target_include_directories(sdrpp_core PUBLIC "src/")
 target_include_directories(sdrpp_core PUBLIC "src/imgui")

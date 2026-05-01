@@ -8,7 +8,7 @@ RUN apt-get -o Acquire::Retries=3 update && \
     apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
         build-essential cmake git pkg-config ca-certificates \
         wget unzip p7zip-full file patchelf xxd \
-        autoconf libtool \
+        autoconf automake libtool \
         libfftw3-dev libglfw3-dev libvolk2-dev libzstd-dev \
         libairspy-dev libairspyhf-dev libhackrf-dev librtlsdr-dev \
         libbladerf-dev liblimesuite-dev \

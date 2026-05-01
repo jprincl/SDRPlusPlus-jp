@@ -15,6 +15,7 @@ set(SDR_KIT_ROOT "${SDR_KIT_ROOT_DEFAULT}" CACHE PATH "Root path for the SDR kit
 
 # Compatibility Options
 option(OPT_OVERRIDE_STD_FILESYSTEM "Use a local version of std::filesystem on systems that don't have it yet" OFF)
+option(OPT_BUILD_APPIMAGE "Build AppImage-specific runtime code paths (Linux only — overrides resource paths via $APPDIR at launch)" OFF)
 
 # Sources
 option(OPT_BUILD_AIRSPY_SOURCE "Build Airspy Source Module (Dependencies: libairspy)" ON)

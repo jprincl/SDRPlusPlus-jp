@@ -77,7 +77,7 @@ namespace server {
 
         // Load config
         core::configManager.acquire();
-        std::string modulesDir = core::configManager.conf["modulesDirectory"];
+        std::string modulesDir = core::getModulesDirectory();
         std::vector<std::string> modules = core::configManager.conf["modules"];
         auto modList = core::configManager.conf["moduleInstances"].items();
         std::string sourceName = core::configManager.conf["source"];

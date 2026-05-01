@@ -57,6 +57,24 @@ namespace core {
         // Debug logs
         flog::info("New DSP samplerate: {0} (source samplerate is {1})", effectiveSr, samplerate);
     }
+
+    std::string getModulesDirectory() {
+#if defined(__linux__) && defined(BUILD_APPIMAGE)
+        if (const char* appdir = getenv("APPDIR")) {
+            return std::string(appdir) + "/usr/lib/sdrpp-iak/plugins";
+        }
+#endif
+        return core::configManager.conf["modulesDirectory"];
+    }
+
+    std::string getResourcesDirectory() {
+#if defined(__linux__) && defined(BUILD_APPIMAGE)
+        if (const char* appdir = getenv("APPDIR")) {
+            return std::string(appdir) + "/usr/share/sdrpp-iak";
+        }
+#endif
+        return core::configManager.conf["resourcesDirectory"];
+    }
 };
 
 // main
@@ -295,6 +313,8 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.setPath(root + "/config.json");
     bool firstStart = !std::filesystem::exists(root + "/config.json");
     core::configManager.load(defConfig);
+
+
     core::configManager.enableAutoSave();
     core::configManager.acquire();
 
@@ -383,7 +403,7 @@ int sdrpp_main(int argc, char* argv[]) {
     if (serverMode) { return server::main(); }
 
     core::configManager.acquire();
-    std::string resDir = core::configManager.conf["resourcesDirectory"];
+    std::string resDir = core::getResourcesDirectory();
     json bandColors = core::configManager.conf["bandColors"];
     core::configManager.release();
 
