@@ -88,6 +88,7 @@ https://github.com/KubaPro010/SDRMinusMinus
 SDR++ modules
 https://github.com/cropinghigh/sdrpp-tetra-demodulator
 https://github.com/dbdexter-dev/sdrpp_radiosonde
+https://github.com/williamyang98/SDRPlusPlus-DAB-Radio-Plugin
 https://github.com/cropinghigh/sdrpp-vhfvoiceradio
 https://github.com/cropinghigh/sdrpp-inmarsatc-demodulator
 https://github.com/Sultan-papagani/sdrpp_new_rtlsdr_source

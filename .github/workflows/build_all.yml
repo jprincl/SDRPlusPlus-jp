@@ -109,7 +109,9 @@ jobs:
 
         steps:
         - uses: actions/checkout@v4
-        
+          with:
+            submodules: recursive
+
         - name: Create Build Environment
           run: cmake -E make_directory ${{runner.workspace}}/build
 
@@ -240,6 +242,8 @@ jobs:
 
         steps:
         - uses: actions/checkout@v4
+          with:
+            submodules: recursive
 
         - name: Create Build Environment
           run: cmake -E make_directory ${{runner.workspace}}/build
@@ -455,6 +459,8 @@ jobs:
 
         steps:
         - uses: actions/checkout@v4
+          with:
+            submodules: recursive
 
         - name: Fetch container
           working-directory: ${{runner.workspace}}
