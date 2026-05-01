@@ -88,6 +88,7 @@ cp $build_dir/decoder_modules/meteor_demodulator/Release/meteor_demodulator.dll 
 
 cp $build_dir/decoder_modules/radio/Release/radio.dll sdrpp_windows_arm64ec/modules/
 
+cp $build_dir/decoder_modules/radiosonde_decoder/Release/radiosonde_decoder.dll sdrpp_windows_arm64ec/modules/
 
 # Copy misc modules
 cp $build_dir/misc_modules/discord_integration/Release/discord_integration.dll sdrpp_windows_arm64ec/modules/

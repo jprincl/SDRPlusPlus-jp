@@ -324,7 +324,7 @@ add_subdirectory("decoder_modules/radio")
 endif (OPT_BUILD_RADIO)
 
 if (OPT_BUILD_RADIOSONDE_DECODER)
-add_subdirectory("decoder_modules/sdrpp_radiosonde")
+add_subdirectory("decoder_modules/radiosonde_decoder")
 endif (OPT_BUILD_RADIOSONDE_DECODER)
 
 if (OPT_BUILD_RYFI_DECODER)
@@ -392,7 +392,7 @@ target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILER_FLAGS})
 if (MSVC)
     add_custom_target(do_always ALL xcopy /s \"$<TARGET_FILE_DIR:sdrpp_core>\\*.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
     add_custom_target(do_always_volk ALL xcopy /s \"C:/Program Files/PothosSDR/bin\\volk.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
-
+ 
     if (COPY_MSVC_REDISTRIBUTABLES)
         # Get the list of Visual C++ runtime DLLs
         set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP True)

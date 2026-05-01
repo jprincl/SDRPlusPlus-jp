@@ -1,4 +1,4 @@
-[submodule "decoder_modules/sdrpp_radiosonde/src/decode/sondedump"]
-	path = decoder_modules/sdrpp_radiosonde/src/decode/sondedump
+[submodule "decoder_modules/radiosonde_decoder/src/decode/sondedump"]
+	path = decoder_modules/radiosonde_decoder/src/decode/sondedump
 	url = https://github.com/dbdexter-dev/sondedump.git
 	branch = master

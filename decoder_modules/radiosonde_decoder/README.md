@@ -23,7 +23,7 @@ Installing
 
 Binary releases for Windows and Linux (both x86-64 only, built for [SDR++
 nightlies](https://github.com/AlexandreRouma/SDRPlusPlus/actions)) are available from
-[the Releases page](https://github.com/dbdexter-dev/sdrpp_radiosonde/releases).
+[the Releases page](https://github.com/dbdexter-dev/radiosonde_decoder/releases).
 
 - **Windows**: download the `.dll` file from the latest release, and place it in
   the `modules` directory within your SDR++ installation.
@@ -50,10 +50,9 @@ option(OPT_BUILD_RADIOSONDE_DECODER "Build the radiosonde decoder module (no dep
    following lines:
 ```
 if (OPT_BUILD_RADIOSONDE_DECODER)
-add_subdirectory("decoder_modules/sdrpp_radiosonde")
+add_subdirectory("decoder_modules/radiosonde_decoder")
 endif (OPT_BUILD_RADIOSONDE_DECODER)
 ```
-4. Navigate to the `decoder_modules` folder, then clone this repository: `git clone https://github.com/dbdexter-dev/sdrpp_radiosonde --recurse-submodules`
+4. Navigate to the `decoder_modules` folder, then clone this repository: `git clone https://github.com/dbdexter-dev/radiosonde_decoder --recurse-submodules`
 5. Build and install SDR++ following the guide in the original repository
 6. Enable the module by adding it via the module manager
-
