@@ -243,13 +243,13 @@ int sdrpp_main(int argc, char* argv[]) {
 
     defConfig["moduleInstances"]["Radio"] = "radio";
     defConfig["moduleInstances"]["Radiosonde Decoder"]["module"] = "radiosonde_decoder";
-    defConfig["moduleInstances"]["Radiosonde Decoder"]["enabled"] = true;
+    defConfig["moduleInstances"]["Radiosonde Decoder"]["enabled"] = false;
 
     defConfig["moduleInstances"]["Frequency Manager"] = "frequency_manager";
     defConfig["moduleInstances"]["Recorder"] = "recorder";
     defConfig["moduleInstances"]["Rigctl Server"] = "rigctl_server";
     defConfig["moduleInstances"]["WebSDR View"]["module"] = "websdr_view";
-    defConfig["moduleInstances"]["WebSDR View"]["enabled"] = true;
+    defConfig["moduleInstances"]["WebSDR View"]["enabled"] = false;
     // defConfig["moduleInstances"]["Rigctl Client"] = "rigctl_client";
     // TODO: Enable rigctl_client when ready
     // defConfig["moduleInstances"]["Scanner"] = "scanner";
