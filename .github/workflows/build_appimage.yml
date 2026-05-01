@@ -1,0 +1,47 @@
+name: Build AppImage
+
+on:
+    workflow_call:
+        inputs:
+            runner:
+                required: true
+                type: string
+            arch:
+                required: true
+                type: string
+            artifact:
+                required: true
+                type: string
+            version_full:
+                required: true
+                type: string
+
+env:
+    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+    build:
+        runs-on: ${{ inputs.runner }}
+
+        steps:
+        - uses: actions/checkout@v4
+
+        - name: Build Docker Image
+          run: docker build -f $GITHUB_WORKSPACE/docker_builds/appimage/Dockerfile $GITHUB_WORKSPACE/docker_builds/appimage --tag sdrpp_appimage_build
+
+        - name: Run Container
+          run: |
+            docker run --name build \
+              -v $GITHUB_WORKSPACE:/root/SDRPlusPlus \
+              --env VERSION_FULL="${{ inputs.version_full }}" \
+              sdrpp_appimage_build /root/make_appimage.sh
+
+        - name: Recover AppImage
+          working-directory: ${{ runner.workspace }}
+          run: docker cp build:/root/sdrpp-iak-${{ inputs.version_full }}-${{ inputs.arch }}.AppImage ./
+
+        - name: Save AppImage
+          uses: actions/upload-artifact@v4
+          with:
+              name: ${{ inputs.artifact }}
+              path: ${{ runner.workspace }}/sdrpp-iak-${{ inputs.version_full }}-${{ inputs.arch }}.AppImage
