@@ -234,6 +234,90 @@ jobs:
               name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-windows-x64
               path: ${{runner.workspace}}/sdrpp_windows_x64.zip
 
+    build_windows_arm64ec:
+        needs: [get_version]
+        runs-on: windows-latest
+
+        steps:
+        - uses: actions/checkout@v4
+
+        - name: Create Build Environment
+          run: cmake -E make_directory ${{runner.workspace}}/build
+
+        - name: Download PothosSDR
+          run: Invoke-WebRequest -Uri "https://downloads.myriadrf.org/builds/PothosSDR/PothosSDR-2020.01.26-vc14-x64.exe" -OutFile ${{runner.workspace}}/pothos.exe
+
+        - name: Install PothosSDR
+          run: mkdir "C:/Program Files/PothosSDR" ; 7z x ${{runner.workspace}}/pothos.exe -o"C:/Program Files/PothosSDR/"
+
+        - name: Download libusb
+          run: Invoke-WebRequest -Uri "https://github.com/libusb/libusb/releases/download/v1.0.23/libusb-1.0.23.7z" -OutFile ${{runner.workspace}}/libusb.7z
+
+        - name: Patch Pothos with earlier libusb version
+          working-directory: ${{runner.workspace}}
+          run: 7z x libusb.7z -olibusb_old ; rm "C:/Program Files/PothosSDR/bin/libusb-1.0.dll" ; cp "libusb_old/MS64/dll/libusb-1.0.dll" "C:/Program Files/PothosSDR/bin/" ; rm "C:/Program Files/PothosSDR/lib/libusb-1.0.lib" ; cp "libusb_old/MS64/dll/libusb-1.0.lib" "C:/Program Files/PothosSDR/lib/"
+
+        - name: Download librtlsdr
+          run: Invoke-WebRequest -Uri "https://ftp.osmocom.org/binaries/windows/rtl-sdr/rtl-sdr-64bit-20240623.zip" -OutFile ${{runner.workspace}}/rtl-sdr.zip
+
+        - name: Patch Pothos with newer librtlsdr version
+          working-directory: ${{runner.workspace}}
+          run: 7z x rtl-sdr.zip ; rm "C:/Program Files/PothosSDR/bin/rtlsdr.dll" ; cp "rtl-sdr-64bit-20240623/librtlsdr.dll" "C:/Program Files/PothosSDR/bin/rtlsdr.dll"
+
+        - name: Download SDRPlay API
+          run: Invoke-WebRequest -Uri "https://www.sdrpp.org/SDRplay.zip" -OutFile ${{runner.workspace}}/SDRplay.zip
+
+        - name: Install SDRPlay API
+          run: 7z x ${{runner.workspace}}/SDRplay.zip -o"C:/Program Files/"
+
+        - name: Download codec2
+          run: git clone https://github.com/drowe67/codec2
+
+        - name: Prepare MinGW
+          run: C:/msys64/msys2_shell.cmd -defterm -here -no-start -mingw64 -c "pacman --noconfirm -S --needed base-devel mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja"
+
+        - name: Prepare build for codec2
+          run: cd codec2 ; mkdir build ; cd build ; C:/msys64/msys2_shell.cmd -defterm -here -no-start -mingw64 -c "cmake .. -DCMAKE_GNUtoMS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-static-libgcc"
+
+        - name: Build codec2
+          run: cd codec2/build ; C:/msys64/msys2_shell.cmd -defterm -here -no-start -mingw64 -c "ninja"
+
+        - name: Install codec2
+          run: mkdir "C:/Program Files/codec2" ; mkdir "C:/Program Files/codec2/include" ; mkdir "C:/Program Files/codec2/include/codec2" ; mkdir "C:/Program Files/codec2/lib" ; cd "codec2" ; xcopy "src" "C:/Program Files/codec2/include" ; cd "build" ; xcopy "src" "C:/Program Files/codec2/lib" ; xcopy "codec2" "C:/Program Files/codec2/include/codec2"
+
+        - name: Install vcpkg dependencies
+          run: vcpkg install fftw3:arm64ec-windows glfw3:arm64ec-windows portaudio:arm64ec-windows zstd:arm64ec-windows libusb:x64-windows spdlog:x64-windows
+
+        - name: Install rtaudio
+          run: git clone https://github.com/thestk/rtaudio ; cd rtaudio ; git checkout 2f2fca4502d506abc50f6d4473b2836d24cfb1e3 ; mkdir build ; cd build ; cmake .. -A ARM64EC ; cmake --build . --config Release ; cmake --install .
+
+        - name: Install libperseus-sdr
+          run: git clone https://github.com/AlexandreRouma/libperseus-sdr ; cd libperseus-sdr ; mkdir build ; cd build ; cmake -DCMAKE_BUILD_TYPE=Release -A ARM64EC "-DLIBUSB_LIBRARIES=C:/Program Files/PothosSDR/lib/libusb-1.0.lib" "-DLIBUSB_INCLUDE_DIRS=C:/Program Files/PothosSDR/include/libusb-1.0" .. "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" ; cmake --build . --config Release  ; mkdir "C:/Program Files/PothosSDR/include/perseus-sdr" ; cp Release/perseus-sdr.dll "C:/Program Files/PothosSDR/bin" ; cp Release/perseus-sdr.lib "C:/Program Files/PothosSDR/bin" ; cd .. ; xcopy "src" "C:/Program Files/PothosSDR/include/perseus-sdr"
+
+        - name: Install librfnm
+          run: git clone https://github.com/AlexandreRouma/librfnm ; cd librfnm ; mkdir build ; cd build ; cmake .. -DCMAKE_BUILD_TYPE=Release -A ARM64EC "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" ; cmake --build . --config Release ; cmake --install .
+
+        - name: Install libfobos
+          run: git clone https://github.com/AlexandreRouma/libfobos ; cd libfobos ; mkdir build ; cd build ; cmake .. -DCMAKE_BUILD_TYPE=Release -A ARM64EC "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" ; cmake --build . --config Release ; cmake --install .
+
+        - name: Prepare CMake
+          working-directory: ${{runner.workspace}}/build
+          run: cmake -DCOPY_MSVC_REDISTRIBUTABLES=ON -DVCPKG_TARGET_TRIPLET=arm64ec-windows "$Env:GITHUB_WORKSPACE" "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake" -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_PERSEUS_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=OFF -A ARM64EC
+
+        - name: Build
+          working-directory: ${{runner.workspace}}/build
+          run: cmake --build . --config Release --verbose
+
+        - name: Create Archive
+          working-directory: ${{runner.workspace}}
+          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_arm64ec_package.ps1") ./build ($Env:GITHUB_WORKSPACE + "/root")'
+
+        - name: Save Archive
+          uses: actions/upload-artifact@v4
+          with:
+              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-windows-arm64ec
+              path: ${{runner.workspace}}/sdrpp_windows_arm64ec.zip
+
     build_macos:
         strategy:
             fail-fast: false
@@ -455,13 +539,15 @@ jobs:
         needs: [
           'get_version',
           'build_windows',
+          'build_windows_arm64ec',
           'build_macos',
           'build_linux',
           'build_appimage',
           'build_android'
         ]
         # build_appimage may be skipped on PRs that don't touch AppImage files;
-        # in that case we still want the archive for the rest of the platforms.
+        # build_windows_arm64ec is treated as optional while ARM64EC support stabilizes.
+        # In either case we still want the archive for the rest of the platforms.
         if: |
           always() &&
           needs.get_version.result == 'success' &&
@@ -469,7 +555,8 @@ jobs:
           needs.build_macos.result == 'success' &&
           needs.build_linux.result == 'success' &&
           needs.build_android.result == 'success' &&
-          (needs.build_appimage.result == 'success' || needs.build_appimage.result == 'skipped')
+          (needs.build_appimage.result == 'success' || needs.build_appimage.result == 'skipped') &&
+          (needs.build_windows_arm64ec.result == 'success' || needs.build_windows_arm64ec.result == 'skipped' || needs.build_windows_arm64ec.result == 'failure')
         runs-on: ubuntu-latest
 
         steps:
@@ -487,6 +574,8 @@ jobs:
             mkdir sdrpp_all
             git archive --format=tar.gz --prefix=sdrpp-iak-${VER}/ HEAD -o sdrpp_all/sdrpp-iak-${VER}-source.tar.gz
             mv sdrpp-iak-${VER}-windows-x64/sdrpp_windows_x64.zip                                 sdrpp_all/sdrpp-iak-${VER}-windows-x64.zip
+            # ARM64EC is optional while support stabilizes.
+            [ -d sdrpp-iak-${VER}-windows-arm64ec ] && mv sdrpp-iak-${VER}-windows-arm64ec/sdrpp_windows_arm64ec.zip sdrpp_all/sdrpp-iak-${VER}-windows-arm64ec.zip || true
             mv sdrpp-iak-${VER}-macos-intel/sdrpp_macos_intel.zip                                 sdrpp_all/sdrpp-iak-${VER}-macos-intel.zip
             mv sdrpp-iak-${VER}-macos-arm/sdrpp_macos_arm.zip                                     sdrpp_all/sdrpp-iak-${VER}-macos-arm.zip
             mv sdrpp-iak-${VER}-debian-bullseye-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-amd64.deb
