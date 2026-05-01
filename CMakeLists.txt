@@ -15,9 +15,9 @@ set(SDR_KIT_ROOT "${SDR_KIT_ROOT_DEFAULT}" CACHE PATH "Root path for the SDR kit
 
 # Compatibility Options
 option(OPT_OVERRIDE_STD_FILESYSTEM "Use a local version of std::filesystem on systems that don't have it yet" OFF)
-option(OPT_BUILD_APPIMAGE "Build AppImage-specific runtime code paths (Linux only — overrides resource paths via $APPDIR at launch)" OFF)
+option(OPT_BUILD_APPIMAGE "Build AppImage-specific runtime code paths (Linux only - overrides resource paths via $APPDIR at launch)" OFF)
 
-# Sources
+# Sources   
 option(OPT_BUILD_AIRSPY_SOURCE "Build Airspy Source Module (Dependencies: libairspy)" ON)
 option(OPT_BUILD_AIRSPYHF_SOURCE "Build Airspy HF+ Source Module (Dependencies: libairspyhf)" ON)
 option(OPT_BUILD_AUDIO_SOURCE "Build Audio Source Module (Dependencies: rtaudio)" ON)
@@ -386,7 +386,7 @@ target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILER_FLAGS})
 # Copy dynamic libs over
 if (MSVC)
     add_custom_target(do_always ALL xcopy /s \"$<TARGET_FILE_DIR:sdrpp_core>\\*.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
-    add_custom_target(do_always_volk ALL xcopy /s \"C:/Program Files/PothosSDR/bin\\volk.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
+    add_custom_target(do_always_volk ALL xcopy \"D:/src/SDRPlusPlus/build/Debug/volk.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
 
     if (COPY_MSVC_REDISTRIBUTABLES)
         # Get the list of Visual C++ runtime DLLs

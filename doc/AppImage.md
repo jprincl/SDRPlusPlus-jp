@@ -136,7 +136,24 @@ different build would likely fail to load. If a real use case
 appears, an env-var escape hatch (e.g. `SDRPP_IGNORE_APPDIR=1`) can
 be added to the accessors.
 
-## 6. CI integration
+## 6. Config root isolation
+
+AppImage builds read and write their settings under a separate
+directory from any side-by-side `.deb` install:
+
+| Build | Config root |
+|---|---|
+| `.deb` / source build | `~/.config/sdrpp-iak/` |
+| AppImage | `~/.config/sdrpp-iak-appimage/` |
+
+The split is done in `core/src/command_args.cpp` under
+`#elif defined(__linux__) && defined(BUILD_APPIMAGE)`. A user running
+both binaries on the same machine therefore keeps two independent
+sets of preferences (window size, source selection, band plans,
+module instances, etc.) — no cross-contamination, no manual config
+cleanup.
+
+## 7. CI integration
 
 * Reusable workflow: `.github/workflows/build_appimage.yml`
 * Matrix entries in `.github/workflows/build_all.yml` produce x86_64
@@ -151,7 +168,7 @@ be added to the accessors.
   are always built and included in `create_full_archive`,
   `update_nightly_release`, and `create_release`.
 
-## 7. Bumping the glibc floor
+## 8. Bumping the glibc floor
 
 To extend reach to RHEL 8 / CentOS 7 / Linux Mint 19 holdouts, change
 the base image in `docker_builds/appimage/Dockerfile` from

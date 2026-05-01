@@ -9,6 +9,10 @@ void CommandArgsParser::defineAll() {
         std::string root = (std::string)getenv("HOME") + "/Library/Application Support/sdrpp-iak";
 #elif defined(__ANDROID__)
         std::string root = "/storage/self/primary/sdrpp-iak";
+#elif defined(__linux__) && defined(BUILD_APPIMAGE)
+        // AppImage builds use an isolated config dir so settings, module
+        // selection, etc. do not collide with a side-by-side .deb install.
+        std::string root = (std::string)getenv("HOME") + "/.config/sdrpp-iak-appimage";
 #else
         std::string root = (std::string)getenv("HOME") + "/.config/sdrpp-iak";
 #endif

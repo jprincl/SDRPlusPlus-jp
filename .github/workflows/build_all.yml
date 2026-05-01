@@ -76,9 +76,10 @@ jobs:
             #   - the root and core CMakeLists (install paths, INSTALL_PREFIX define)
             #   - sdrpp_module.cmake (plugin install destination)
             #   - core.cpp (resource/module path resolution + APPDIR override)
+            #   - command_args.cpp (config root directory selection)
             #   - the icon resource (referenced by the desktop file)
             if git diff --name-only "$BASE...HEAD" | \
-               grep -qE '^(docker_builds/appimage/|\.github/workflows/build_appimage\.yml|\.github/workflows/build_all\.yml|sdrpp-iak\.desktop|CMakeLists\.txt|core/CMakeLists\.txt|sdrpp_module\.cmake|core/src/core\.cpp|root/res/icons/)'; then
+               grep -qE '^(docker_builds/appimage/|\.github/workflows/build_appimage\.yml|\.github/workflows/build_all\.yml|sdrpp-iak\.desktop|CMakeLists\.txt|core/CMakeLists\.txt|sdrpp_module\.cmake|core/src/core\.cpp|core/src/command_args\.cpp|root/res/icons/)'; then
               echo "appimage=true" >> $GITHUB_OUTPUT
             else
               echo "appimage=false" >> $GITHUB_OUTPUT
