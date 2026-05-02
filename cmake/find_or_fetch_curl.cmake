@@ -98,15 +98,31 @@ function(_sdrpp_fetch_bundled_curl)
     )
     FetchContent_MakeAvailable(curl)
 
-    # On MSVC, copy the bundled libcurl DLL next to sdrpp_core's output so the
-    # existing top-level xcopy step picks it up alongside the other runtime DLLs.
-    # curl 8.11 names the shared target libcurl_shared.
-    if(MSVC AND TARGET libcurl_shared)
-        add_custom_command(TARGET libcurl_shared POST_BUILD
+    if(NOT TARGET CURL::libcurl)
+        if(TARGET libcurl_shared)
+            add_library(CURL::libcurl ALIAS libcurl_shared)
+        elseif(TARGET libcurl_static)
+            add_library(CURL::libcurl ALIAS libcurl_static)
+        else()
+            message(FATAL_ERROR "Bundled curl did not create a libcurl target")
+        endif()
+    endif()
+endfunction()
+
+# ---------------------------------------------------------------------------
+
+function(sdrpp_stage_bundled_curl TARGET_NAME)
+    if(NOT "${SDRPP_CURL_SOURCE}" STREQUAL "bundled")
+        return()
+    endif()
+
+    if(MSVC AND TARGET ${TARGET_NAME} AND TARGET libcurl_shared)
+        add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 $<TARGET_FILE:libcurl_shared>
-                $<TARGET_FILE_DIR:sdrpp_core>
-            COMMENT "Staging libcurl.dll next to sdrpp_core")
+                $<TARGET_FILE_DIR:${TARGET_NAME}>
+            COMMENT "Staging libcurl.dll next to ${TARGET_NAME}"
+            VERBATIM)
     endif()
 endfunction()
 

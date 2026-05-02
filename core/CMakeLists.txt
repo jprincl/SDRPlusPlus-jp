@@ -75,6 +75,12 @@ if (USE_INTERNAL_LIBCORRECT)
     target_link_libraries(sdrpp_core PUBLIC correct_static)
 endif (USE_INTERNAL_LIBCORRECT)
 
+# libcurl. PUBLIC so plugins linking sdrpp_core inherit the include path and
+# the shared lib transitively. Resolved by cmake/find_or_fetch_curl.cmake at
+# top-level configure time (system or bundled).
+target_link_libraries(sdrpp_core PUBLIC CURL::libcurl)
+sdrpp_stage_bundled_curl(sdrpp_core)
+
 if (OPT_OVERRIDE_STD_FILESYSTEM)
     target_include_directories(sdrpp_core PUBLIC "std_replacement")
 endif (OPT_OVERRIDE_STD_FILESYSTEM)
