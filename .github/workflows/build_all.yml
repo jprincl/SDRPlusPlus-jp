@@ -359,71 +359,85 @@ jobs:
                       artifact: debian-bullseye-amd64
                       volk_package: libvolk2-dev
                       extra_apt: ''
+                      curl_source: bundled
                     - base_image: debian:bullseye
                       runner: ubuntu-24.04-arm
                       artifact: debian-bullseye-aarch64
                       volk_package: libvolk2-dev
                       extra_apt: ''
+                      curl_source: bundled
                     - base_image: debian:bookworm
                       runner: ubuntu-latest
                       artifact: debian-bookworm-amd64
                       volk_package: libvolk2-dev
                       extra_apt: ''
+                      curl_source: bundled
                     - base_image: debian:bookworm
                       runner: ubuntu-24.04-arm
                       artifact: debian-bookworm-aarch64
                       volk_package: libvolk2-dev
                       extra_apt: ''
+                      curl_source: bundled
                     - base_image: debian:trixie
                       runner: ubuntu-latest
                       artifact: debian-trixie-amd64
                       volk_package: libvolk-dev
                       extra_apt: ''
+                      curl_source: system
                     - base_image: debian:trixie
                       runner: ubuntu-24.04-arm
                       artifact: debian-trixie-aarch64
                       volk_package: libvolk-dev
                       extra_apt: ''
+                      curl_source: system
                     - base_image: debian:sid
                       runner: ubuntu-latest
                       artifact: debian-sid-amd64
                       volk_package: libvolk-dev
                       extra_apt: ca-certificates
+                      curl_source: system
                     - base_image: debian:sid
                       runner: ubuntu-24.04-arm
                       artifact: debian-sid-aarch64
                       volk_package: libvolk-dev
                       extra_apt: ca-certificates
+                      curl_source: system
                     - base_image: ubuntu:focal
                       runner: ubuntu-latest
                       artifact: ubuntu-focal-amd64
                       volk_package: libvolk2-dev
                       extra_apt: ''
+                      curl_source: bundled
                     - base_image: ubuntu:focal
                       runner: ubuntu-24.04-arm
                       artifact: ubuntu-focal-aarch64
                       volk_package: libvolk2-dev
                       extra_apt: ''
+                      curl_source: bundled
                     - base_image: ubuntu:jammy
                       runner: ubuntu-latest
                       artifact: ubuntu-jammy-amd64
                       volk_package: libvolk2-dev
                       extra_apt: ''
+                      curl_source: bundled
                     - base_image: ubuntu:jammy
                       runner: ubuntu-24.04-arm
                       artifact: ubuntu-jammy-aarch64
                       volk_package: libvolk2-dev
                       extra_apt: ''
+                      curl_source: bundled
                     - base_image: ubuntu:noble
                       runner: ubuntu-latest
                       artifact: ubuntu-noble-amd64
                       volk_package: libvolk-dev
                       extra_apt: ''
+                      curl_source: system
                     - base_image: ubuntu:noble
                       runner: ubuntu-24.04-arm
                       artifact: ubuntu-noble-aarch64
                       volk_package: libvolk-dev
                       extra_apt: ''
+                      curl_source: system
         needs: [get_version]
         uses: ./.github/workflows/build_linux.yml
         with:
@@ -432,6 +446,7 @@ jobs:
             artifact: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-${{ matrix.artifact }}
             volk_package: ${{ matrix.volk_package }}
             extra_apt: ${{ matrix.extra_apt }}
+            curl_source: ${{ matrix.curl_source }}
 
     build_appimage:
         strategy:

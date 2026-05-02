@@ -410,7 +410,10 @@ if(SDRPP_CURL_SOURCE STREQUAL "bundled" AND NOT WIN32)
             INSTALL_RPATH "@loader_path;@loader_path/../lib")
     else()
         set_target_properties(sdrpp sdrpp_core PROPERTIES
-            INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib")
+            INSTALL_RPATH "$ORIGIN/../lib")
+        if(TARGET libcurl_shared)
+            install(TARGETS libcurl_shared LIBRARY DESTINATION lib)
+        endif()
     endif()
 endif()
 
@@ -421,7 +424,7 @@ target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILER_FLAGS})
 if (MSVC)
     add_custom_target(do_always ALL xcopy /s \"$<TARGET_FILE_DIR:sdrpp_core>\\*.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
     add_custom_target(do_always_volk ALL xcopy /s \"C:/Program Files/PothosSDR/bin\\volk.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
- 
+
     if (COPY_MSVC_REDISTRIBUTABLES)
         # Get the list of Visual C++ runtime DLLs
         set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP True)

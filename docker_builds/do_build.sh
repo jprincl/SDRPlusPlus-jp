@@ -5,6 +5,11 @@ cd /root
 # VOLK_PACKAGE: volk library package name (libvolk2-dev or libvolk-dev)
 # EXTRA_APT: space-separated extra apt packages (e.g. ca-certificates)
 VOLK_PACKAGE=${VOLK_PACKAGE:-libvolk2-dev}
+CURL_SOURCE=${CURL_SOURCE:-system}
+
+if [ "$CURL_SOURCE" = "bundled" ]; then
+    EXTRA_APT="${EXTRA_APT:-} libssl-dev"
+fi
 
 # Install dependencies and tools
 apt-get -o Acquire::Retries=3 update
@@ -62,10 +67,17 @@ git config --global --add safe.directory /root/SDRPlusPlus
 
 cd SDRPlusPlus
 mkdir build && cd build
-cmake .. -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON \
+cmake .. "-DSDRPP_CURL_SOURCE=${CURL_SOURCE}" -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON \
     -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_PERSEUS_SOURCE=ON \
     -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON
 make VERBOSE=1 -j2
 
 cd ..
-sh make_debian_package.sh ./build "libfftw3-dev, libglfw3-dev, ${VOLK_PACKAGE}, librtaudio-dev, libzstd-dev"
+DEB_DEPENDS="libfftw3-dev, libglfw3-dev, ${VOLK_PACKAGE}, librtaudio-dev, libzstd-dev"
+if [ "$CURL_SOURCE" = "bundled" ]; then
+    SSL_RUNTIME_DEP=$(dpkg-query -W -f='${binary:Package}\n' 'libssl[0-9]*' 2>/dev/null | grep -v -- '-dev$' | head -n1 || true)
+    if [ -n "$SSL_RUNTIME_DEP" ]; then
+        DEB_DEPENDS="${DEB_DEPENDS}, ${SSL_RUNTIME_DEP}"
+    fi
+fi
+sh make_debian_package.sh ./build "$DEB_DEPENDS"

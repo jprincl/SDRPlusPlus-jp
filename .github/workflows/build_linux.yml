@@ -20,6 +20,10 @@ on:
                 required: false
                 type: string
                 default: ''
+            curl_source:
+                required: false
+                type: string
+                default: 'system'
 
 env:
     FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -42,6 +46,7 @@ jobs:
               -v $GITHUB_WORKSPACE:/root/SDRPlusPlus \
               --env VOLK_PACKAGE="${{ inputs.volk_package }}" \
               --env EXTRA_APT="${{ inputs.extra_apt }}" \
+              --env CURL_SOURCE="${{ inputs.curl_source }}" \
               sdrpp_build /root/do_build.sh
 
         - name: Recover Deb Archive
