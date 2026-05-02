@@ -104,6 +104,10 @@ linuxdeploy \
 # diagnostic when host-provided libglfw3 is missing — otherwise the user
 # just sees the dynamic loader's "libglfw.so.3: cannot open shared object".
 # ---------------------------------------------------------------------------
+# linuxdeploy may create AppRun as a symlink to usr/bin/sdrpp-iak. Remove it
+# first so the here-doc below creates a new launcher instead of overwriting
+# the real app binary through that symlink.
+rm -f "${APPDIR}/AppRun"
 cat > "${APPDIR}/AppRun" <<'APPRUN_EOF'
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "${0}")")"
