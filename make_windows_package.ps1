@@ -109,6 +109,8 @@ cp $build_dir/misc_modules/rigctl_server/Release/rigctl_server.dll sdrpp_windows
 
 cp $build_dir/misc_modules/scanner/Release/scanner.dll sdrpp_windows_x64/modules/
 
+cp $build_dir/misc_modules/spots/Release/spots.dll sdrpp_windows_x64/modules/
+
 cp $build_dir/misc_modules/websdr_view/Release/websdr_view.dll sdrpp_windows_x64/modules/
 
 
