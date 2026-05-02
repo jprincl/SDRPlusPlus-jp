@@ -17,6 +17,8 @@ namespace net::http {
         struct SListGuard {
             curl_slist* list = nullptr;
 
+            SListGuard() = default;
+
             ~SListGuard() {
                 if (list) {
                     curl_slist_free_all(list);
