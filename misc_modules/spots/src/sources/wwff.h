@@ -1,6 +1,9 @@
 #ifndef __SDRPP_SPOTS_WWFF_H
 #define __SDRPP_SPOTS_WWFF_H
 
+#include <algorithm>
+#include <cctype>
+
 #include "http_poller.h"
 
 class WWFFProvider : public HTTPPoller {

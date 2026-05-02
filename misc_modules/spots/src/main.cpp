@@ -1,4 +1,6 @@
 #include <cstring>
+#include <cstdio>
+#include <cmath>
 #include <iostream>
 #include <sstream>
 #include <algorithm>

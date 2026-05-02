@@ -1,6 +1,7 @@
 #include "curl_http.h"
 
 #include <stdexcept>
+#include <utility>
 
 #include <utils/curl_init.h>
 

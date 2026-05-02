@@ -5,7 +5,11 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <stdexcept>
+#include <json.hpp>
+#include <utils/flog.h>
 #include <utils/proto/curl_http.h>
 #include "../main.h"
 
@@ -16,10 +20,13 @@ public:
     }
 
     void start() {
-        if (workerThread.joinable()) { workerThread.join(); }
         {
             std::lock_guard lk(mtx);
             if (running) { return; }
+        }
+        if (workerThread.joinable()) { workerThread.join(); }
+        {
+            std::lock_guard lk(mtx);
             running = true;
         }
         flog::info("spots: starting worker thread");
@@ -73,6 +80,10 @@ private:
                 break;
             }
             cv.wait_for(cv_lk, std::chrono::milliseconds(pollPeriod), [&]() { return !running; });
+        }
+        {
+            std::lock_guard lk(mtx);
+            running = false;
         }
         flog::info("spots: worker stopping");
     }
