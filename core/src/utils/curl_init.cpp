@@ -39,7 +39,6 @@ CURL* make_easy() {
     curl_easy_setopt(h, CURLOPT_USERAGENT, "SDR++iak/" VERSION_STR);
     curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 15L);
-    curl_easy_setopt(h, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(h, CURLOPT_NOSIGNAL, 1L);
 
 #ifdef __ANDROID__

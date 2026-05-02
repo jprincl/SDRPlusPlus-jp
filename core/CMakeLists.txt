@@ -75,24 +75,12 @@ if (USE_INTERNAL_LIBCORRECT)
     target_link_libraries(sdrpp_core PUBLIC correct_static)
 endif (USE_INTERNAL_LIBCORRECT)
 
-# libcurl. Include path propagates PUBLIC so plugins can include curl
-# headers. Link visibility depends on the source:
-#   - bundled (static curl absorbed into sdrpp_core): PRIVATE — prevents
-#     each plugin from absorbing its own ~1 MB copy. Plugins resolve curl
-#     symbols at runtime against sdrpp_core's exported table.
-#   - system (shared libcurl from the distro): PUBLIC — plugins get their
-#     own NEEDED libcurl.so.4 and resolve symbols normally. A PRIVATE link
-#     would break plugin link on modern linkers, which default to
-#     --no-copy-dt-needed-entries (transitive shared deps don't satisfy
-#     symbol resolution).
+# libcurl is a core implementation detail. Modules use core networking
+# wrappers instead of including curl headers or linking libcurl directly.
 # Resolved by cmake/find_or_fetch_curl.cmake at top-level configure time.
-target_include_directories(sdrpp_core PUBLIC
+target_include_directories(sdrpp_core PRIVATE
     $<TARGET_PROPERTY:CURL::libcurl,INTERFACE_INCLUDE_DIRECTORIES>)
-if(SDRPP_CURL_SOURCE STREQUAL "system")
-    target_link_libraries(sdrpp_core PUBLIC CURL::libcurl)
-else()
-    target_link_libraries(sdrpp_core PRIVATE CURL::libcurl)
-endif()
+target_link_libraries(sdrpp_core PRIVATE CURL::libcurl)
 
 if (OPT_OVERRIDE_STD_FILESYSTEM)
     target_include_directories(sdrpp_core PUBLIC "std_replacement")

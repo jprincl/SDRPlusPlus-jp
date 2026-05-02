@@ -4,10 +4,9 @@
 #   - "system"  : find_package(CURL) and verify WebSocket support is compiled in.
 #   - "bundled" : FetchContent a static (PIC) libcurl with a platform-native TLS
 #                 backend (Schannel on Windows, Secure Transport on macOS,
-#                 MbedTLS on Android, OpenSSL elsewhere). Curl objects are
-#                 absorbed into libsdrpp_iak_core.so by core/CMakeLists.txt;
-#                 nothing ships separately. Curl symbols are re-exported from
-#                 sdrpp_core so plugins can call libcurl directly.
+#                 MbedTLS on Android, OpenSSL elsewhere). Curl is linked
+#                 privately into sdrpp_core; plugins use core HTTP/WebSocket
+#                 wrappers instead of calling libcurl directly.
 #
 # No CA bundle is ever shipped. On Android the runtime must point libcurl at
 # /system/etc/security/cacerts via CURLOPT_CAPATH (handled in core/utils/curl_init).
@@ -39,8 +38,7 @@ endfunction()
 function(_sdrpp_fetch_bundled_curl)
     # Build curl (and on Android, mbedtls) as static + PIC so the object code
     # gets absorbed into libsdrpp_iak_core.so. There's no separate libcurl
-    # artifact to install, find via rpath, or ship — and curl's symbols become
-    # exported from sdrpp_core, which lets plugins call libcurl directly.
+    # artifact to install, find via rpath, or ship.
     # Scoped via normal (non-cache) variables; FetchContent_MakeAvailable's
     # add_subdirectory inherits this scope.
     set(BUILD_SHARED_LIBS OFF)

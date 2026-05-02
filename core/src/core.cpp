@@ -253,6 +253,8 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["moduleInstances"]["Frequency Manager"] = "frequency_manager";
     defConfig["moduleInstances"]["Recorder"] = "recorder";
     defConfig["moduleInstances"]["Rigctl Server"] = "rigctl_server";
+    defConfig["moduleInstances"]["Spots"]["module"] = "spots";
+    defConfig["moduleInstances"]["Spots"]["enabled"] = false;
     defConfig["moduleInstances"]["WebSDR View"]["module"] = "websdr_view";
     defConfig["moduleInstances"]["WebSDR View"]["enabled"] = false;
     // defConfig["moduleInstances"]["Rigctl Client"] = "rigctl_client";
@@ -357,6 +359,7 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.conf["modules"][modCount++] = "recorder.so";
     core::configManager.conf["modules"][modCount++] = "rigctl_server.so";
     core::configManager.conf["modules"][modCount++] = "scanner.so";
+    core::configManager.conf["modules"][modCount++] = "spots.so";
     core::configManager.conf["modules"][modCount++] = "websdr_view.so";
 #endif
 
