@@ -599,20 +599,20 @@ jobs:
             [ -d sdrpp-iak-${VER}-windows-arm64ec ] && mv sdrpp-iak-${VER}-windows-arm64ec/sdrpp_windows_arm64ec.zip sdrpp_all/sdrpp-iak-${VER}-windows-arm64ec.zip || true
             mv sdrpp-iak-${VER}-macos-intel/sdrpp_macos_intel.zip                                 sdrpp_all/sdrpp-iak-${VER}-macos-intel.zip
             mv sdrpp-iak-${VER}-macos-arm/sdrpp_macos_arm.zip                                     sdrpp_all/sdrpp-iak-${VER}-macos-arm.zip
-            mv sdrpp-iak-${VER}-debian-bullseye-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-amd64.deb
-            mv sdrpp-iak-${VER}-debian-bullseye-aarch64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-aarch64.deb
-            mv sdrpp-iak-${VER}-debian-bookworm-amd64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bookworm-amd64.deb
-            mv sdrpp-iak-${VER}-debian-bookworm-aarch64/sdrpp_debian_amd64.deb                    sdrpp_all/sdrpp-iak-${VER}-debian-bookworm-aarch64.deb
-            mv sdrpp-iak-${VER}-debian-trixie-amd64/sdrpp_debian_amd64.deb                        sdrpp_all/sdrpp-iak-${VER}-debian-trixie-amd64.deb
-            mv sdrpp-iak-${VER}-debian-trixie-aarch64/sdrpp_debian_amd64.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-trixie-aarch64.deb
-            mv sdrpp-iak-${VER}-debian-sid-amd64/sdrpp_debian_amd64.deb                           sdrpp_all/sdrpp-iak-${VER}-debian-sid-amd64.deb
-            mv sdrpp-iak-${VER}-debian-sid-aarch64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-iak-${VER}-debian-sid-aarch64.deb
-            mv sdrpp-iak-${VER}-ubuntu-focal-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-focal-amd64.deb
-            mv sdrpp-iak-${VER}-ubuntu-focal-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-focal-aarch64.deb
-            mv sdrpp-iak-${VER}-ubuntu-jammy-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-jammy-amd64.deb
-            mv sdrpp-iak-${VER}-ubuntu-jammy-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-jammy-aarch64.deb
-            mv sdrpp-iak-${VER}-ubuntu-noble-amd64/sdrpp_debian_amd64.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-noble-amd64.deb
-            mv sdrpp-iak-${VER}-ubuntu-noble-aarch64/sdrpp_debian_amd64.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-noble-aarch64.deb
+            mv sdrpp-iak-${VER}-debian-bullseye-amd64/sdrpp_debian_pkg.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-amd64.deb
+            mv sdrpp-iak-${VER}-debian-bullseye-aarch64/sdrpp_debian_pkg.deb                    sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-aarch64.deb
+            mv sdrpp-iak-${VER}-debian-bookworm-amd64/sdrpp_debian_pkg.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bookworm-amd64.deb
+            mv sdrpp-iak-${VER}-debian-bookworm-aarch64/sdrpp_debian_pkg.deb                    sdrpp_all/sdrpp-iak-${VER}-debian-bookworm-aarch64.deb
+            mv sdrpp-iak-${VER}-debian-trixie-amd64/sdrpp_debian_pkg.deb                        sdrpp_all/sdrpp-iak-${VER}-debian-trixie-amd64.deb
+            mv sdrpp-iak-${VER}-debian-trixie-aarch64/sdrpp_debian_pkg.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-trixie-aarch64.deb
+            mv sdrpp-iak-${VER}-debian-sid-amd64/sdrpp_debian_pkg.deb                           sdrpp_all/sdrpp-iak-${VER}-debian-sid-amd64.deb
+            mv sdrpp-iak-${VER}-debian-sid-aarch64/sdrpp_debian_pkg.deb                         sdrpp_all/sdrpp-iak-${VER}-debian-sid-aarch64.deb
+            mv sdrpp-iak-${VER}-ubuntu-focal-amd64/sdrpp_debian_pkg.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-focal-amd64.deb
+            mv sdrpp-iak-${VER}-ubuntu-focal-aarch64/sdrpp_debian_pkg.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-focal-aarch64.deb
+            mv sdrpp-iak-${VER}-ubuntu-jammy-amd64/sdrpp_debian_pkg.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-jammy-amd64.deb
+            mv sdrpp-iak-${VER}-ubuntu-jammy-aarch64/sdrpp_debian_pkg.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-jammy-aarch64.deb
+            mv sdrpp-iak-${VER}-ubuntu-noble-amd64/sdrpp_debian_pkg.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-noble-amd64.deb
+            mv sdrpp-iak-${VER}-ubuntu-noble-aarch64/sdrpp_debian_pkg.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-noble-aarch64.deb
             # AppImages are optional on PRs (build_appimage may have been skipped).
             [ -d sdrpp-iak-${VER}-linux-appimage-x86_64 ]  && mv sdrpp-iak-${VER}-linux-appimage-x86_64/sdrpp-iak-${VER}-x86_64.AppImage   sdrpp_all/sdrpp-iak-${VER}-linux-x86_64.AppImage   || true
             [ -d sdrpp-iak-${VER}-linux-appimage-aarch64 ] && mv sdrpp-iak-${VER}-linux-appimage-aarch64/sdrpp-iak-${VER}-aarch64.AppImage sdrpp_all/sdrpp-iak-${VER}-linux-aarch64.AppImage || true

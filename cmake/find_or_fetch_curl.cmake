@@ -2,9 +2,12 @@
 #
 # Mode is selected by the SDRPP_CURL_SOURCE cache variable:
 #   - "system"  : find_package(CURL) and verify WebSocket support is compiled in.
-#   - "bundled" : FetchContent a shared libcurl with a platform-native TLS
+#   - "bundled" : FetchContent a static (PIC) libcurl with a platform-native TLS
 #                 backend (Schannel on Windows, Secure Transport on macOS,
-#                 MbedTLS on Android, OpenSSL elsewhere).
+#                 MbedTLS on Android, OpenSSL elsewhere). Curl objects are
+#                 absorbed into libsdrpp_iak_core.so by core/CMakeLists.txt;
+#                 nothing ships separately. Curl symbols are re-exported from
+#                 sdrpp_core so plugins can call libcurl directly.
 #
 # No CA bundle is ever shipped. On Android the runtime must point libcurl at
 # /system/etc/security/cacerts via CURLOPT_CAPATH (handled in core/utils/curl_init).
@@ -34,11 +37,14 @@ endfunction()
 # ---------------------------------------------------------------------------
 
 function(_sdrpp_fetch_bundled_curl)
-    # Force shared linkage of curl regardless of the project's BUILD_SHARED_LIBS.
-    # Set as a normal (non-cache) variable scoped to this function so we don't
-    # change linkage for any other dependency. add_subdirectory'd subprojects
-    # invoked by FetchContent_MakeAvailable inherit this scope.
-    set(BUILD_SHARED_LIBS ON)
+    # Build curl (and on Android, mbedtls) as static + PIC so the object code
+    # gets absorbed into libsdrpp_iak_core.so. There's no separate libcurl
+    # artifact to install, find via rpath, or ship — and curl's symbols become
+    # exported from sdrpp_core, which lets plugins call libcurl directly.
+    # Scoped via normal (non-cache) variables; FetchContent_MakeAvailable's
+    # add_subdirectory inherits this scope.
+    set(BUILD_SHARED_LIBS OFF)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
     if(ANDROID)
         # MbedTLS first — curl needs the targets/headers available at config time.
@@ -110,23 +116,6 @@ function(_sdrpp_fetch_bundled_curl)
         else()
             message(FATAL_ERROR "Bundled curl did not create a libcurl target")
         endif()
-    endif()
-endfunction()
-
-# ---------------------------------------------------------------------------
-
-function(sdrpp_stage_bundled_curl TARGET_NAME)
-    if(NOT "${SDRPP_CURL_SOURCE}" STREQUAL "bundled")
-        return()
-    endif()
-
-    if(MSVC AND TARGET ${TARGET_NAME} AND TARGET libcurl_shared)
-        add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:libcurl_shared>
-                $<TARGET_FILE_DIR:${TARGET_NAME}>
-            COMMENT "Staging libcurl.dll next to ${TARGET_NAME}"
-            VERBATIM)
     endif()
 endfunction()
 

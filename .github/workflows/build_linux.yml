@@ -51,10 +51,10 @@ jobs:
 
         - name: Recover Deb Archive
           working-directory: ${{ runner.workspace }}
-          run: docker cp build:/root/SDRPlusPlus/sdrpp_debian_amd64.deb ./
+          run: docker cp build:/root/SDRPlusPlus/sdrpp_debian_pkg.deb ./
 
         - name: Save Deb Archive
           uses: actions/upload-artifact@v4
           with:
               name: ${{ inputs.artifact }}
-              path: ${{ runner.workspace }}/sdrpp_debian_amd64.deb
+              path: ${{ runner.workspace }}/sdrpp_debian_pkg.deb

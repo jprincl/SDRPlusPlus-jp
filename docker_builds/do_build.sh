@@ -73,11 +73,4 @@ cmake .. "-DSDRPP_CURL_SOURCE=${CURL_SOURCE}" -DOPT_BUILD_BLADERF_SOURCE=ON -DOP
 make VERBOSE=1 -j2
 
 cd ..
-DEB_DEPENDS="libfftw3-dev, libglfw3-dev, ${VOLK_PACKAGE}, librtaudio-dev, libzstd-dev"
-if [ "$CURL_SOURCE" = "bundled" ]; then
-    SSL_RUNTIME_DEP=$(dpkg-query -W -f='${binary:Package}\n' 'libssl[0-9]*' 2>/dev/null | grep -v -- '-dev$' | head -n1 || true)
-    if [ -n "$SSL_RUNTIME_DEP" ]; then
-        DEB_DEPENDS="${DEB_DEPENDS}, ${SSL_RUNTIME_DEP}"
-    fi
-fi
-sh make_debian_package.sh ./build "$DEB_DEPENDS"
+sh make_debian_package.sh ./build

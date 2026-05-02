@@ -38,45 +38,80 @@ fi
 
 # Create directory structure
 echo Create directory structure
-mkdir sdrpp_debian_amd64
-mkdir sdrpp_debian_amd64/DEBIAN
+mkdir sdrpp_debian_pkg
+mkdir sdrpp_debian_pkg/DEBIAN
+
+# Install license file into documentation directory
+mkdir -p sdrpp_debian_pkg/usr/share/doc/sdrpp-iak
+cp "$SCRIPT_DIR/license" sdrpp_debian_pkg/usr/share/doc/sdrpp-iak/copyright
+
+# Stage build artifacts into the package tree so runtime deps can be derived
+# from the actual ELF NEEDED entries below.
+ORIG_DIR=$PWD
+cd $1
+make install DESTDIR=$ORIG_DIR/sdrpp_debian_pkg
+cd $ORIG_DIR
+
+STAGE="$ORIG_DIR/sdrpp_debian_pkg"
+
+# Resolve runtime deps via dpkg-shlibdeps. This adapts to the build host's
+# distribution conventions (libcurl4 vs libcurl4t64, libvolk2.X vs libvolk3,
+# the libssl ABI of the day) instead of relying on a hand-maintained list of
+# -dev packages. Libraries we ship under the staging tree are satisfied
+# locally via -l so they don't bleed into the dependency list.
+echo Compute runtime dependencies
+
+FILES=""
+for f in $(find "$STAGE" -type f \( -name '*.so' -o -name '*.so.*' -o -path '*/bin/*' \)); do
+    case $(file -b "$f") in
+        "ELF "*) FILES="$FILES $f" ;;
+    esac
+done
+
+# dpkg-shlibdeps insists on a debian/ source tree; build a throwaway one.
+SHLIB_TMP=$(mktemp -d)
+mkdir -p "$SHLIB_TMP/debian"
+cat > "$SHLIB_TMP/debian/control" <<EOF
+Source: sdrpp-iak
+Maintainer: noreply@invalid
+
+Package: sdrpp-iak
+Architecture: any
+Description: stub
+EOF
+
+(
+    cd "$SHLIB_TMP"
+    dpkg-shlibdeps --ignore-missing-info \
+        -l"$STAGE/usr/lib" \
+        -l"$STAGE/usr/lib/sdrpp-iak/plugins" \
+        $FILES
+)
+SHLIBS_DEPS=$(sed -n 's/^shlibs:Depends=//p' "$SHLIB_TMP/debian/substvars")
+rm -rf "$SHLIB_TMP"
+
+if [ -z "$SHLIBS_DEPS" ]; then
+    echo "ERROR: dpkg-shlibdeps produced no Depends" >&2
+    exit 1
+fi
 
 # Create package info
 echo Create package info
-echo Package: sdrpp-iak >> sdrpp_debian_amd64/DEBIAN/control
-echo Version: $DEB_VERSION >> sdrpp_debian_amd64/DEBIAN/control
-echo Maintainer: Vojtech Bubnik OK1IAK >> sdrpp_debian_amd64/DEBIAN/control
-echo Architecture: all >> sdrpp_debian_amd64/DEBIAN/control
-echo Description: Bloat-free SDR receiver software >> sdrpp_debian_amd64/DEBIAN/control
-echo License: GPL-3.0-or-later >> sdrpp_debian_amd64/DEBIAN/control
-
-# Install license file into documentation directory
-mkdir -p sdrpp_debian_amd64/usr/share/doc/sdrpp-iak
-cp "$SCRIPT_DIR/license" sdrpp_debian_amd64/usr/share/doc/sdrpp-iak/copyright
-# If the build links against the system libcurl, pull it in as a runtime dep.
-# Bundled mode ships our own libcurl alongside sdrpp_core, so we omit it.
-DEPENDS="$2"
-CMAKE_CACHE="$1/CMakeCache.txt"
-if [ -f "$CMAKE_CACHE" ]; then
-    CURL_SOURCE=$(grep -E '^SDRPP_CURL_SOURCE(:[A-Z]+)?=' "$CMAKE_CACHE" | tail -n1 | sed 's/^[^=]*=//')
-else
-    CURL_SOURCE=""
-fi
-if [ "$CURL_SOURCE" != "bundled" ]; then
-    DEPENDS="${DEPENDS}, libcurl4-openssl-dev"
-fi
-echo Depends: $DEPENDS >> sdrpp_debian_amd64/DEBIAN/control
-
-# Copying files
-ORIG_DIR=$PWD
-cd $1
-make install DESTDIR=$ORIG_DIR/sdrpp_debian_amd64
-cd $ORIG_DIR
+DEB_ARCH=$(dpkg --print-architecture)
+{
+    echo "Package: sdrpp-iak"
+    echo "Version: $DEB_VERSION"
+    echo "Maintainer: Vojtech Bubnik OK1IAK"
+    echo "Architecture: $DEB_ARCH"
+    echo "Description: Bloat-free SDR receiver software"
+    echo "License: GPL-3.0-or-later"
+    echo "Depends: $SHLIBS_DEPS"
+} > sdrpp_debian_pkg/DEBIAN/control
 
 # Create package
 echo Create package
-dpkg-deb --build sdrpp_debian_amd64
+dpkg-deb --build sdrpp_debian_pkg
 
 # Cleanup
 echo Cleanup
-rm -rf sdrpp_debian_amd64
+rm -rf sdrpp_debian_pkg
