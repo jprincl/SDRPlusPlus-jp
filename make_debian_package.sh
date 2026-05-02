@@ -53,7 +53,19 @@ echo License: GPL-3.0-or-later >> sdrpp_debian_amd64/DEBIAN/control
 # Install license file into documentation directory
 mkdir -p sdrpp_debian_amd64/usr/share/doc/sdrpp-iak
 cp "$SCRIPT_DIR/license" sdrpp_debian_amd64/usr/share/doc/sdrpp-iak/copyright
-echo Depends: $2 >> sdrpp_debian_amd64/DEBIAN/control
+# If the build links against the system libcurl, pull it in as a runtime dep.
+# Bundled mode ships our own libcurl alongside sdrpp_core, so we omit it.
+DEPENDS="$2"
+CMAKE_CACHE="$1/CMakeCache.txt"
+if [ -f "$CMAKE_CACHE" ]; then
+    CURL_SOURCE=$(grep -E '^SDRPP_CURL_SOURCE(:[A-Z]+)?=' "$CMAKE_CACHE" | tail -n1 | sed 's/^[^=]*=//')
+else
+    CURL_SOURCE=""
+fi
+if [ "$CURL_SOURCE" != "bundled" ]; then
+    DEPENDS="${DEPENDS}, libcurl4-openssl-dev"
+fi
+echo Depends: $DEPENDS >> sdrpp_debian_amd64/DEBIAN/control
 
 # Copying files
 ORIG_DIR=$PWD

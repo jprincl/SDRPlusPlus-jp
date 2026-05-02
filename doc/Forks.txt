@@ -103,15 +103,56 @@ https://github.com/comparchitect/sdrpp-pico-panel
 https://github.com/pwnderpants/sdrpp-noise-reduction
 https://github.com/srgkmv/sdrpp-micron-source
 https://github.com/srgkmv/sdrpp-libresdr-source
-https://github.com/MatiasSaibene/S-Meter_for_SDRPP
-https://github.com/BlackDuke07/sdrpp-bm-scanner
 
-SDR++ utils
-https://github.com/mgiugliano/syncSDRpp
+Analog meter with signal / noise
+https://github.com/MatiasSaibene/S-Meter_for_SDRPP
 
 BlackDuke07/sdrpp-bm-scanner: Bookmark Scanner plugin for SDR++
 https://github.com/BlackDuke07/sdrpp-bm-scanner
 
+SDR++ utils
+
+Quick demo synchronising SDR++ and a rig (via hamlib)
+https://github.com/mgiugliano/syncSDRpp
+
 https://project.crx.cloud/ping-sound-hamradio-remote-station
 
+
+
+
+Windows ARM64 (partial) support, integrated
 https://github.com/fluid41/SDRPlusPlus/commit/19e31e03c06df8aa95ad0ec23c06ff3d79e015e7
+
+
+===========================================================================
+libcurl integration
+===========================================================================
+
+libcurl is the sanctioned HTTP/WebSocket dependency for both core and plugins.
+sdrpp_core links it PUBLIC, so any plugin that links sdrpp_core sees CURL::libcurl
+transitively — plugin CMakeLists.txt files must NOT add their own find_package(CURL)
+or pull in a second copy. Static-linking libcurl into multiple DSOs in the same
+process is a known source of nondeterministic TLS failures (curl has process-global
+state for TLS callbacks, mutex tables, PRNG).
+
+Per-platform TLS backend table:
+    Platform   libcurl source        TLS backend         Cert store
+    --------   --------------------  ------------------  ----------------------------
+    Windows    bundled (FetchContent) Schannel           Windows Cert Store
+    macOS      bundled                Secure Transport   Keychain
+    Linux      system OR bundled      OpenSSL            /etc/ssl/certs
+    Android    bundled                MbedTLS            /system/etc/security/cacerts
+
+Linux mode is selected at configure time:
+    -DSDRPP_CURL_SOURCE=system   # default on Linux; uses distro libcurl
+    -DSDRPP_CURL_SOURCE=bundled  # for AppImage/Flatpak or old distros
+
+The system path requires libcurl ≥ 8.5 with WebSocket support compiled in
+(curl_ws_send must exist). configure fails cleanly otherwise.
+
+No CA bundle is ever shipped. On Android, curl_init.cpp sets CURLOPT_CAPATH to
+the OS trust store via curl::make_easy(); plugins should call curl::make_easy()
+rather than curl_easy_init() directly so this stays consistent.
+
+curl_global_init/cleanup are called from sdrpp_main() in core. Plugins must
+not call them.

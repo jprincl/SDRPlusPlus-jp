@@ -11,6 +11,7 @@
 #include <stb_image.h>
 #include <config.h>
 #include <core.h>
+#include <utils/curl_init.h>
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -96,6 +97,10 @@ int sdrpp_main(int argc, char* argv[]) {
         core::args.showHelp();
         return 0;
     }
+
+    // Initialize libcurl process-wide before anything spawns threads or makes
+    // HTTP/WS calls. Plugins must not call curl_global_init themselves.
+    curl::init();
 
     bool serverMode = (bool)core::args["server"];
 
@@ -403,7 +408,11 @@ int sdrpp_main(int argc, char* argv[]) {
 
     core::configManager.release(true);
 
-    if (serverMode) { return server::main(); }
+    if (serverMode) {
+        int rc = server::main();
+        curl::cleanup();
+        return rc;
+    }
 
     core::configManager.acquire();
     std::string resDir = core::getResourcesDirectory();
@@ -477,6 +486,8 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.disableAutoSave();
     core::configManager.save();
 #endif
+
+    curl::cleanup();
 
     flog::info("Exiting successfully");
     return 0;

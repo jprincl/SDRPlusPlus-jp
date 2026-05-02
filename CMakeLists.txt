@@ -86,6 +86,19 @@ option(USE_INTERNAL_LIBCORRECT "Use an internal version of libcorrect" ON)
 option(USE_BUNDLE_DEFAULTS "Set the default resource and module directories to the right ones for a MacOS .app" OFF)
 option(COPY_MSVC_REDISTRIBUTABLES "Copy over the Visual C++ Redistributable" OFF)
 
+# libcurl source: 'system' uses find_package(CURL); 'bundled' uses FetchContent.
+# Default: system on Linux (distro packages have OpenSSL + OS trust store wired up),
+# bundled everywhere else (Windows/macOS/Android pin platform-native TLS backends).
+if(NOT DEFINED SDRPP_CURL_SOURCE_AUTO)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(SDRPP_CURL_SOURCE "system" CACHE STRING "libcurl source: system|bundled")
+    else()
+        set(SDRPP_CURL_SOURCE "bundled" CACHE STRING "libcurl source: system|bundled")
+    endif()
+    set(SDRPP_CURL_SOURCE_AUTO 1 CACHE INTERNAL "")
+endif()
+set_property(CACHE SDRPP_CURL_SOURCE PROPERTY STRINGS system bundled)
+
 # Module cmake path
 set(SDRPP_MODULE_CMAKE "${CMAKE_SOURCE_DIR}/sdrpp_module.cmake")
 
@@ -138,6 +151,9 @@ if (ANDROID)
     set(CMAKE_CXX_STANDARD 14)
     set(CMAKE_CXX14_EXTENSION_COMPILE_OPTION "-std=c++17")
 endif (ANDROID)
+
+# Resolve libcurl into the CURL::libcurl imported target before core builds.
+include(${CMAKE_SOURCE_DIR}/cmake/find_or_fetch_curl.cmake)
 
 # Core of SDR++
 add_subdirectory("core")
@@ -384,6 +400,19 @@ else ()
 endif ()
 
 target_link_libraries(sdrpp PRIVATE sdrpp_core)
+
+# When libcurl is bundled, install it next to sdrpp_core (lib/) and let both
+# binaries resolve it via rpath. System mode leaves rpath untouched so the
+# distro loader picks up the system libcurl.
+if(SDRPP_CURL_SOURCE STREQUAL "bundled" AND NOT WIN32)
+    if(APPLE)
+        set_target_properties(sdrpp sdrpp_core PROPERTIES
+            INSTALL_RPATH "@loader_path;@loader_path/../lib")
+    else()
+        set_target_properties(sdrpp sdrpp_core PROPERTIES
+            INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib")
+    endif()
+endif()
 
 # Compiler arguments
 target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILER_FLAGS})
