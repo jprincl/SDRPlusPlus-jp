@@ -57,6 +57,11 @@ namespace net::http {
             return total;
         }
 
+        int xferInfo(void* clientp, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+            const auto* cb = static_cast<const std::function<bool()>*>(clientp);
+            return (*cb && (*cb)()) ? 1 : 0;
+        }
+
         void setOption(CURL* handle, CURLoption option, long value, const char* name) {
             CURLcode rc = curl_easy_setopt(handle, option, value);
             if (rc != CURLE_OK) {
@@ -100,6 +105,18 @@ namespace net::http {
             setOption(easy.handle, CURLOPT_TIMEOUT_MS, options.timeoutMs, "CURLOPT_TIMEOUT_MS");
         }
         setOption(easy.handle, CURLOPT_MAXREDIRS, options.maxRedirects, "CURLOPT_MAXREDIRS");
+
+        if (options.shouldCancel) {
+            rc = curl_easy_setopt(easy.handle, CURLOPT_XFERINFOFUNCTION, xferInfo);
+            if (rc != CURLE_OK) {
+                throw std::runtime_error(std::string("curl_easy_setopt(CURLOPT_XFERINFOFUNCTION) failed: ") + curl_easy_strerror(rc));
+            }
+            rc = curl_easy_setopt(easy.handle, CURLOPT_XFERINFODATA, &options.shouldCancel);
+            if (rc != CURLE_OK) {
+                throw std::runtime_error(std::string("curl_easy_setopt(CURLOPT_XFERINFODATA) failed: ") + curl_easy_strerror(rc));
+            }
+            setOption(easy.handle, CURLOPT_NOPROGRESS, 0, "CURLOPT_NOPROGRESS");
+        }
 
         SListGuard headers;
         for (const auto& [name, value] : options.headers) {

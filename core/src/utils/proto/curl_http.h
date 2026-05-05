@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <string>
 
@@ -14,6 +15,11 @@ namespace net::http {
         int maxRedirects = 5;
         size_t maxBody = 2 * 1024 * 1024;
         std::map<std::string, std::string> headers;
+        // Optional cancellation callback. Polled periodically by libcurl while
+        // the transfer is in progress; returning true aborts curlGet promptly
+        // with std::runtime_error. Lets callers shut down without waiting for
+        // timeoutMs.
+        std::function<bool()> shouldCancel;
     };
 
     struct CurlResponse {

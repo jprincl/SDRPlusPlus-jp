@@ -23,12 +23,9 @@ public:
         {
             std::lock_guard lk(mtx);
             if (running) { return; }
-        }
-        if (workerThread.joinable()) { workerThread.join(); }
-        {
-            std::lock_guard lk(mtx);
             running = true;
         }
+        if (workerThread.joinable()) { workerThread.join(); }
         flog::info("spots: starting worker thread");
         workerThread = std::thread(&HTTPPoller::worker, this);
     }
@@ -36,7 +33,6 @@ public:
     void stop() {
         {
             std::lock_guard lk(mtx);
-            if (!running) { return; }
             running = false;
         }
         cv.notify_all();
@@ -45,7 +41,7 @@ public:
 
 protected:
     virtual void processResponse(std::string response) = 0;
-    char url[1024];
+    std::string url;
 
 private:
 
@@ -61,18 +57,17 @@ private:
                 net::http::CurlRequestOptions options;
                 options.timeoutMs = 30000;
                 options.maxBody = 4 * 1024 * 1024;
+                options.shouldCancel = [this]() { return !isRunning(); };
 
                 net::http::CurlResponse response = net::http::curlGet(url, options);
                 if (response.status != 200) {
                     flog::error("spots: got HTTP status {0} from {1}", response.status, url);
-                    break;
+                } else {
+                    processResponse(response.body);
                 }
-
-                processResponse(response.body);
             }
             catch (const std::exception& e) {
                 flog::error("spots: error polling {0}: {1}", url, e.what());
-                break;
             }
 
             std::unique_lock cv_lk(mtx);
@@ -80,10 +75,6 @@ private:
                 break;
             }
             cv.wait_for(cv_lk, std::chrono::milliseconds(pollPeriod), [&]() { return !running; });
-        }
-        {
-            std::lock_guard lk(mtx);
-            running = false;
         }
         flog::info("spots: worker stopping");
     }
