@@ -5,6 +5,11 @@
 # DISABLE_USB_ENUMERATION=ON is needed on Android to bypass libusb device
 # enumeration that requires Linux udev. On desktop we leave it OFF.
 #
+set(_libhackrf_android_args "")
+if (ANDROID)
+    list(APPEND _libhackrf_android_args -DDISABLE_USB_ENUMERATION=ON)
+endif ()
+
 add_cmake_project(libhackrf
     GIT_REPOSITORY https://github.com/AlexandreRouma/hackrf
     GIT_TAG        master
@@ -12,6 +17,7 @@ add_cmake_project(libhackrf
     SOURCE_SUBDIR  host
     CMAKE_ARGS
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        ${_libhackrf_android_args}
 )
 
 set(DEP_libhackrf_DEPENDS libusb fftw3)

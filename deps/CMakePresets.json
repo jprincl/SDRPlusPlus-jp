@@ -41,54 +41,54 @@
             }
         },
         {
-            "name": "android-arm64-v8a",
-            "displayName": "Android arm64-v8a",
+            "name": "android-base",
+            "hidden": true,
             "inherits": "default",
             "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build-android-arm64-v8a",
             "cacheVariables": {
                 "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
+                "ANDROID_PLATFORM": "android-23",
+                "ANDROID_STL": "c++_shared",
+                "sdrpp_deps_PACKAGE_EXCLUDES": "^(glfw3|LimeSuite|libbladeRF|libfobos|libperseus-sdr|librfnm|portaudio|pthreads|rtaudio|sdrplay|spdlog|zlib)$"
+            }
+        },
+        {
+            "name": "android-arm64-v8a",
+            "displayName": "Android arm64-v8a",
+            "inherits": "android-base",
+            "binaryDir": "${sourceDir}/build-android-arm64-v8a",
+            "cacheVariables": {
                 "ANDROID_ABI": "arm64-v8a",
-                "ANDROID_NATIVE_API_LEVEL": "23",
                 "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/arm64-v8a"
             }
         },
         {
             "name": "android-armeabi-v7a",
             "displayName": "Android armeabi-v7a",
-            "inherits": "default",
-            "generator": "Ninja",
+            "inherits": "android-base",
             "binaryDir": "${sourceDir}/build-android-armeabi-v7a",
             "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
                 "ANDROID_ABI": "armeabi-v7a",
-                "ANDROID_NATIVE_API_LEVEL": "23",
                 "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/armeabi-v7a"
             }
         },
         {
             "name": "android-x86",
             "displayName": "Android x86",
-            "inherits": "default",
-            "generator": "Ninja",
+            "inherits": "android-base",
             "binaryDir": "${sourceDir}/build-android-x86",
             "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
                 "ANDROID_ABI": "x86",
-                "ANDROID_NATIVE_API_LEVEL": "23",
                 "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/x86"
             }
         },
         {
             "name": "android-x86_64",
             "displayName": "Android x86_64",
-            "inherits": "default",
-            "generator": "Ninja",
+            "inherits": "android-base",
             "binaryDir": "${sourceDir}/build-android-x86_64",
             "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
                 "ANDROID_ABI": "x86_64",
-                "ANDROID_NATIVE_API_LEVEL": "23",
                 "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/x86_64"
             }
         }

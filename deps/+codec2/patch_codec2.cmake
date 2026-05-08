@@ -6,6 +6,67 @@
 # 4.x, so the install step fails with "include could not find requested file:
 # GetPrerequisites.cmake".
 #
+# Codec2 cross-builds a native host generate_codebook helper. For Android
+# builds on Windows, that nested native build uses MSVC; keep GCC flags and
+# Unix libm behind MSVC checks while leaving Android Clang unchanged. The .exe
+# helper path is host-Windows-specific.
+if (CMAKE_HOST_WIN32)
+    set(_root "${SRC}/CMakeLists.txt")
+    file(READ "${_root}" _root_contents)
+    string(REPLACE
+        [=[set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-strict-overflow")]=]
+        [=[if(NOT MSVC)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-strict-overflow")
+endif()]=]
+        _root_contents "${_root_contents}")
+    string(REPLACE
+        [=[set(CMAKE_C_FLAGS_DEBUG "-g -O2 -DDUMP")
+set(CMAKE_C_FLAGS_RELEASE "-O3")]=]
+        [=[if(MSVC)
+    set(CMAKE_C_FLAGS_DEBUG "/Zi /O2 -DDUMP")
+    set(CMAKE_C_FLAGS_RELEASE "/O2")
+else()
+    set(CMAKE_C_FLAGS_DEBUG "-g -O2 -DDUMP")
+    set(CMAKE_C_FLAGS_RELEASE "-O3")
+endif()]=]
+        _root_contents "${_root_contents}")
+    file(WRITE "${_root}" "${_root_contents}")
+    message(STATUS "Patched ${_root}")
+
+    set(_src_cmake "${SRC}/src/CMakeLists.txt")
+    file(READ "${_src_cmake}" _src_cmake_contents)
+    string(REPLACE
+        [=[    target_link_libraries(generate_codebook m)]=]
+        [=[    if(NOT MSVC)
+        target_link_libraries(generate_codebook m)
+    endif()]=]
+        _src_cmake_contents "${_src_cmake_contents}")
+    string(REPLACE
+        [=[    ExternalProject_Add(codec2_native
+       SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..
+       BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/codec2_native
+       BUILD_COMMAND ${CMAKE_COMMAND} --build . --target generate_codebook
+       INSTALL_COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/codec2_native/src/generate_codebook ${CMAKE_CURRENT_BINARY_DIR}
+       BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/generate_codebook
+    )
+    add_executable(generate_codebook IMPORTED)
+    set_target_properties(generate_codebook PROPERTIES
+        IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/generate_codebook)]=]
+        [=[    ExternalProject_Add(codec2_native
+       SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..
+       BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/codec2_native
+       BUILD_COMMAND ${CMAKE_COMMAND} --build . --target generate_codebook
+       INSTALL_COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/codec2_native/src/generate_codebook.exe ${CMAKE_CURRENT_BINARY_DIR}/generate_codebook.exe
+       BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/generate_codebook.exe
+    )
+    add_executable(generate_codebook IMPORTED)
+    set_target_properties(generate_codebook PROPERTIES
+        IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/generate_codebook.exe)]=]
+        _src_cmake_contents "${_src_cmake_contents}")
+    file(WRITE "${_src_cmake}" "${_src_cmake_contents}")
+    message(STATUS "Patched ${_src_cmake}")
+endif ()
+
 # Replace the template with a modern equivalent that uses the built-in
 # file(GET_RUNTIME_DEPENDENCIES) command (available since CMake 3.16).
 #

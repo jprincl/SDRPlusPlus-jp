@@ -95,6 +95,25 @@ list(APPEND DEP_CMAKE_OPTS
     "-DLIBUSB_VERSION=1.0.27"
 )
 
+# libiio v0.24 uses CMake's FindLibXml2 module and does not reliably pick up
+# the libxml2 Config package from the cross-built prefix. Feed the legacy
+# module variables directly, matching the libusb/fftw override style above.
+set(_libxml2_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include/libxml2")
+if (WIN32)
+    set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.lib")
+elseif (APPLE)
+    set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.dylib")
+else ()
+    set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.so")
+endif ()
+list(APPEND DEP_CMAKE_OPTS
+    "-DLIBXML2_INCLUDE_DIR=${_libxml2_inc}"
+    "-DLIBXML2_INCLUDE_DIRS=${_libxml2_inc}"
+    "-DLIBXML2_LIBRARY=${_libxml2_lib}"
+    "-DLIBXML2_LIBRARIES=${_libxml2_lib}"
+    "-DLIBXML2_FOUND=TRUE"
+)
+
 # Same trick for pthreads-win32 — many SDR libs ship a bundled FindThreads.cmake
 # that gates on THREADS_PTHREADS_WIN32_LIBRARY on Windows. We build pthreads4w
 # above; pre-feed its install paths so every recipe finds it.
@@ -104,6 +123,15 @@ if (WIN32)
     list(APPEND DEP_CMAKE_OPTS
         "-DTHREADS_PTHREADS_INCLUDE_DIR=${_pthreads_inc}"
         "-DTHREADS_PTHREADS_WIN32_LIBRARY=${_pthreads_lib}"
+    )
+endif ()
+
+# Android has system pthreads in Bionic. When cross-compiling, FindThreads
+# cannot run its probe binary, so pre-feed the compiler flag used by the
+# Android toolchain instead of building or linking a separate pthreads library.
+if (ANDROID)
+    list(APPEND DEP_CMAKE_OPTS
+        "-DTHREADS_PTHREAD_ARG=-pthread"
     )
 endif ()
 
@@ -124,6 +152,24 @@ list(APPEND DEP_CMAKE_OPTS
     "-DFFTW_INCLUDE_DIRS=${_fftw_inc}"
     "-DFFTW_INCLUDE_DIR=${_fftw_inc}"
     "-DFFTW_FOUND=TRUE"
+)
+
+# libad9361 depends on libiio and uses LIBIIO_INCLUDEDIR / LIBIIO_LIBRARIES
+# (FindLIBIIO.cmake style). Pre-feed the paths to the libiio we built so
+# every sub-build that receives DEP_CMAKE_OPTS (including libad9361) can
+# locate it without pkg-config.
+set(_libiio_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include")
+if (WIN32)
+    set(_libiio_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/iio.lib")
+elseif (APPLE)
+    set(_libiio_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libiio.dylib")
+else ()
+    set(_libiio_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libiio.so")
+endif ()
+list(APPEND DEP_CMAKE_OPTS
+    "-DLIBIIO_INCLUDEDIR=${_libiio_inc}"
+    "-DLIBIIO_LIBRARIES=${_libiio_lib}"
+    "-DLIBIIO_FOUND=TRUE"
 )
 
 list_projects(FOUND_PACKAGES ${CMAKE_CURRENT_LIST_DIR})
@@ -207,7 +253,7 @@ add_custom_target(deps ALL DEPENDS ${_build_list_toplevel})
 
 # MSVC dual-build: spawn a sibling configure to build Debug variants of the
 # C++/STL libs. Pure-C libs (DEP_DEBUG_EXCLUDES) are reused from Release.
-if (DEP_DEBUG AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+if (MSVC AND DEP_DEBUG AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     # Pure-C / binary libraries: their public ABI is CRT-agnostic, so a
     # single Release-mode build is consumable from a Debug-mode application.
     # Only libraries that expose C++ classes / STL containers (rtaudio in our

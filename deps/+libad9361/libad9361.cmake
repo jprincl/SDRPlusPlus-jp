@@ -9,6 +9,7 @@ include(ExternalProject)
 set(_prefix ${SDRPP_DEPS_INSTALL_PREFIX})
 set(_src    ${CMAKE_CURRENT_BINARY_DIR}/sources/libad9361)
 set(_bin    ${CMAKE_CURRENT_BINARY_DIR}/builds/libad9361)
+sdrpp_collect_android_cmake_args(_android_args)
 
 ExternalProject_Add(dep_libad9361
     URL                 https://github.com/analogdevicesinc/libad9361-iio/archive/refs/tags/v0.2.tar.gz
@@ -21,11 +22,15 @@ ExternalProject_Add(dep_libad9361
         -DCMAKE_C_COMPILER:STRING=${CMAKE_C_COMPILER}
         -DCMAKE_CXX_COMPILER:STRING=${CMAKE_CXX_COMPILER}
         -DCMAKE_TOOLCHAIN_FILE:STRING=${CMAKE_TOOLCHAIN_FILE}
+        ${_android_args}
         -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
         # libad9361 v0.2's cmake_minimum_required is < 3.5; CMake 4.x drops
         # support for that without this opt-in.
         -DCMAKE_POLICY_VERSION_MINIMUM:STRING=3.5
+        # Forward pre-fed dependency paths (libiio, libusb, …) so libad9361
+        # can locate them without pkg-config on the host.
+        ${DEP_CMAKE_OPTS}
     BUILD_COMMAND       ${CMAKE_COMMAND} --build . --config ${CMAKE_BUILD_TYPE}
     INSTALL_COMMAND
             ${CMAKE_COMMAND} -E make_directory ${_prefix}/include

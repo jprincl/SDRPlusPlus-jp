@@ -3,8 +3,8 @@
 # transitively by libhydrasdr (uses pthread_* APIs).
 #
 # Built from GerHobbelt's CMake-enabled mirror of the original pthreads4w
-# project. Linux/macOS already have native pthreads via the C library, so
-# this recipe is a no-op there.
+# project. Android and Linux/macOS already have native pthreads via the C
+# library, so this recipe is a no-op there.
 #
 
 if (NOT WIN32)

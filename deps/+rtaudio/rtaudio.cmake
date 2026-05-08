@@ -5,10 +5,6 @@
 # Pinned to the same commit the existing Windows CI uses (build_all.yml line
 # 164/297) — known to work with SDR++. Bump only after verifying.
 #
-if (ANDROID)
-    return()
-endif ()
-
 add_cmake_project(rtaudio
     GIT_REPOSITORY https://github.com/thestk/rtaudio
     GIT_TAG        2f2fca4502d506abc50f6d4473b2836d24cfb1e3

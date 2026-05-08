@@ -28,6 +28,21 @@ if (NOT CMAKE_BUILD_TYPE AND NOT _is_multi)
     message(STATUS "CMAKE_BUILD_TYPE not set, defaulting to Release")
 endif ()
 
+function(sdrpp_collect_android_cmake_args out_var)
+    set(_args "")
+    foreach (_var IN ITEMS
+            ANDROID_ABI
+            ANDROID_PLATFORM
+            ANDROID_STL
+            ANDROID_ARM_MODE
+            ANDROID_ARM_NEON)
+        if (DEFINED ${_var} AND NOT "${${_var}}" STREQUAL "")
+            list(APPEND _args "-D${_var}:STRING=${${_var}}")
+        endif ()
+    endforeach ()
+    set(${out_var} ${_args} PARENT_SCOPE)
+endfunction()
+
 function(add_cmake_project projectname)
     cmake_parse_arguments(P_ARGS "" "INSTALL_DIR;BUILD_COMMAND;INSTALL_COMMAND" "CMAKE_ARGS" ${ARGN})
 
@@ -77,6 +92,8 @@ function(add_cmake_project projectname)
         list(APPEND _gen_args CMAKE_GENERATOR_INSTANCE ${CMAKE_GENERATOR_INSTANCE})
     endif ()
 
+    sdrpp_collect_android_cmake_args(_android_args)
+
     ExternalProject_Add(
         dep_${projectname}
         INSTALL_DIR     ${SDRPP_DEPS_INSTALL_PREFIX}
@@ -90,6 +107,7 @@ function(add_cmake_project projectname)
             -DCMAKE_C_COMPILER:STRING=${CMAKE_C_COMPILER}
             -DCMAKE_CXX_COMPILER:STRING=${CMAKE_CXX_COMPILER}
             -DCMAKE_TOOLCHAIN_FILE:STRING=${CMAKE_TOOLCHAIN_FILE}
+            ${_android_args}
             -DBUILD_SHARED_LIBS:BOOL=${BUILD_SHARED_LIBS}
             # CMake 4.x dropped support for projects requesting cmake_minimum_required
             # < 3.5. Many of our deps (FFTW 3.3.10, libxml2, codec2, ...) still ask

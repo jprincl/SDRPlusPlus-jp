@@ -83,6 +83,9 @@ add_cmake_project(codec2
     # TODO: pin to a specific tag once we confirm what's current upstream.
     GIT_TAG        main
     GIT_SHALLOW    ON
+    PATCH_COMMAND  ${CMAKE_COMMAND}
+                       -DSRC=<SOURCE_DIR>
+                       -P ${CMAKE_CURRENT_LIST_DIR}/patch_codec2.cmake
     CMAKE_ARGS
         -DUNITTEST=OFF
         -DBUILD_SHARED_LIBS=ON
