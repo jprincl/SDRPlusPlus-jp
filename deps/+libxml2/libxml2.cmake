@@ -1,0 +1,17 @@
+#
+# libxml2 — transitive dependency of libiio. Recipe matches the version
+# pinned in the Android kit (2.9.14).
+#
+add_cmake_project(libxml2
+    URL https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz
+    # URL_HASH SHA256=<TODO: pin after first verified build>
+    CMAKE_ARGS
+        -DLIBXML2_WITH_LZMA=OFF
+        -DLIBXML2_WITH_PYTHON=OFF
+        -DLIBXML2_WITH_ICONV=OFF
+        -DLIBXML2_WITH_TESTS=OFF
+        -DLIBXML2_WITH_PROGRAMS=OFF
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+)
+
+set(DEP_libxml2_DEPENDS zlib)

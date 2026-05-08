@@ -1,0 +1,97 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Default",
+            "description": "Sensible defaults; lets CMake pick generator from environment",
+            "binaryDir": "${sourceDir}/build-default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "sdrpp_deps_DEP_DOWNLOAD_DIR": {
+                    "type": "PATH",
+                    "value": "${sourceDir}/.pkg_cache"
+                }
+            }
+        },
+        {
+            "name": "vs2022-x64",
+            "displayName": "Visual Studio 2022, x64",
+            "inherits": "default",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/build-vs2022-x64",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "vs2022-arm64ec",
+            "displayName": "Visual Studio 2022, ARM64EC",
+            "inherits": "default",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "ARM64EC",
+            "binaryDir": "${sourceDir}/build-vs2022-arm64ec",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "$comment": "Android presets — stubs for iteration 2. The toolchain file path assumes the Android NDK environment exposes ANDROID_NDK_ROOT (the Gradle CMake integration sets it). Each preset installs into <root>/<ABI>/ so the existing SDR_KIT_ROOT/${ANDROID_ABI} consumer pattern keeps working.",
+            "name": "android-arm64-v8a",
+            "displayName": "Android arm64-v8a",
+            "inherits": "default",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-android-arm64-v8a",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
+                "ANDROID_ABI": "arm64-v8a",
+                "ANDROID_NATIVE_API_LEVEL": "23",
+                "sdrpp_deps_DEP_INSTALL_PREFIX": "${sourceDir}/build-android/arm64-v8a"
+            }
+        },
+        {
+            "name": "android-armeabi-v7a",
+            "displayName": "Android armeabi-v7a",
+            "inherits": "default",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-android-armeabi-v7a",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
+                "ANDROID_ABI": "armeabi-v7a",
+                "ANDROID_NATIVE_API_LEVEL": "23",
+                "sdrpp_deps_DEP_INSTALL_PREFIX": "${sourceDir}/build-android/armeabi-v7a"
+            }
+        },
+        {
+            "name": "android-x86",
+            "displayName": "Android x86",
+            "inherits": "default",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-android-x86",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
+                "ANDROID_ABI": "x86",
+                "ANDROID_NATIVE_API_LEVEL": "23",
+                "sdrpp_deps_DEP_INSTALL_PREFIX": "${sourceDir}/build-android/x86"
+            }
+        },
+        {
+            "name": "android-x86_64",
+            "displayName": "Android x86_64",
+            "inherits": "default",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-android-x86_64",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
+                "ANDROID_ABI": "x86_64",
+                "ANDROID_NATIVE_API_LEVEL": "23",
+                "sdrpp_deps_DEP_INSTALL_PREFIX": "${sourceDir}/build-android/x86_64"
+            }
+        }
+    ]
+}
