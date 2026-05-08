@@ -36,7 +36,7 @@ if (MSVC)
             "then re-run the deps configure.")
     endif ()
 
-    set(_prefix "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}")
+    set(_prefix "${SDRPP_DEPS_INSTALL_PREFIX}")
     set(_invoke "${CMAKE_CURRENT_LIST_DIR}/codec2_mingw.cmake")
 
     ExternalProject_Add(dep_codec2

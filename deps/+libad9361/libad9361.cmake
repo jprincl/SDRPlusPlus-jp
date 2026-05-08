@@ -6,7 +6,7 @@
 
 include(ExternalProject)
 
-set(_prefix ${${PROJECT_NAME}_DEP_INSTALL_PREFIX})
+set(_prefix ${SDRPP_DEPS_INSTALL_PREFIX})
 set(_src    ${CMAKE_CURRENT_BINARY_DIR}/sources/libad9361)
 set(_bin    ${CMAKE_CURRENT_BINARY_DIR}/builds/libad9361)
 

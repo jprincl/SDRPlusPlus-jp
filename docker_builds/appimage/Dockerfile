@@ -57,15 +57,15 @@ RUN cd /tmp && \
     ldconfig && \
     rm -rf /tmp/libfobos
 
-# Install libhydrasdr (rfone_host).
+# Install libhydrasdr (hydrasdr-host — formerly rfone_host, renamed upstream).
 RUN cd /tmp && \
-    git clone --depth=1 https://github.com/hydrasdr/rfone_host && \
-    cd rfone_host && mkdir build && cd build && \
+    git clone --depth=1 https://github.com/hydrasdr/hydrasdr-host && \
+    cd hydrasdr-host && mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr && \
     make -j"$(nproc)" && \
     make install && \
     ldconfig && \
-    rm -rf /tmp/rfone_host
+    rm -rf /tmp/hydrasdr-host
 
 # Install linuxdeploy and appimagetool for the host architecture.
 # Both ship as AppImages that need FUSE — inside Docker we extract them once.

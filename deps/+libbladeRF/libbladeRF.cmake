@@ -22,14 +22,29 @@ add_cmake_project(libbladeRF
         # find_library/find_file populate causes CMake to skip its search and
         # use our values directly, so LIBPTHREADSWIN32_LIBRARIES ends up
         # pointing at pthreadVC3.lib and the shared library links correctly.
-        -DLIBPTHREADSWIN32_PATH=${${PROJECT_NAME}_DEP_INSTALL_PREFIX}
+        -DLIBPTHREADSWIN32_PATH=${SDRPP_DEPS_INSTALL_PREFIX}
         -DLIBPTHREADSWIN32_FOUND=TRUE
-        -DPTHREAD_LIBRARY=${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/lib/pthreadVC3.lib
-        -DPTHREAD_DLL=${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/bin/pthreadVC3.dll
+        -DPTHREAD_LIBRARY=${SDRPP_DEPS_INSTALL_PREFIX}/lib/pthreadVC3.lib
+        -DPTHREAD_DLL=${SDRPP_DEPS_INSTALL_PREFIX}/bin/pthreadVC3.dll
         # Point libbladeRF's FindLibUSB at our install prefix so its DLL-copy
         # custom command can locate libusb-1.0.dll. The suffix is patched to
         # 'bin' (see patch_libbladerf.cmake) to match our destdir layout.
-        -DLIBUSB_PATH=${${PROJECT_NAME}_DEP_INSTALL_PREFIX}
+        -DLIBUSB_PATH=${SDRPP_DEPS_INSTALL_PREFIX}
 )
 
 set(DEP_libbladeRF_DEPENDS libusb pthreads)
+
+# libbladeRF's host/CMakeLists.txt installs the runtime DLL into lib/ instead
+# of bin/ on Windows. Mirror it into bin/ post-install so the imported-config
+# DLL search and standard app-bundling collection both find it where they
+# expect.
+if (WIN32)
+    ExternalProject_Add_Step(dep_libbladeRF mirror_dll_to_bin
+        DEPENDEES install
+        COMMAND   ${CMAKE_COMMAND} -E make_directory ${SDRPP_DEPS_INSTALL_PREFIX}/bin
+        COMMAND   ${CMAKE_COMMAND} -E copy_if_different
+                      ${SDRPP_DEPS_INSTALL_PREFIX}/lib/bladeRF.dll
+                      ${SDRPP_DEPS_INSTALL_PREFIX}/bin/bladeRF.dll
+        COMMENT   "Mirroring bladeRF.dll from lib/ to bin/"
+    )
+endif ()

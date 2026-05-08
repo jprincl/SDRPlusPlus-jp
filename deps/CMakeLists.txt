@@ -20,7 +20,7 @@
 # are reused from the Release build.
 #
 
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.16)  # Ubuntu focal floor
 project(sdrpp_deps)
 
 option(BUILD_SHARED_LIBS "Build shared libraries instead of static" ON)
@@ -75,13 +75,13 @@ endif ()
 # the variables they expect, computed against our deps install prefix, so
 # every sub-build can locate the libusb we built ourselves without needing
 # pkg-config on the host. The override is harmless to libs that don't use it.
-set(_libusb_inc "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/include/libusb-1.0")
+set(_libusb_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include/libusb-1.0")
 if (WIN32)
-    set(_libusb_lib "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/lib/usb-1.0.lib")
+    set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/usb-1.0.lib")
 elseif (APPLE)
-    set(_libusb_lib "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/lib/libusb-1.0.dylib")
+    set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libusb-1.0.dylib")
 else ()
-    set(_libusb_lib "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/lib/libusb-1.0.so")
+    set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libusb-1.0.so")
 endif ()
 list(APPEND DEP_CMAKE_OPTS
     # singular forms (FindLIBUSB.cmake convention used by libairspy/airspyhf/
@@ -99,8 +99,8 @@ list(APPEND DEP_CMAKE_OPTS
 # that gates on THREADS_PTHREADS_WIN32_LIBRARY on Windows. We build pthreads4w
 # above; pre-feed its install paths so every recipe finds it.
 if (WIN32)
-    set(_pthreads_inc "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/include")
-    set(_pthreads_lib "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/lib/pthreadVC3.lib")
+    set(_pthreads_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include")
+    set(_pthreads_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/pthreadVC3.lib")
     list(APPEND DEP_CMAKE_OPTS
         "-DTHREADS_PTHREADS_INCLUDE_DIR=${_pthreads_inc}"
         "-DTHREADS_PTHREADS_WIN32_LIBRARY=${_pthreads_lib}"
@@ -110,13 +110,13 @@ endif ()
 # FFTW (single precision) — used by libhackrf's hackrf-tools and others.
 # Bundled FindFFTW.cmake modules in the SDR forks expect FFTW_LIBRARIES /
 # FFTW_INCLUDES / FFTW_INCLUDE_DIRS / FFTW_FOUND. Pre-feed them.
-set(_fftw_inc "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/include")
+set(_fftw_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include")
 if (WIN32)
-    set(_fftw_lib "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/lib/fftw3f.lib")
+    set(_fftw_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/fftw3f.lib")
 elseif (APPLE)
-    set(_fftw_lib "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/lib/libfftw3f.dylib")
+    set(_fftw_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libfftw3f.dylib")
 else ()
-    set(_fftw_lib "${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/lib/libfftw3f.so")
+    set(_fftw_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libfftw3f.so")
 endif ()
 list(APPEND DEP_CMAKE_OPTS
     "-DFFTW_LIBRARIES=${_fftw_lib}"
@@ -216,7 +216,7 @@ if (DEP_DEBUG AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
         libusb zstd zlib fftw3 sdrplay
         libxml2 libiio libad9361
         libairspy libairspyhf libhackrf librtlsdr
-        libhydrasdr rfone_host librfnm libfobos libperseus-sdr
+        libhydrasdr librfnm libfobos libperseus-sdr libmirisdr
         libbladeRF LimeSuite
         codec2 volk pthreads
         glfw3 portaudio
@@ -231,12 +231,28 @@ if (DEP_DEBUG AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
         list(APPEND _build_list_dbg ${t}_debug)
     endforeach ()
 
+    # Forward generator platform/toolset/instance to the spawned Debug
+    # configure so e.g. -A x64 / -T v143 reach the sibling build (without
+    # this, the child uses the generator's default arch/toolset).
+    set(_dbg_gen_args "")
+    if (CMAKE_GENERATOR_PLATFORM)
+        list(APPEND _dbg_gen_args -A "${CMAKE_GENERATOR_PLATFORM}")
+    endif ()
+    if (CMAKE_GENERATOR_TOOLSET)
+        list(APPEND _dbg_gen_args -T "${CMAKE_GENERATOR_TOOLSET}")
+    endif ()
+    if (CMAKE_GENERATOR_INSTANCE)
+        list(APPEND _dbg_gen_args "-DCMAKE_GENERATOR_INSTANCE=${CMAKE_GENERATOR_INSTANCE}")
+    endif ()
+
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/_d)
     execute_process(
-        COMMAND ${CMAKE_COMMAND} ${CMAKE_CURRENT_SOURCE_DIR} -G${CMAKE_GENERATOR}
+        COMMAND ${CMAKE_COMMAND} ${CMAKE_CURRENT_SOURCE_DIR}
+            -G${CMAKE_GENERATOR}
+            ${_dbg_gen_args}
             -DCMAKE_BUILD_TYPE=Debug
             -D${PROJECT_NAME}_DEP_DOWNLOAD_DIR=${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}
-            -D${PROJECT_NAME}_DEP_INSTALL_PREFIX=${${PROJECT_NAME}_DEP_INSTALL_PREFIX}
+            -DSDRPP_DEPS_INSTALL_PREFIX=${SDRPP_DEPS_INSTALL_PREFIX}
             -D${PROJECT_NAME}_PACKAGE_EXCLUDES=${_excl_regexp}
             -D${PROJECT_NAME}_SELECT_ALL=${${PROJECT_NAME}_SELECT_ALL}
             -D${PROJECT_NAME}_DEP_BUILD_VERBOSE=${${PROJECT_NAME}_DEP_BUILD_VERBOSE}
@@ -267,4 +283,4 @@ endif ()
 
 set(DEP_MESSAGES_WRITTEN ON CACHE BOOL "")
 
-install(CODE "message(STATUS \"SDR++ dependencies built into ${${PROJECT_NAME}_DEP_INSTALL_PREFIX}\")")
+install(CODE "message(STATUS \"SDR++ dependencies built into ${SDRPP_DEPS_INSTALL_PREFIX}\")")

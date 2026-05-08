@@ -1,6 +1,6 @@
 #
 # pthreads-win32 — POSIX threads compatibility layer for Windows. Required
-# transitively by libhydrasdr / rfone_host (they use pthread_* APIs).
+# transitively by libhydrasdr (uses pthread_* APIs).
 #
 # Built from GerHobbelt's CMake-enabled mirror of the original pthreads4w
 # project. Linux/macOS already have native pthreads via the C library, so
@@ -8,8 +8,8 @@
 #
 
 if (NOT WIN32)
-    # Define a stub target so DEP_*_DEPENDS lookups from libhydrasdr / rfone_host
-    # resolve harmlessly on non-Windows hosts.
+    # Define a stub target so DEP_*_DEPENDS lookups from libhydrasdr resolve
+    # harmlessly on non-Windows hosts.
     add_custom_target(dep_pthreads)
     set_target_properties(dep_pthreads PROPERTIES EXCLUDE_FROM_ALL TRUE)
     return()
@@ -27,7 +27,7 @@ add_cmake_project(pthreads
 # libbladeRF's FindLibPThreadsWin32.cmake gates on the presence of a
 # COPYING.LIB file (a relic of the pthreads-win32 v2 source tree). pthreads4w
 # (the v3 fork we use) doesn't ship it. Drop a stub so the find succeeds.
-file(WRITE ${${PROJECT_NAME}_DEP_INSTALL_PREFIX}/COPYING.LIB
+file(WRITE ${SDRPP_DEPS_INSTALL_PREFIX}/COPYING.LIB
 "This stub file exists to satisfy libbladeRF's FindLibPThreadsWin32.cmake,
 which uses the presence of COPYING.LIB as a sentinel for pthreads-win32 v2's
 source tree. We use pthreads4w (the GerHobbelt v3 fork), which is licensed

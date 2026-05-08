@@ -19,7 +19,7 @@ elseif (CMAKE_GENERATOR_PLATFORM MATCHES "ARM64")
     return()
 endif ()
 
-set(_prefix ${${PROJECT_NAME}_DEP_INSTALL_PREFIX})
+set(_prefix ${SDRPP_DEPS_INSTALL_PREFIX})
 
 ExternalProject_Add(dep_sdrplay
     URL                 https://www.sdrpp.org/SDRplay.zip

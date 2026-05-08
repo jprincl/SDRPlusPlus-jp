@@ -216,8 +216,8 @@ jobs:
             # Copy pthreadVC3.dll from vcpkg to PothosSDR bin directory
             Copy-Item "C:/vcpkg/installed/x64-windows/bin/pthreadVC3.dll" "C:/Program Files/PothosSDR/bin/"
 
-        - name: Install libhydrasdr
-          run: git clone https://github.com/hydrasdr/rfone_host; cd rfone_host/ ; mkdir build ; cd build ; cmake .. -DCMAKE_BUILD_TYPE=Release "-DLIBUSB_LIBRARIES=C:\Program Files\PothosSDR\lib\libusb-1.0.lib" "-DLIBUSB_INCLUDE_DIR=C:\Program Files\PothosSDR\include\libusb-1.0" "-DTHREADS_PTHREADS_WIN32_LIBRARY=C:\Program Files\PothosSDR\lib\pthreadVC2.lib" "-DTHREADS_PTHREADS_INCLUDE_DIR=C:\Program Files\PothosSDR\include" ; cmake --build . --config Release ; cmake --install .
+        - name: Install libhydrasdr (second pass with PothosSDR libusb)
+          run: git clone https://github.com/hydrasdr/hydrasdr-host hydrasdr-host-2; cd hydrasdr-host-2/ ; mkdir build ; cd build ; cmake .. -DCMAKE_BUILD_TYPE=Release "-DLIBUSB_LIBRARIES=C:\Program Files\PothosSDR\lib\libusb-1.0.lib" "-DLIBUSB_INCLUDE_DIR=C:\Program Files\PothosSDR\include\libusb-1.0" "-DTHREADS_PTHREADS_WIN32_LIBRARY=C:\Program Files\PothosSDR\lib\pthreadVC2.lib" "-DTHREADS_PTHREADS_INCLUDE_DIR=C:\Program Files\PothosSDR\include" ; cmake --build . --config Release ; cmake --install .
 
         - name: Prepare CMake
           working-directory: ${{runner.workspace}}/build
