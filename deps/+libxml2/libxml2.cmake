@@ -15,3 +15,11 @@ add_cmake_project(libxml2
 )
 
 set(DEP_libxml2_DEPENDS zlib)
+
+sdrpp_validate_dep(libxml2
+    TARGET         LibXml2::LibXml2
+    LIB_NAMES      libxml2s xml2 libxml2
+    HEADER         parser.h
+    INCLUDE_SUBDIR libxml2/libxml
+    CONFIG_SUBDIR  libxml2-2.9.14
+    REQUIRES_CONFIG)

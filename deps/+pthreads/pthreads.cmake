@@ -1,5 +1,5 @@
 #
-# pthreads-win32 — POSIX threads compatibility layer for Windows. Required
+# pthreads-win32 - POSIX threads compatibility layer for Windows. Required
 # transitively by libhydrasdr (uses pthread_* APIs).
 #
 # Built from GerHobbelt's CMake-enabled mirror of the original pthreads4w
@@ -26,11 +26,23 @@ add_cmake_project(pthreads
 
 # libbladeRF's FindLibPThreadsWin32.cmake gates on the presence of a
 # COPYING.LIB file (a relic of the pthreads-win32 v2 source tree). pthreads4w
-# (the v3 fork we use) doesn't ship it. Drop a stub so the find succeeds.
-file(WRITE ${SDRPP_DEPS_INSTALL_PREFIX}/COPYING.LIB
+# (the v3 fork we use) doesn't ship it. Write the stub into a build-tree
+# compatibility shim, not into the installed dependency prefix.
+set(_pthreads_win32_compat_dir "${SDRPP_DEPS_COMPAT_DIR}/pthreads-win32")
+file(MAKE_DIRECTORY "${_pthreads_win32_compat_dir}")
+file(WRITE "${_pthreads_win32_compat_dir}/COPYING.LIB"
 "This stub file exists to satisfy libbladeRF's FindLibPThreadsWin32.cmake,
 which uses the presence of COPYING.LIB as a sentinel for pthreads-win32 v2's
 source tree. We use pthreads4w (the GerHobbelt v3 fork), which is licensed
-under the Apache 2.0 License — see lib/cmake/pthreads4w/ for the actual
-project artifacts.
+under the Apache 2.0 License. See the installed pthreads4w CMake package for
+the actual project artifacts.
 ")
+
+# Upstream installs Config.cmake under lib/cmake/pthreads4w/ (its real
+# package name); consumers reach pthreads via THREADS_PTHREADS_WIN32_LIBRARY
+# pre-feed (see deps/CMakeLists.txt), not find_package(pthreads).
+sdrpp_validate_dep(pthreads
+    TARGET    pthreadVC3
+    LIB_NAMES pthreadVC3
+    DLL_NAMES pthreadVC3.dll
+    HEADER    pthread.h)

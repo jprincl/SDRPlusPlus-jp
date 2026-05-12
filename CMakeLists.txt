@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.13)
+if (POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif ()
 project(sdrpp)
+
+if (MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "MSVC runtime library" FORCE)
+endif ()
 
 # Backends
 option(OPT_BACKEND_GLFW "Use the GLFW backend" ON)
@@ -12,6 +19,19 @@ else()
     set(SDR_KIT_ROOT_DEFAULT "/sdr-kit")
 endif()
 set(SDR_KIT_ROOT "${SDR_KIT_ROOT_DEFAULT}" CACHE PATH "Root path for the SDR kit libraries")
+
+# Dependency build management
+# When OPT_BUILD_DEPS=ON, deps/ is configured and built as a sub-project before
+# the main configure continues, and its install prefix is added to CMAKE_PREFIX_PATH
+# (and surfaced as SDR_KIT_ROOT). Default OFF — normal flow is to build deps once
+# (cmake --preset vs2026-x64 -S deps -B deps/build-vs2026-x64 && cmake --build ...)
+# and reuse the install prefix across many app builds.
+option(OPT_BUILD_DEPS "Build third-party dependencies before configuring SDR++" OFF)
+option(SDRPP_DEPS_OUTPUT_QUIET "Suppress output of the dependency build" OFF)
+set(SDRPP_DEPS_PRESET "default" CACHE STRING "Preset name to use for the dependency build")
+set(SDRPP_DEPS_BUILD_DIR "" CACHE PATH "Override the binary directory of the dependency build")
+set(SDRPP_DEPS_BUILD_CONFIG "" CACHE STRING "Build configuration to use when bootstrapping deps with a multi-config generator")
+set(SDRPP_DEP_ROOT_PACKAGES "" CACHE STRING "Override the top-level dependency recipes propagated to deps when OPT_BUILD_DEPS=ON")
 
 # Compatibility Options
 option(OPT_OVERRIDE_STD_FILESYSTEM "Use a local version of std::filesystem on systems that don't have it yet" OFF)
@@ -87,21 +107,29 @@ option(USE_INTERNAL_LIBCORRECT "Use an internal version of libcorrect" ON)
 option(USE_BUNDLE_DEFAULTS "Set the default resource and module directories to the right ones for a MacOS .app" OFF)
 option(COPY_MSVC_REDISTRIBUTABLES "Copy over the Visual C++ Redistributable" OFF)
 
-# libcurl source: 'system' uses find_package(CURL); 'bundled' uses FetchContent.
-# Default: system on Linux (distro packages have OpenSSL + OS trust store wired up),
-# bundled everywhere else (Windows/macOS/Android pin platform-native TLS backends).
-if(NOT DEFINED SDRPP_CURL_SOURCE_AUTO)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set(SDRPP_CURL_SOURCE "system" CACHE STRING "libcurl source: system|bundled")
-    else()
-        set(SDRPP_CURL_SOURCE "bundled" CACHE STRING "libcurl source: system|bundled")
-    endif()
-    set(SDRPP_CURL_SOURCE_AUTO 1 CACHE INTERNAL "")
-endif()
-set_property(CACHE SDRPP_CURL_SOURCE PROPERTY STRINGS system bundled)
+include(${CMAKE_SOURCE_DIR}/cmake/sdrpp_collect_required_deps.cmake)
+sdrpp_collect_required_dep_roots(_sdrpp_dep_root_packages_auto)
+if (SDRPP_DEP_ROOT_PACKAGES)
+    _sdrpp_normalize_dep_list(_sdrpp_dep_root_packages_effective "${SDRPP_DEP_ROOT_PACKAGES}")
+    message(STATUS "Effective dependency roots (override): ${_sdrpp_dep_root_packages_effective}")
+else ()
+    set(_sdrpp_dep_root_packages_effective ${_sdrpp_dep_root_packages_auto})
+    message(STATUS "Effective dependency roots (auto): ${_sdrpp_dep_root_packages_effective}")
+endif ()
+
+if (OPT_BUILD_DEPS)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/deps/autobuild.cmake)
+endif ()
 
 # Module cmake path
 set(SDRPP_MODULE_CMAKE "${CMAKE_SOURCE_DIR}/sdrpp_module.cmake")
+
+# Windows runtime layout mirrors the ZIP bundle: the application and shared
+# runtime DLLs live in the config root, while SDR++ plugins live under modules.
+if (MSVC)
+    set(SDRPP_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")
+    set(SDRPP_MODULE_RUNTIME_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}/modules")
+endif ()
 
 # Root source folder
 set(SDRPP_CORE_ROOT "${CMAKE_SOURCE_DIR}/core/src/")
@@ -153,8 +181,10 @@ if (ANDROID)
     set(CMAKE_CXX14_EXTENSION_COMPILE_OPTION "-std=c++17")
 endif (ANDROID)
 
-# Resolve libcurl into the CURL::libcurl imported target before core builds.
-include(${CMAKE_SOURCE_DIR}/cmake/find_or_fetch_curl.cmake)
+# Provide sdrpp_link_dep() helper to all module subdirectories. Try Config.cmake
+# first, fall back to pkg-config — keeps Linux apt/dpkg flow working while
+# letting Windows resolve via our deps install prefix.
+include(${CMAKE_SOURCE_DIR}/cmake/sdrpp_find_dep.cmake)
 
 # Core of SDR++
 add_subdirectory("core")
@@ -404,34 +434,85 @@ else ()
     add_executable(sdrpp "src/main.cpp")
 endif ()
 
+set_target_properties(sdrpp PROPERTIES OUTPUT_NAME "sdrpp-iak")
+if (MSVC)
+    set_target_properties(sdrpp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}")
+endif ()
+
 target_link_libraries(sdrpp PRIVATE sdrpp_core)
 
-# Bundled curl is built static + PIC and absorbed into sdrpp_core
-# (see cmake/find_or_fetch_curl.cmake), so there's no separate libcurl
-# artifact to install or resolve via rpath. System mode picks up the
-# distro libcurl through the dynamic linker's default search.
+# libcurl is resolved by deps/+libcurl (bundled profiles) or via the distro
+# package (Linux). Static deps builds absorb it into sdrpp_core; system mode
+# picks up the distro libcurl through the dynamic linker's default search.
 
 # Compiler arguments
 target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILER_FLAGS})
 
 # Copy dynamic libs over
 if (MSVC)
-    add_custom_target(do_always ALL xcopy /s \"$<TARGET_FILE_DIR:sdrpp_core>\\*.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
-    add_custom_target(do_always_volk ALL xcopy /s \"C:/Program Files/PothosSDR/bin\\volk.dll\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y)
+    get_property(_sdrpp_runtime_dlls GLOBAL PROPERTY SDRPP_RUNTIME_DLLS)
+    if (_sdrpp_runtime_dlls)
+        list(REMOVE_DUPLICATES _sdrpp_runtime_dlls)
+    endif ()
+
+    set(_sdrpp_runtime_source_dirs "")
+    foreach (_pp ${CMAKE_PREFIX_PATH})
+        if (EXISTS "${_pp}/bin")
+            list(APPEND _sdrpp_runtime_source_dirs "${_pp}/bin")
+        endif ()
+    endforeach ()
+    list(REMOVE_DUPLICATES _sdrpp_runtime_source_dirs)
+
+    set(_sdrpp_runtime_manifest "${CMAKE_CURRENT_BINARY_DIR}/sdrpp_runtime_dlls_$<CONFIG>.cmake")
+    set(_sdrpp_runtime_manifest_content "set(SDRPP_RUNTIME_DLLS\n")
+    foreach (_dll IN LISTS _sdrpp_runtime_dlls)
+        string(APPEND _sdrpp_runtime_manifest_content "    [=[${_dll}]=]\n")
+    endforeach ()
+    string(APPEND _sdrpp_runtime_manifest_content ")\nset(SDRPP_RUNTIME_SOURCE_DIRS\n")
+    foreach (_dir IN LISTS _sdrpp_runtime_source_dirs)
+        string(APPEND _sdrpp_runtime_manifest_content "    [=[${_dir}]=]\n")
+    endforeach ()
+    string(APPEND _sdrpp_runtime_manifest_content ")\n")
+    file(GENERATE OUTPUT "${_sdrpp_runtime_manifest}" CONTENT "${_sdrpp_runtime_manifest_content}")
+
+    get_filename_component(_sdrpp_msvc_bin_dir "${CMAKE_LINKER}" DIRECTORY)
+    find_program(_sdrpp_dumpbin dumpbin HINTS "${_sdrpp_msvc_bin_dir}" NO_DEFAULT_PATH)
+
+    add_custom_command(TARGET sdrpp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/root" "$<TARGET_FILE_DIR:sdrpp>"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:sdrpp>/recordings"
+        COMMENT "Copying Windows runtime root skeleton")
+
+    add_custom_command(TARGET sdrpp POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DRUNTIME_MANIFEST="${_sdrpp_runtime_manifest}"
+            -DDST="$<TARGET_FILE_DIR:sdrpp>"
+            -DRUNTIME_DEPENDENCIES_COMMAND="${_sdrpp_dumpbin}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/copy_runtime_dlls.cmake"
+        COMMENT "Copying linked runtime DLLs")
 
     if (COPY_MSVC_REDISTRIBUTABLES)
         # Get the list of Visual C++ runtime DLLs
         set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP True)
         include(InstallRequiredSystemLibraries)
 
-        # Create a space sperated list
-        set(REDIST_DLLS_STR "")
-        foreach(DLL IN LISTS CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
-            set(REDIST_DLLS_STR COMMAND xcopy /F \"${DLL}\" \"$<TARGET_FILE_DIR:sdrpp>\" /Y ${REDIST_DLLS_STR})
-        endforeach()
-        
-        # Create target
-        add_custom_target(do_always_msvc ALL ${REDIST_DLLS_STR})
+        set(_sdrpp_msvc_redist_manifest "${CMAKE_CURRENT_BINARY_DIR}/sdrpp_msvc_redist_$<CONFIG>.cmake")
+        set(_sdrpp_msvc_redist_manifest_content "set(SDRPP_MSVC_REDIST_DLLS\n")
+        foreach (_dll IN LISTS CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+            string(APPEND _sdrpp_msvc_redist_manifest_content "    [=[${_dll}]=]\n")
+        endforeach ()
+        string(APPEND _sdrpp_msvc_redist_manifest_content ")\n")
+        file(GENERATE OUTPUT "${_sdrpp_msvc_redist_manifest}" CONTENT "${_sdrpp_msvc_redist_manifest_content}")
+
+        add_custom_target(do_always_msvc ALL
+            COMMAND ${CMAKE_COMMAND}
+                -DCONFIG="$<CONFIG>"
+                -DDST="$<TARGET_FILE_DIR:sdrpp>"
+                -DREDIST_MANIFEST="${_sdrpp_msvc_redist_manifest}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/copy_msvc_redist.cmake"
+            COMMENT "Copying MSVC redistributables"
+            VERBATIM)
+        add_dependencies(do_always_msvc sdrpp)
     endif ()
 endif ()
 
@@ -459,7 +540,6 @@ endif ()
 configure_file(${CMAKE_SOURCE_DIR}/sdrpp_module.cmake ${CMAKE_CURRENT_BINARY_DIR}/sdrpp_module.cmake @ONLY)
 
 # Install directives
-set_target_properties(sdrpp PROPERTIES OUTPUT_NAME "sdrpp-iak")
 install(TARGETS sdrpp DESTINATION bin)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/bandplans DESTINATION share/sdrpp-iak)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/colormaps DESTINATION share/sdrpp-iak)
@@ -471,6 +551,61 @@ configure_file(${CMAKE_SOURCE_DIR}/sdrpp-iak.desktop ${CMAKE_CURRENT_BINARY_DIR}
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sdrpp-iak.desktop DESTINATION share/applications)
+endif ()
+
+if (MSVC)
+    set(SDRPP_WINDOWS_BUNDLE_STAGE_ROOT "${CMAKE_BINARY_DIR}/stage/windows-bundle" CACHE INTERNAL "Root directory for Windows bundle staging" FORCE)
+    set(_sdrpp_windows_bundle_stage_dir "${SDRPP_WINDOWS_BUNDLE_STAGE_ROOT}/$<CONFIG>")
+    get_property(_sdrpp_plugin_targets GLOBAL PROPERTY SDRPP_PLUGIN_TARGETS)
+
+    add_custom_target(stage_windows_bundle
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${_sdrpp_windows_bundle_stage_dir}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_sdrpp_windows_bundle_stage_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/root" "${_sdrpp_windows_bundle_stage_dir}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_sdrpp_windows_bundle_stage_dir}/modules"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_FILE_DIR:sdrpp>" "${_sdrpp_windows_bundle_stage_dir}"
+        COMMENT "Staging Windows bundle under ${SDRPP_WINDOWS_BUNDLE_STAGE_ROOT}"
+        VERBATIM)
+    add_dependencies(stage_windows_bundle sdrpp)
+    if (TARGET do_always)
+        add_dependencies(stage_windows_bundle do_always)
+    endif ()
+    if (TARGET do_always_msvc)
+        add_dependencies(stage_windows_bundle do_always_msvc)
+    endif ()
+
+    foreach (_sdrpp_plugin_target IN LISTS _sdrpp_plugin_targets)
+        add_dependencies(stage_windows_bundle ${_sdrpp_plugin_target})
+        add_custom_command(TARGET stage_windows_bundle POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${_sdrpp_plugin_target}>" "${_sdrpp_windows_bundle_stage_dir}/modules/"
+            VERBATIM)
+    endforeach ()
+endif ()
+
+if (APPLE)
+    set(SDRPP_MACOS_BUNDLE_STAGE_ROOT "${CMAKE_BINARY_DIR}/stage/macos-bundle" CACHE INTERNAL "Root directory for macOS bundle staging" FORCE)
+    set(_sdrpp_macos_bundle_dir "${SDRPP_MACOS_BUNDLE_STAGE_ROOT}/$<CONFIG>/SDR++-iak.app")
+    get_property(_sdrpp_plugin_targets GLOBAL PROPERTY SDRPP_PLUGIN_TARGETS)
+
+    set(_sdrpp_stage_macos_commands
+        COMMAND ${CMAKE_COMMAND} -E env
+            sh "${CMAKE_SOURCE_DIR}/macos/stage_macos_bundle.sh"
+            "${_sdrpp_macos_bundle_dir}"
+            "$<TARGET_FILE:sdrpp>"
+            "$<TARGET_FILE:sdrpp_core>")
+
+    foreach (_sdrpp_plugin_target IN LISTS _sdrpp_plugin_targets)
+        list(APPEND _sdrpp_stage_macos_commands "$<TARGET_FILE:${_sdrpp_plugin_target}>")
+    endforeach ()
+
+    add_custom_target(stage_macos_bundle
+        ${_sdrpp_stage_macos_commands}
+        COMMENT "Staging macOS app bundle under ${SDRPP_MACOS_BUNDLE_STAGE_ROOT}"
+        VERBATIM)
+    add_dependencies(stage_macos_bundle sdrpp sdrpp_core)
+    foreach (_sdrpp_plugin_target IN LISTS _sdrpp_plugin_targets)
+        add_dependencies(stage_macos_bundle ${_sdrpp_plugin_target})
+    endforeach ()
 endif ()
 
 # Create uninstall target

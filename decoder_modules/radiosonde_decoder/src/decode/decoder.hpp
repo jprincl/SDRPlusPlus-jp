@@ -4,13 +4,13 @@
 #include <mutex>
 #include "common.hpp"
 extern "C" {
-#include "sondedump/include/c50.h"
-#include "sondedump/include/dfm09.h"
-#include "sondedump/include/imet4.h"
-#include "sondedump/include/ims100.h"
-#include "sondedump/include/m10.h"
-#include "sondedump/include/mrzn1.h"
-#include "sondedump/include/rs41.h"
+#include <sondedump/c50.h>
+#include <sondedump/dfm09.h>
+#include <sondedump/imet4.h>
+#include <sondedump/ims100.h>
+#include <sondedump/m10.h>
+#include <sondedump/mrzn1.h>
+#include <sondedump/rs41.h>
 }
 
 #define LEN(x) (sizeof(x)/sizeof(*x))

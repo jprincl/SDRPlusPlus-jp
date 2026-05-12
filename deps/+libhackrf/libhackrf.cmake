@@ -21,3 +21,10 @@ add_cmake_project(libhackrf
 )
 
 set(DEP_libhackrf_DEPENDS libusb fftw3)
+
+sdrpp_emit_imported_config(libhackrf
+    LIB_NAMES   hackrf
+    DLL_NAMES   hackrf.dll
+    HEADER      hackrf.h
+    INCLUDE_SUBDIR libhackrf
+)

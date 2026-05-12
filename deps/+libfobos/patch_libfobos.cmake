@@ -3,7 +3,16 @@
 #
 # Patches libfobos's CMakeLists.txt:
 #   1. Removes the hardcoded CMAKE_INSTALL_PREFIX so our destdir prefix is used.
-#   2. Applies the generic PkgConfig stub (idempotent).
+#   2. Removes the bundled libusb-1.0.dll install rule (libusb is built
+#      separately by dep_libusb).
+#   3. Drops the explicit SHARED keyword from add_library(fobos ...) so the
+#      library type follows BUILD_SHARED_LIBS. Without this, libfobos always
+#      builds shared even when the dep policy resolves to static (the
+#      classification in deps/cmake/DepClassification.cmake marks libfobos
+#      static on every profile), producing fobos.dll + an import lib named
+#      fobos.lib that the validator correctly flags as a static/shared
+#      mismatch.
+#   4. Applies the generic PkgConfig stub (idempotent).
 #
 
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_helpers.cmake)
@@ -32,6 +41,15 @@ string(REGEX REPLACE
     "install[ \t]*\\([ \t]*FILES[ \t]+\\$<TARGET_FILE_DIR:fobos>/libusb-1\\.0\\.dll[^\n]*\n?"
     "# libusb-1.0.dll install removed by SDR++ deps build (libusb built separately)\n"
     _content "${_content}")
+
+
+# --- Patch 3: make library type follow BUILD_SHARED_LIBS ---
+# Upstream hardcodes `add_library(fobos SHARED ${SRC})`, so BUILD_SHARED_LIBS=OFF
+# is ignored and a DLL is always produced. Dropping the SHARED keyword lets
+# CMake honor the flag we pass from the recipe.
+patch_replace_or_fail(_content
+    "add_library(fobos SHARED \${SRC})"
+    "add_library(fobos \${SRC})")
 
 file(WRITE "${_f}" "${_content}")
 

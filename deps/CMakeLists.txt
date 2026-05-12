@@ -6,34 +6,64 @@
 # recipe. Adding a new dependency = drop in a new folder.
 #
 # Typical use:
-#   cmake --preset vs2022-x64 -S deps -B deps/build-vs2022-x64
-#   cmake --build deps/build-vs2022-x64 --config Release
+#   cmake --preset vs2026-x64 -S deps -B deps/build-vs2026-x64
+#   cmake --build deps/build-vs2026-x64 --config Release
 #
-# Outputs land in <buildDir>/destdir/usr/local. Point the SDR++ build at it:
-#   cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
-#         -DCMAKE_PREFIX_PATH=<absolute>/deps/build-vs2022-x64/destdir/usr/local \
-#         -DSDR_KIT_ROOT=<absolute>/deps/build-vs2022-x64/destdir/usr/local
+# Outputs land in <buildDir>/destdir/usr/local. Bundled deps are consumed via
+# CMake config packages; pkg-config metadata is pruned from the prefix.
+# Validation manifests, generated probe projects, and compatibility shims stay
+# in <buildDir>/. Point the SDR++ build at the install prefix:
+#   cmake -S . -B build -G "Visual Studio 18 2026" -A x64 \
+#         -DCMAKE_PREFIX_PATH=<absolute>/deps/build-vs2026-x64/destdir/usr/local \
+#         -DSDR_KIT_ROOT=<absolute>/deps/build-vs2026-x64/destdir/usr/local
 #
-# On MSVC, when CMAKE_BUILD_TYPE=Release a sibling configure is automatically
-# spawned in build/_d/ to produce Debug-mode variants of the libraries that
-# need them (those with C++ ABI / STL types in their interface). Pure-C libs
-# are reused from the Release build.
+# This is a single-config build system: each build tree produces exactly one
+# configuration, determined by CMAKE_BUILD_TYPE. Debug builds link against the
+# MSVC debug DLL CRT (/MDd), Release/RelWithDebInfo builds against /MD. To get
+# multiple configurations on the same machine, use separate build trees driven
+# from CMakePresets.json at the repo root.
 #
 
 cmake_minimum_required(VERSION 3.16)  # Ubuntu focal floor
+if (POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif ()
 project(sdrpp_deps)
+
+if (MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "MSVC runtime library" FORCE)
+endif ()
+
+include(${PROJECT_SOURCE_DIR}/../cmake/sdrpp_trace_helpers.cmake)
+sdrpp_init_cmake_trace_defaults("${CMAKE_CURRENT_BINARY_DIR}")
+
+if (ANDROID)
+    set(_sdrpp_dep_profile_default android)
+elseif (WIN32 OR APPLE)
+    set(_sdrpp_dep_profile_default portable)
+else ()
+    set(_sdrpp_dep_profile_default distro)
+endif ()
+
+set(SDRPP_DEP_PROFILE "${_sdrpp_dep_profile_default}" CACHE STRING "Dependency policy profile (portable|distro|android)")
+set_property(CACHE SDRPP_DEP_PROFILE PROPERTY STRINGS portable distro android)
+set(SDRPP_DEP_FORCE_BUNDLED "" CACHE STRING "Semicolon-separated dependency names to force bundled")
+set(SDRPP_DEP_FORCE_SYSTEM "" CACHE STRING "Semicolon-separated dependency names to force system-provided")
+set(SDRPP_DEP_FORCE_SHARED "" CACHE STRING "Semicolon-separated dependency names to force shared linkage")
+set(SDRPP_DEP_FORCE_STATIC "" CACHE STRING "Semicolon-separated dependency names to force static linkage")
+set(SDRPP_DEP_ROOT_PACKAGES "" CACHE STRING "Comma/space/semicolon-separated top-level dependency recipes required by the parent SDR++ build")
+set(SDRPP_TRACE_DEP_ARTIFACTS "OFF" CACHE STRING "Print validated dependency artifacts to the console (ON/all, or comma/semicolon-separated dependency names)")
+option(SDRPP_DEP_POLICY_STRICT "Require explicit policy metadata for every dependency" OFF)
 
 option(BUILD_SHARED_LIBS "Build shared libraries instead of static" ON)
 set(${PROJECT_NAME}_PACKAGE_EXCLUDES "" CACHE STRING "Exclude packages matching this regex pattern")
-
-if (MSVC)
-    option(DEP_DEBUG "Also build Debug variants for MSVC C++ libraries" ON)
-endif ()
 
 if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
     cmake_policy(SET CMP0135 NEW)  # URL timestamp = extraction time, so re-extracts on URL change
 endif ()
 
+include(${PROJECT_SOURCE_DIR}/cmake/DepPolicy.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/DepClassification.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/AddCMakeProject.cmake)
 
 # Discover all +<Name> folders containing a <Name>.cmake recipe.
@@ -56,6 +86,35 @@ function(dep_message mode msg)
         message(${mode} "${msg}")
     endif ()
 endfunction()
+
+function(sdrpp_normalize_dep_list out_var raw_value)
+    set(_list "${raw_value}")
+    string(REPLACE "," ";" _list "${_list}")
+    string(REGEX REPLACE "[ \t\r\n]+" ";" _list "${_list}")
+    list(FILTER _list EXCLUDE REGEX "^$")
+    list(REMOVE_DUPLICATES _list)
+    set(${out_var} ${_list} PARENT_SCOPE)
+endfunction()
+
+function(sdrpp_dep_is_excluded pkg out_var)
+    set(_excluded FALSE)
+    if (${PROJECT_NAME}_PACKAGE_EXCLUDES)
+        if (${pkg} MATCHES "${${PROJECT_NAME}_PACKAGE_EXCLUDES}")
+            set(_excluded TRUE)
+        endif ()
+    endif ()
+    set(${out_var} ${_excluded} PARENT_SCOPE)
+endfunction()
+
+macro(sdrpp_include_dep_recipe pkg)
+    if (NOT ${pkg} IN_LIST FOUND_PACKAGES)
+        dep_message(FATAL_ERROR "Requested dependency '${pkg}' does not exist under deps/.")
+    endif ()
+    if (NOT ${pkg} IN_LIST SUPPORTED_PACKAGES)
+        include(+${pkg}/${pkg}.cmake)
+        list(APPEND SUPPORTED_PACKAGES ${pkg})
+    endif ()
+endmacro()
 
 # Architecture sniff (Windows MSVC).
 if (MSVC)
@@ -174,6 +233,11 @@ list(APPEND DEP_CMAKE_OPTS
 
 list_projects(FOUND_PACKAGES ${CMAKE_CURRENT_LIST_DIR})
 dep_message(STATUS "Found dependency recipes: ${FOUND_PACKAGES}")
+dep_message(STATUS "Dependency policy profile: ${SDRPP_DEP_PROFILE}")
+sdrpp_normalize_dep_list(_requested_root_packages "${SDRPP_DEP_ROOT_PACKAGES}")
+if (_requested_root_packages)
+    dep_message(STATUS "Requested dependency roots: ${_requested_root_packages}")
+endif ()
 
 # Packages provided by the host platform (skip building, find via find_package).
 # Populated as we extend to Linux/macOS; on Windows everything is built from source.
@@ -205,27 +269,63 @@ function(check_system_package pkg checked_list)
 endfunction()
 
 set(SUPPORTED_PACKAGES "")
+set(_selected_root_packages "")
 foreach (pkg ${FOUND_PACKAGES})
     cmake_dependent_option(${PROJECT_NAME}_SELECT_${pkg}
         "Select ${pkg} for build" OFF
         "NOT ${PROJECT_NAME}_SELECT_ALL" OFF)
-    set(_excluded FALSE)
-    if (${PROJECT_NAME}_PACKAGE_EXCLUDES)
-        if (${pkg} MATCHES "${${PROJECT_NAME}_PACKAGE_EXCLUDES}")
-            set(_excluded TRUE)
-        endif ()
-    endif ()
-    if (NOT _excluded AND (${PROJECT_NAME}_SELECT_ALL OR ${PROJECT_NAME}_SELECT_${pkg}))
-        include(+${pkg}/${pkg}.cmake)
-        list(APPEND SUPPORTED_PACKAGES ${pkg})
 
-        if (${pkg} IN_LIST SYSTEM_PROVIDED_PACKAGES)
-            check_system_package(${pkg} _checked_list)
-        elseif (TARGET dep_${pkg})
-            get_target_property(_excl_all dep_${pkg} EXCLUDE_FROM_ALL)
-            if (NOT _excl_all)
-                list(APPEND DEPS_TO_BUILD ${pkg})
+    sdrpp_dep_is_excluded(${pkg} _excluded)
+    if (_requested_root_packages)
+        if (${pkg} IN_LIST _requested_root_packages)
+            if (_excluded)
+                dep_message(FATAL_ERROR "Requested dependency root '${pkg}' is excluded by ${PROJECT_NAME}_PACKAGE_EXCLUDES.")
             endif ()
+            list(APPEND _selected_root_packages ${pkg})
+        endif ()
+    elseif (NOT _excluded AND (${PROJECT_NAME}_SELECT_ALL OR ${PROJECT_NAME}_SELECT_${pkg}))
+        list(APPEND _selected_root_packages ${pkg})
+    endif ()
+endforeach ()
+
+if (_requested_root_packages)
+    set(_missing_requested_roots ${_requested_root_packages})
+    list(REMOVE_ITEM _missing_requested_roots ${_selected_root_packages})
+    if (_missing_requested_roots)
+        dep_message(FATAL_ERROR "Requested dependency roots were not found or were filtered out: ${_missing_requested_roots}")
+    endif ()
+endif ()
+
+set(_pending_packages ${_selected_root_packages})
+while (_pending_packages)
+    list(POP_FRONT _pending_packages pkg)
+    if (${pkg} IN_LIST SUPPORTED_PACKAGES)
+        continue()
+    endif ()
+
+    sdrpp_dep_is_excluded(${pkg} _excluded)
+    if (_excluded)
+        dep_message(FATAL_ERROR "Dependency '${pkg}' is required but excluded by ${PROJECT_NAME}_PACKAGE_EXCLUDES.")
+    endif ()
+
+    sdrpp_include_dep_recipe(${pkg})
+    foreach (deppkg ${DEP_${pkg}_DEPENDS})
+        if (${deppkg} IN_LIST FOUND_PACKAGES)
+            list(APPEND _pending_packages ${deppkg})
+        endif ()
+    endforeach ()
+endwhile ()
+
+foreach (pkg ${SUPPORTED_PACKAGES})
+    sdrpp_resolve_dep_policy(${pkg} _policy)
+    dep_message(STATUS "  policy ${pkg}: source=${_policy_SOURCE}, linkage=${_policy_LINKAGE}, usage=${_policy_USAGE}")
+
+    if (_policy_IS_SYSTEM)
+        check_system_package(${pkg} _checked_list)
+    elseif (TARGET dep_${pkg})
+        get_target_property(_excl_all dep_${pkg} EXCLUDE_FROM_ALL)
+        if (NOT _excl_all)
+            list(APPEND DEPS_TO_BUILD ${pkg})
         endif ()
     endif ()
 endforeach ()
@@ -237,7 +337,8 @@ foreach (pkg ${SUPPORTED_PACKAGES})
         list(APPEND _build_list_toplevel dep_${pkg})
     endif ()
     foreach (deppkg ${DEP_${pkg}_DEPENDS})
-        if (${deppkg} IN_LIST SYSTEM_PROVIDED_PACKAGES)
+        sdrpp_dep_is_system(${deppkg} _dep_is_system)
+        if (_dep_is_system)
             check_system_package(${deppkg} _checked_list)
         elseif (TARGET dep_${deppkg})
             dep_message(STATUS "  ${pkg} depends on ${deppkg}")
@@ -250,82 +351,6 @@ endforeach ()
 list(REMOVE_DUPLICATES _build_list)
 dep_message(STATUS "Building dep targets (${CMAKE_BUILD_TYPE}): ${_build_list}")
 add_custom_target(deps ALL DEPENDS ${_build_list_toplevel})
-
-# MSVC dual-build: spawn a sibling configure to build Debug variants of the
-# C++/STL libs. Pure-C libs (DEP_DEBUG_EXCLUDES) are reused from Release.
-if (MSVC AND DEP_DEBUG AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-    # Pure-C / binary libraries: their public ABI is CRT-agnostic, so a
-    # single Release-mode build is consumable from a Debug-mode application.
-    # Only libraries that expose C++ classes / STL containers (rtaudio in our
-    # current set) are left OUT of EXCLUDES so a Debug variant gets built.
-    set(DEP_DEBUG_EXCLUDES
-        libusb zstd zlib fftw3 sdrplay
-        libxml2 libiio libad9361
-        libairspy libairspyhf libhackrf librtlsdr
-        libhydrasdr librfnm libfobos libperseus-sdr libmirisdr
-        libbladeRF LimeSuite
-        codec2 volk pthreads
-        glfw3 portaudio
-        # spdlog DELIBERATELY OMITTED — C++ STL types in API, needs Debug variant.
-    )
-    set(_build_list_filt ${_build_list})
-    list(JOIN DEP_DEBUG_EXCLUDES "|" _excl_regexp)
-    list(FILTER _build_list_filt EXCLUDE REGEX "${_excl_regexp}")
-
-    set(_build_list_dbg "")
-    foreach (t ${_build_list_filt})
-        list(APPEND _build_list_dbg ${t}_debug)
-    endforeach ()
-
-    # Forward generator platform/toolset/instance to the spawned Debug
-    # configure so e.g. -A x64 / -T v143 reach the sibling build (without
-    # this, the child uses the generator's default arch/toolset).
-    set(_dbg_gen_args "")
-    if (CMAKE_GENERATOR_PLATFORM)
-        list(APPEND _dbg_gen_args -A "${CMAKE_GENERATOR_PLATFORM}")
-    endif ()
-    if (CMAKE_GENERATOR_TOOLSET)
-        list(APPEND _dbg_gen_args -T "${CMAKE_GENERATOR_TOOLSET}")
-    endif ()
-    if (CMAKE_GENERATOR_INSTANCE)
-        list(APPEND _dbg_gen_args "-DCMAKE_GENERATOR_INSTANCE=${CMAKE_GENERATOR_INSTANCE}")
-    endif ()
-
-    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/_d)
-    execute_process(
-        COMMAND ${CMAKE_COMMAND} ${CMAKE_CURRENT_SOURCE_DIR}
-            -G${CMAKE_GENERATOR}
-            ${_dbg_gen_args}
-            -DCMAKE_BUILD_TYPE=Debug
-            -D${PROJECT_NAME}_DEP_DOWNLOAD_DIR=${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}
-            -DSDRPP_DEPS_INSTALL_PREFIX=${SDRPP_DEPS_INSTALL_PREFIX}
-            -D${PROJECT_NAME}_PACKAGE_EXCLUDES=${_excl_regexp}
-            -D${PROJECT_NAME}_SELECT_ALL=${${PROJECT_NAME}_SELECT_ALL}
-            -D${PROJECT_NAME}_DEP_BUILD_VERBOSE=${${PROJECT_NAME}_DEP_BUILD_VERBOSE}
-            -DCMAKE_DEBUG_POSTFIX=d
-            -DDEP_MESSAGES_WRITTEN=ON
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/_d
-        OUTPUT_QUIET
-    )
-
-    dep_message(STATUS "Building dep targets (Debug): ${_build_list_dbg}")
-
-    foreach (pkgtgt ${_build_list_filt})
-        add_custom_target(${pkgtgt}_debug
-            COMMAND ${CMAKE_COMMAND} --build . --target ${pkgtgt}
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/_d
-            USES_TERMINAL
-        )
-    endforeach ()
-
-    string(JOIN " " _filt_targets "${_build_list_filt}")
-    add_custom_target(deps_debug ALL
-        COMMAND ${CMAKE_COMMAND} --build . --target ${_filt_targets}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/_d
-        USES_TERMINAL
-    )
-    add_dependencies(deps_debug deps)
-endif ()
 
 set(DEP_MESSAGES_WRITTEN ON CACHE BOOL "")
 

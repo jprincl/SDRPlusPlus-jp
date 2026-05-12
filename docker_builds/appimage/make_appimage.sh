@@ -9,6 +9,9 @@ SRC_DIR="${SRC_DIR:-/root/SDRPlusPlus}"
 ARCH="$(uname -m)"
 APP_NAME="sdrpp-iak"
 APPDIR="/AppDir"
+DEPS_PRESET="${DEPS_PRESET:-appimage}"
+DEPS_BUILD_DIR="${DEPS_BUILD_DIR:-${SRC_DIR}/deps/build-${DEPS_PRESET}}"
+DEPS_PREFIX="${DEPS_PREFIX:-${DEPS_BUILD_DIR}/destdir/usr/local}"
 # VERSION_FULL is set by CI (matches the version in core/src/version.h plus
 # git build info, e.g. 1.2.3+45-gabc1234). Required — the filename should
 # always identify the build.
@@ -17,15 +20,20 @@ OUT="/root/${APP_NAME}-${VERSION_FULL}-${ARCH}.AppImage"
 
 echo "=== Building AppImage for ${APP_NAME} ${VERSION_FULL} (${ARCH}) ==="
 echo "Source: ${SRC_DIR}"
+echo "Deps preset: ${DEPS_PRESET}"
 
 # Allow git operations on the bind-mounted tree.
 git config --global --add safe.directory "${SRC_DIR}"
 
 # ---------------------------------------------------------------------------
-# Configure & build SDR++ with /usr install prefix.
-# /usr is required: linuxdeploy expects an AppDir layout rooted at usr/.
+# Configure SDR++ through the root CMake project and let OPT_BUILD_DEPS drive
+# the deps/ bootstrap. That keeps the dependency build aligned with the same
+# module options as the main binary, so only the needed recipe closure is built.
+# GLFW remains host-provided on Linux AppImage; the appimage deps preset keeps
+# that exception while bundling the rest through deps/.
 # ---------------------------------------------------------------------------
 cd "${SRC_DIR}"
+rm -rf "${DEPS_BUILD_DIR}"
 rm -rf build
 mkdir build
 cd build
@@ -33,7 +41,10 @@ cd build
 cmake "${SRC_DIR}" \
     -DCMAKE_INSTALL_PREFIX=/usr \
     -DCMAKE_BUILD_TYPE=Release \
-    -DSDRPP_CURL_SOURCE=bundled \
+    -DOPT_BUILD_DEPS=ON \
+    -DSDRPP_DEPS_PRESET="${DEPS_PRESET}" \
+    -DSDRPP_DEPS_BUILD_DIR="${DEPS_BUILD_DIR}" \
+    -DSDRPP_DEP_FORCE_BUNDLED=libcurl \
     -DOPT_BUILD_APPIMAGE=ON \
     -DOPT_BUILD_BLADERF_SOURCE=ON \
     -DOPT_BUILD_LIMESDR_SOURCE=ON \
@@ -70,7 +81,7 @@ cp "${DESKTOP_DST}" "${DESKTOP_SRC}"
 # Bundle dependencies. GPU/X11/glibc/glfw libs come from the host — bundling
 # them breaks driver ABI on the user's machine.
 # ---------------------------------------------------------------------------
-export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${DEPS_PREFIX}/lib:${APPDIR}/usr/lib:${LD_LIBRARY_PATH:-}"
 
 linuxdeploy \
     --appdir "${APPDIR}" \
@@ -151,6 +162,7 @@ chmod +x "${APPDIR}/AppRun"
 # ---------------------------------------------------------------------------
 # Pack the AppImage.
 # ---------------------------------------------------------------------------
+unset PKG_CONFIG_PATH
 appimagetool "${APPDIR}" "${OUT}"
 
 ls -lh "${OUT}"

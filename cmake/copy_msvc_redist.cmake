@@ -1,0 +1,43 @@
+if (NOT DEFINED CONFIG OR NOT DEFINED DST OR NOT DEFINED REDIST_MANIFEST)
+    message(FATAL_ERROR "copy_msvc_redist.cmake requires -DCONFIG=<config>, -DDST=<dir>, and -DREDIST_MANIFEST=<file>")
+endif ()
+
+if (NOT EXISTS "${REDIST_MANIFEST}")
+    message(FATAL_ERROR "MSVC redistributable manifest not found: ${REDIST_MANIFEST}")
+endif ()
+
+include("${REDIST_MANIFEST}")
+
+if (NOT SDRPP_MSVC_REDIST_DLLS)
+    message(STATUS "No MSVC redistributables were reported by InstallRequiredSystemLibraries.")
+    return()
+endif ()
+
+set(_skip_reason "")
+if (CONFIG STREQUAL "Debug")
+    set(_skip_reason "Debug builds must not copy the non-debug MSVC redistributable DLLs")
+endif ()
+
+if (_skip_reason)
+    message(STATUS "Skipping MSVC redistributable copy: ${_skip_reason}.")
+    foreach (_dll IN LISTS SDRPP_MSVC_REDIST_DLLS)
+        get_filename_component(_name "${_dll}" NAME)
+        set(_stale "${DST}/${_name}")
+        if (EXISTS "${_stale}")
+            message(STATUS "Removing stale MSVC redistributable from this output: ${_stale}")
+            file(REMOVE "${_stale}")
+        endif ()
+    endforeach ()
+    return()
+endif ()
+
+file(MAKE_DIRECTORY "${DST}")
+
+foreach (_dll IN LISTS SDRPP_MSVC_REDIST_DLLS)
+    if (NOT EXISTS "${_dll}")
+        message(FATAL_ERROR "MSVC redistributable listed by CMake does not exist: ${_dll}")
+    endif ()
+
+    message(STATUS "Copying MSVC redistributable: ${_dll} -> ${DST}")
+    file(COPY "${_dll}" DESTINATION "${DST}")
+endforeach ()

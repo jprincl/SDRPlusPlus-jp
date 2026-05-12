@@ -36,12 +36,9 @@ add_library(sddc SHARED ${SRC})
 # Include the include folder
 target_include_directories(sddc PUBLIC "include/")
 
-# Find libusb
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(libusb REQUIRED IMPORTED_TARGET libusb-1.0)
+# Link to libusb, preferring the SDR++ deps / kit prefix when present.
+sdrpp_link_dep(sddc libusb PC_NAME libusb-1.0)
 
-# Link to libusb
-target_link_libraries(sddc PRIVATE PkgConfig::libusb)
 
 # TODO: Have it default instead of override
 if (MSVC)
@@ -73,7 +70,13 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLU
 
 # On Windows, install dependencies
 if (MSVC)
-    install(FILES $<TARGET_FILE_DIR:sddc>/libusb-1.0.dll DESTINATION ${CMAKE_INSTALL_BINDIR})
+    set(_sddc_install_libusb_dll ON)
+    if (COMMAND sdrpp_dep_builds_shared)
+        sdrpp_dep_builds_shared(libusb _sddc_install_libusb_dll)
+    endif ()
+    if (_sddc_install_libusb_dll)
+        install(FILES $<TARGET_FILE_DIR:sddc>/libusb-1.0.dll DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif ()
 endif ()
 
 # Build utils if enabled

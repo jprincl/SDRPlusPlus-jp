@@ -15,6 +15,9 @@ endif ()
 add_cmake_project(libiio
     URL https://github.com/analogdevicesinc/libiio/archive/refs/tags/v0.24.tar.gz
     # URL_HASH SHA256=<TODO: pin after first verified build>
+    PATCH_COMMAND  ${CMAKE_COMMAND}
+                       -DSRC=<SOURCE_DIR>
+                       -P ${CMAKE_CURRENT_LIST_DIR}/patch_libiio.cmake
     CMAKE_ARGS
         -DWITH_TESTS=OFF
         -DWITH_DOC=OFF
@@ -25,3 +28,25 @@ add_cmake_project(libiio
 )
 
 set(DEP_libiio_DEPENDS libxml2 libusb)
+
+set(_libiio_compile_definitions "")
+set(_libiio_package_dependencies "")
+set(_libiio_link_libraries "")
+sdrpp_dep_builds_shared(libiio _libiio_builds_shared)
+if (NOT _libiio_builds_shared)
+    list(APPEND _libiio_compile_definitions LIBIIO_STATIC)
+    list(APPEND _libiio_package_dependencies libusb libxml2)
+    list(APPEND _libiio_link_libraries libusb::libusb LibXml2::LibXml2)
+    if (WIN32)
+        list(APPEND _libiio_link_libraries wsock32 iphlpapi ws2_32)
+    endif ()
+endif ()
+
+sdrpp_emit_imported_config(libiio
+    LIB_NAMES   iio libiio
+    DLL_NAMES   iio.dll libiio.dll
+    HEADER      iio.h
+    COMPILE_DEFINITIONS ${_libiio_compile_definitions}
+    PACKAGE_DEPENDENCIES ${_libiio_package_dependencies}
+    LINK_LIBRARIES ${_libiio_link_libraries}
+)

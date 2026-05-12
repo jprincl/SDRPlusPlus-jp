@@ -14,10 +14,7 @@ target_compile_definitions(qmx PUBLIC QMX_CAT_DEBUG_TIMING=$<BOOL:${QMX_CAT_DEBU
 if (MSVC)
     target_link_libraries(qmx PRIVATE ole32 avrt winmm)
 elseif (ANDROID)
-    target_include_directories(qmx PRIVATE "${SDR_KIT_ROOT}/${ANDROID_ABI}/include")
-    target_link_libraries(qmx PRIVATE
-        ${SDR_KIT_ROOT}/${ANDROID_ABI}/lib/libusb1.0.so
-    )
+    sdrpp_link_dep(qmx libusb PC_NAME libusb-1.0)
 elseif (APPLE)
     target_link_libraries(qmx PRIVATE
         "-framework CoreAudio"

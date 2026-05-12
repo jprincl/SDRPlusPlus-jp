@@ -25,3 +25,11 @@ add_cmake_project(volk
         -DPYTHON_EXECUTABLE:FILEPATH=${HOST_PYTHON_EXECUTABLE}
         -DPython3_EXECUTABLE:FILEPATH=${HOST_PYTHON_EXECUTABLE}
 )
+
+sdrpp_validate_dep(volk
+    TARGET         Volk::volk
+    LIB_NAMES      volk
+    DLL_NAMES      volk.dll
+    HEADER         volk.h
+    INCLUDE_SUBDIR volk
+    REQUIRES_CONFIG)

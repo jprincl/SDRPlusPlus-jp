@@ -14,3 +14,13 @@ add_cmake_project(fftw3
         -DDISABLE_FORTRAN=ON
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
+
+# Upstream installs Config.cmake under lib/cmake/fftw3f/ (single-precision
+# package name) — recipe-name-keyed REQUIRES_CONFIG would mis-look-up, and
+# the codebase consumes FFTW via FFTW_LIBRARIES pre-feed (see deps/CMakeLists.txt),
+# not find_package(fftw3). File-existence probes are sufficient here.
+sdrpp_validate_dep(fftw3
+    TARGET    FFTW3::fftw3f
+    LIB_NAMES fftw3f
+    DLL_NAMES fftw3f.dll
+    HEADER    fftw3.h)

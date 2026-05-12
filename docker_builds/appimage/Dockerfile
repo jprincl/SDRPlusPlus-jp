@@ -1,71 +1,23 @@
 FROM ubuntu:focal
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build toolchain and SDR++ runtime dependencies.
+# Build toolchain and host-side prerequisites.
 # Focal is chosen for its old glibc baseline (2.31) — the AppImage will run on
-# any Linux distro shipped after early 2020.
+# any Linux distro shipped after early 2020. Third-party SDR libraries are built
+# through deps/ with the dedicated appimage preset; keep only host ABI/runtime
+# packages here (GLFW/OpenGL stack, audio backend headers, Python for Volk, and
+# generic build tools).
 RUN apt-get -o Acquire::Retries=3 update && \
     apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
         build-essential cmake git pkg-config ca-certificates \
+        python3 python3-pip \
         wget unzip p7zip-full file patchelf xxd \
         autoconf automake libtool \
-        libfftw3-dev libglfw3-dev libvolk2-dev libzstd-dev libssl-dev \
-        libairspy-dev libairspyhf-dev libhackrf-dev librtlsdr-dev \
-        libbladerf-dev liblimesuite-dev \
-        libiio-dev libad9361-dev \
-        librtaudio-dev portaudio19-dev libpulse-dev \
-        libcodec2-dev libspdlog-dev liborc-0.4-dev && \
+        libglfw3-dev libpulse-dev libasound2-dev \
+        libssl-dev liborc-0.4-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install SDRplay API (required — no silent fallback).
-RUN wget -q https://www.sdrplay.com/software/SDRplay_RSP_API-Linux-3.15.2.run -O /tmp/sdrplay.run && \
-    7z x /tmp/sdrplay.run -o/tmp/sdrplay_extracted >/dev/null && \
-    7z x /tmp/sdrplay_extracted -o/tmp/sdrplay_pkg >/dev/null && \
-    cp /tmp/sdrplay_pkg/$(dpkg --print-architecture)/libsdrplay_api.so.3.15 /usr/lib/libsdrplay_api.so && \
-    cp /tmp/sdrplay_pkg/inc/* /usr/include/ && \
-    ldconfig && \
-    rm -rf /tmp/sdrplay*
-
-# Install libperseus-sdr.
-RUN cd /tmp && \
-    git clone --depth=1 https://github.com/Microtelecom/libperseus-sdr && \
-    cd libperseus-sdr && \
-    autoreconf -i && \
-    ./configure && \
-    make -j"$(nproc)" && \
-    make install && \
-    ldconfig && \
-    rm -rf /tmp/libperseus-sdr
-
-# Install librfnm.
-RUN cd /tmp && \
-    git clone --depth=1 https://github.com/AlexandreRouma/librfnm && \
-    cd librfnm && mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr && \
-    make -j"$(nproc)" && \
-    make install && \
-    ldconfig && \
-    rm -rf /tmp/librfnm
-
-# Install libfobos.
-RUN cd /tmp && \
-    git clone --depth=1 https://github.com/AlexandreRouma/libfobos && \
-    cd libfobos && mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr && \
-    make -j"$(nproc)" && \
-    make install && \
-    ldconfig && \
-    rm -rf /tmp/libfobos
-
-# Install libhydrasdr (hydrasdr-host — formerly rfone_host, renamed upstream).
-RUN cd /tmp && \
-    git clone --depth=1 https://github.com/hydrasdr/hydrasdr-host && \
-    cd hydrasdr-host && mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr && \
-    make -j"$(nproc)" && \
-    make install && \
-    ldconfig && \
-    rm -rf /tmp/hydrasdr-host
+RUN python3 -m pip install --no-cache-dir mako
 
 # Install linuxdeploy and appimagetool for the host architecture.
 # Both ship as AppImages that need FUSE — inside Docker we extract them once.

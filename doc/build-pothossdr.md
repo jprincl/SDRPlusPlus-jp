@@ -6,10 +6,9 @@ against the upstream `pothosware/PothosSDR` super-build at
 <https://github.com/pothosware/PothosSDR>.
 
 The current `deps/` system is modeled on PrusaSlicer's `deps/` subsystem
-(PrusaSlicer uses the same `+<Name>/<Name>.cmake` recipe convention,
-`add_cmake_project()` wrapper, MSVC Release+Debug dual-build pattern). It was
-written without seeing PothosSDR. This document captures what PothosSDR does
-that we should learn from, and what we already do better.
+(same `+<Name>/<Name>.cmake` recipe convention, `add_cmake_project()`
+wrapper). It was written without seeing PothosSDR. This document captures
+what PothosSDR does that we should learn from, and what we already do better.
 
 ---
 
@@ -34,7 +33,9 @@ Mechanism:
 - `DEP_<Name>_DEPENDS` graph wired with `add_dependencies()`
 - `sdrpp_emit_imported_config()` synthesizer for libs that don't ship
   `Config.cmake`
-- MSVC dual-build (sibling configure into `_d/` for Debug variants)
+- Single-config build trees, one configuration end-to-end per tree (CRT and
+  optimization match across app and every dep), driven by per-config presets
+  in `CMakePresets.json`
 - Global `LIBUSB_*` / `THREADS_PTHREADS_*` injection via `DEP_CMAKE_OPTS`
   to satisfy bundled `FindLIBUSB.cmake` / `FindThreads.cmake` in many SDR libs
 
@@ -109,7 +110,7 @@ Mechanism:
 9. **`deps_clean` / `rebuild_all` aggregate target** mirroring PothosSDR's
    batch script.
 10. **Pin `codec2`** to a specific tag (the recipe has a TODO).
-11. **Missing Linux/macOS presets** — `CMakePresets.json` has only VS2022 and
+11. **Missing Linux/macOS presets** — `CMakePresets.json` has only VS2026 and
     Android stubs.
 
 ### Tier D — explicitly out of scope
@@ -133,7 +134,9 @@ Don't regress these:
 - `sdrpp_emit_imported_config()` synthesizes `Config.cmake` for libs without
   one — cleaner consumer story than PothosSDR's per-project
   `-DLIBX_INCLUDE_DIR=...` pattern.
-- MSVC dual-build (Release + Debug). PothosSDR is Release-only.
+- Per-config build trees (`Debug`, `RelWithDebInfo`, `Release`) — switching
+  configurations switches presets, no CRT-mixing risk. PothosSDR is
+  Release-only.
 - Per-package `sdrpp_deps_SELECT_*` gating, `PACKAGE_EXCLUDES` regex.
 - `OPT_BUILD_DEPS` autobuild integration via `deps/autobuild.cmake`.
 - `CMAKE_POLICY_VERSION_MINIMUM=3.5` injection — handles CMake 4.x dropping
@@ -165,7 +168,10 @@ before designing a "fast-track" CI path for our deps system.
 5. SDRplay via the same `sdrpp.org/SDRplay.zip` we use, extracted into
    `C:/Program Files/`.
 6. `codec2` built via **MinGW64 + `-DCMAKE_GNUtoMS=ON`** (msys2 mingw64
-   shell), because MSVC + codec2 was unhappy.
+   shell), because `cl.exe` + codec2 was unhappy. (We solved the same
+   problem differently: route codec2 through VS-bundled `clang-cl`, which
+   accepts the C99 VLAs and emits a native MSVC-ABI DLL. No MinGW, no
+   GNUtoMS, no cross-architecture x64 island in our ARM64 bundles.)
 7. `vcpkg install fftw3 glfw3 portaudio zstd libusb itpp spdlog` for
    math/IO.
 8. From-source builds for what PothosSDR doesn't ship: `rtaudio`
@@ -192,11 +198,12 @@ before designing a "fast-track" CI path for our deps system.
    Tier A1: silently floating versions break things and must be pinned.
    The fact that Brown has to ship *two* patches against PothosSDR is
    exactly why a from-source deps system is the right call.
-4. **codec2 still uses MinGW + GNUtoMS in the wild.** Our
-   `+codec2/codec2.cmake` says "MSVC works with codec2 ≥ v1.2.0", but
-   Brown's CI still uses MinGW. We should actually test MSVC-built codec2
-   before relying on it; if it breaks, document the MinGW + msys2 +
-   `CMAKE_GNUtoMS=ON` fallback in the recipe.
+4. **codec2 still uses MinGW + GNUtoMS in the wild** (PothosSDR / Brown).
+   We bypass this entirely by building codec2 with `clang-cl` from the VS
+   installer — same source, same target ABI as the rest of the MSVC build,
+   no MinGW dependency on the host. The trick is the `TOOLSET ClangCL`
+   override threaded through `add_cmake_project` in
+   `deps/+codec2/codec2.cmake`.
 5. **librtlsdr osmocom 2024-06-23 binary** is a known-good prebuilt
    source. If our Rouma-fork-from-source build of `librtlsdr` ever has
    issues, we can swap to that prebuilt with one URL change.

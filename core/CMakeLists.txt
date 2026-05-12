@@ -30,6 +30,14 @@ endif (OPT_BACKEND_ANDROID)
 
 # Add code to dyn lib
 add_library(sdrpp_core SHARED ${SRC} ${BACKEND_SRC})
+if (MSVC AND SDRPP_RUNTIME_OUTPUT_DIRECTORY)
+    set_target_properties(sdrpp_core PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}")
+    add_custom_command(TARGET sdrpp_core POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E remove -f
+            "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/$<TARGET_FILE_NAME:sdrpp_core>"
+        VERBATIM)
+endif ()
 
 # Set compiler options
 target_compile_options(sdrpp_core PRIVATE ${SDRPP_COMPILER_FLAGS})
@@ -50,19 +58,6 @@ target_include_directories(sdrpp_core PUBLIC "src/imgui")
 if (OPT_BACKEND_GLFW)
     target_include_directories(sdrpp_core PUBLIC "backends/glfw")
     target_include_directories(sdrpp_core PUBLIC "backends/glfw/imgui")
-
-    if (MSVC)
-        # GLFW3
-        find_package(glfw3 CONFIG REQUIRED)
-        target_link_libraries(sdrpp_core PUBLIC glfw)
-    else()
-        find_package(PkgConfig)
-        pkg_check_modules(GLFW3 REQUIRED glfw3)
-
-        target_include_directories(sdrpp_core PUBLIC ${GLFW3_INCLUDE_DIRS})
-        target_link_directories(sdrpp_core PUBLIC ${GLFW3_LIBRARY_DIRS})
-        target_link_libraries(sdrpp_core PUBLIC ${GLFW3_LIBRARIES})
-    endif()
 endif (OPT_BACKEND_GLFW)
 if (OPT_BACKEND_ANDROID)
     target_include_directories(sdrpp_core PUBLIC "backends/android")
@@ -76,93 +71,99 @@ if (USE_INTERNAL_LIBCORRECT)
 endif (USE_INTERNAL_LIBCORRECT)
 
 # libcurl is a core implementation detail. Modules use core networking
-# wrappers instead of including curl headers or linking libcurl directly.
-# Resolved by cmake/find_or_fetch_curl.cmake at top-level configure time.
-target_include_directories(sdrpp_core PRIVATE
-    $<TARGET_PROPERTY:CURL::libcurl,INTERFACE_INCLUDE_DIRECTORIES>)
-target_link_libraries(sdrpp_core PRIVATE CURL::libcurl)
+# wrappers (utils/curl_http, etc.) instead of including curl headers or
+# linking libcurl directly. Resolved from the deps install prefix (bundled
+# profile) or the distro libcurl on Linux.
+sdrpp_link_dep(sdrpp_core libcurl PRIVATE
+    PACKAGE_NAME CURL
+    PC_NAME      libcurl
+    TARGETS      CURL::libcurl)
+
+# WebSocket support is mandatory. The bundled recipe always forces
+# ENABLE_WEBSOCKETS=ON; distro libcurl may have been packaged without
+# it (Ubuntu 20.04 ships 7.68, no WS at all), so probe explicitly when
+# the imported target is in module form.
+if (TARGET CURL::libcurl)
+    include(CheckSymbolExists)
+    get_target_property(_sdrpp_curl_inc CURL::libcurl INTERFACE_INCLUDE_DIRECTORIES)
+    if (_sdrpp_curl_inc)
+        set(CMAKE_REQUIRED_INCLUDES "${_sdrpp_curl_inc}")
+    endif ()
+    set(CMAKE_REQUIRED_LIBRARIES CURL::libcurl)
+    check_symbol_exists(curl_ws_send "curl/curl.h" SDRPP_CURL_HAS_WS)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    if (NOT SDRPP_CURL_HAS_WS)
+        message(FATAL_ERROR
+            "libcurl was built without WebSocket support. Install a libcurl "
+            "with --enable-websockets, or rebuild deps with "
+            "SDRPP_DEP_FORCE_BUNDLED=libcurl.")
+    endif ()
+endif ()
 
 if (OPT_OVERRIDE_STD_FILESYSTEM)
     target_include_directories(sdrpp_core PUBLIC "std_replacement")
 endif (OPT_OVERRIDE_STD_FILESYSTEM)
 
 if (MSVC)
-    # Lib path
-    target_link_directories(sdrpp_core PUBLIC "C:/Program Files/PothosSDR/lib/")
-
-    # Misc headers
-    target_include_directories(sdrpp_core PUBLIC "C:/Program Files/PothosSDR/include/")
-
-    # Volk
-    target_link_libraries(sdrpp_core PUBLIC volk)
-
     # OpenGL
     find_package(OpenGL REQUIRED)
     target_link_libraries(sdrpp_core PUBLIC OpenGL::GL)
 
-    # GLFW3
-    find_package(glfw3 CONFIG REQUIRED)
-    target_link_libraries(sdrpp_core PUBLIC glfw)
+    if (OPT_BACKEND_GLFW)
+        sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
+    endif ()
 
-    # FFTW3
-    find_package(FFTW3f CONFIG REQUIRED)
-    target_link_libraries(sdrpp_core PUBLIC FFTW3::fftw3f)
+    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
 
     # WinSock2
     target_link_libraries(sdrpp_core PUBLIC wsock32 ws2_32 iphlpapi)
 
-    # ZSTD
-    find_package(zstd CONFIG REQUIRED)
-    target_link_libraries(sdrpp_core PUBLIC zstd::libzstd_shared)
+    sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
+        TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
+        SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
+        STATIC_TARGETS zstd::libzstd_static)
+
+    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
 elseif (ANDROID)
     target_include_directories(sdrpp_core PUBLIC
-        ${SDR_KIT_ROOT}/${ANDROID_ABI}/include
         ${ANDROID_NDK}/sources/android/native_app_glue
     )
 
+    if (OPT_BACKEND_GLFW)
+        sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
+    endif ()
+
+    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
+    sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
+        TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
+        SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
+        STATIC_TARGETS zstd::libzstd_static)
+    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
     target_link_libraries(sdrpp_core PUBLIC
-        ${SDR_KIT_ROOT}/${ANDROID_ABI}/lib/libvolk.so
-        ${SDR_KIT_ROOT}/${ANDROID_ABI}/lib/libfftw3f.so
-        ${SDR_KIT_ROOT}/${ANDROID_ABI}/lib/libzstd.so
         android
         EGL
         GLESv3
         log
     )
 else()
-    find_package(PkgConfig)
     find_package(OpenGL REQUIRED)
 
-    pkg_check_modules(FFTW3 REQUIRED fftw3f)
-    pkg_check_modules(VOLK REQUIRED volk)
-    pkg_check_modules(GLFW3 REQUIRED glfw3)
-    pkg_check_modules(LIBZSTD REQUIRED libzstd)
-
-    target_include_directories(sdrpp_core PUBLIC
-        ${OPENGL_INCLUDE_DIRS}
-        ${FFTW3_INCLUDE_DIRS}
-        ${GLFW3_INCLUDE_DIRS}
-        ${VOLK_INCLUDE_DIRS}
-        ${LIBZSTD_INCLUDE_DIRS}
-    )
-    
-    target_link_directories(sdrpp_core PUBLIC
-        ${OPENGL_LIBRARY_DIRS}
-        ${FFTW3_LIBRARY_DIRS}
-        ${GLFW3_LIBRARY_DIRS}
-        ${VOLK_LIBRARY_DIRS}
-        ${LIBZSTD_LIBRARY_DIRS}
-    )
-
+    if (OPT_BACKEND_GLFW)
+        sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
+    endif ()
+    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
+    sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
+        TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
+        SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
+        STATIC_TARGETS zstd::libzstd_static)
+    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
     target_link_libraries(sdrpp_core PUBLIC
         ${OPENGL_LIBRARIES}
-        ${FFTW3_LIBRARIES}
-        ${GLFW3_LIBRARIES}
-        ${VOLK_LIBRARIES}
-        ${LIBZSTD_LIBRARIES}
     )
 
     if (NOT USE_INTERNAL_LIBCORRECT)
+        find_package(PkgConfig REQUIRED)
         pkg_check_modules(CORRECT REQUIRED libcorrect)
         target_include_directories(sdrpp_core PUBLIC ${CORRECT_INCLUDE_DIRS})
         target_link_directories(sdrpp_core PUBLIC ${CORRECT_LIBRARY_DIRS})

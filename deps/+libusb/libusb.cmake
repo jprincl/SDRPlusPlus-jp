@@ -9,9 +9,6 @@
 #   <prefix>/lib/libusb-1.0.lib        (Windows import lib)
 #   <prefix>/include/libusb-1.0/libusb.h
 #
-# Pure-C library — kept in DEP_DEBUG_EXCLUDES so the MSVC dual-build does not
-# rebuild it for Debug.
-#
 # Recursive submodules are required (libusb-cmake bundles libusb itself as a
 # submodule under the project root).
 #

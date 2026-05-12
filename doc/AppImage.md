@@ -5,6 +5,11 @@ self-contained executable that bundles all SDR-specific runtime
 dependencies. It is built on Ubuntu 20.04 (focal) and targets a glibc
 floor of **2.31**.
 
+Third-party SDR libraries are built through the dedicated `deps` preset
+`appimage` and linked from that prefix into the final AppImage build. The main
+host-side exception remains `libglfw3`, which stays system-provided for OpenGL
+and X11 compatibility.
+
 All file paths below are relative to the repository root.
 
 ---
@@ -175,7 +180,7 @@ the base image in `docker_builds/appimage/Dockerfile` from
 `ubuntu:focal` to a distro with older glibc — e.g. Debian 10 (2.28)
 or, more aggressively, a manylinux-style CentOS 7 container (2.17).
 
-Cost is non-trivial: the SDR-specific build dependencies
-(`libairspyhf-dev`, `liblimesuite-dev`, `libcodec2-dev`, `libvolk2-dev`,
-…) are at older versions or not packaged at all on those bases. Worth
+Cost is non-trivial: the host build prerequisites and graphics stack become more
+fragile on older bases, and some deps recipes may need additional patching on
+those older toolchains. Worth
 doing only if users actually ask for it.

@@ -1,19 +1,33 @@
 #
 # Run with -DSRC=<source-dir> -P this-script.
 #
-# libperseus-sdr has no install() rules at all, so cmake --target install
-# produces "unknown target 'install'".  Add the necessary rules.
+# Patches libperseus-sdr's CMakeLists.txt:
+#   1. Drops the explicit SHARED keyword from add_library(perseus-sdr ...) so
+#      the library type follows BUILD_SHARED_LIBS. Without this, the dep
+#      always builds shared even when the policy resolves to static (per
+#      DepClassification.cmake, libperseus-sdr is static on every profile),
+#      producing perseus-sdr.dll + an import lib named perseus-sdr.lib that
+#      the validator correctly flags as a static/shared mismatch (same issue
+#      libfobos had before its own patch landed).
+#   2. Appends install rules — upstream ships none, so cmake --target install
+#      would otherwise fail with "unknown target 'install'".
 #
+
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_helpers.cmake)
+
 set(_f "${SRC}/CMakeLists.txt")
 file(READ "${_f}" _content)
 
-# Idempotency guard
-if (_content MATCHES "SDR\\+\\+ deps build: install rules")
-    message(STATUS "patch_libperseus_sdr: already patched, skipping")
-    return()
-endif ()
+# --- Patch 1: make library type follow BUILD_SHARED_LIBS ---
+patch_replace_or_fail(_content
+    "add_library(perseus-sdr SHARED \${SRC})"
+    "add_library(perseus-sdr \${SRC})")
 
-set(_install_rules "
+# --- Patch 2: append install rules (upstream has none) ---
+# Idempotency via marker — patch_replace_or_fail can't help here because this
+# is an append, not a substitution.
+if (NOT _content MATCHES "SDR\\+\\+ deps build: install rules")
+    string(APPEND _content "
 # >>> SDR++ deps build: install rules (none existed upstream)
 include(GNUInstallDirs)
 install(TARGETS perseus-sdr
@@ -27,7 +41,6 @@ install(FILES
 )
 # <<< SDR++ deps build
 ")
+endif ()
 
-string(APPEND _content "${_install_rules}")
 file(WRITE "${_f}" "${_content}")
-message(STATUS "patch_libperseus_sdr: patched ${_f}")

@@ -1,0 +1,126 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "vs2026-x64",
+            "displayName": "Visual Studio 2026 x64 (uses pre-built deps)",
+            "description": "Configures SDR++ against deps already built via deps/build-vs2026-x64. Run 'cmake --preset vs2026-x64 -S deps -B deps/build-vs2026-x64 && cmake --build ...' first.",
+            "generator": "Visual Studio 18 2026",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/build-vs2026-x64",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-x64/destdir/usr/local",
+                "SDR_KIT_ROOT":     "${sourceDir}/deps/build-vs2026-x64/destdir/usr/local",
+                "COPY_MSVC_REDISTRIBUTABLES": "ON",
+                "OPT_BUILD_BLADERF_SOURCE":       "ON",
+                "OPT_BUILD_LIMESDR_SOURCE":       "ON",
+                "OPT_BUILD_PERSEUS_SOURCE":       "ON",
+                "OPT_BUILD_SDRPLAY_SOURCE":       "ON",
+                "OPT_BUILD_NEW_PORTAUDIO_SINK":   "ON",
+                "OPT_BUILD_M17_DECODER":          "ON",
+                "OPT_BUILD_RFNM_SOURCE":          "ON",
+                "OPT_BUILD_FOBOSSDR_SOURCE":      "ON",
+                "OPT_BUILD_HYDRASDR_RFONE_SOURCE":"ON"
+            }
+        },
+        {
+            "name": "vs2026-x64-bootstrap",
+            "displayName": "Visual Studio 2026 x64 (build deps + app in one shot)",
+            "description": "First-time setup: configures deps as a sub-project (OPT_BUILD_DEPS=ON), builds them, then continues with the app configure.",
+            "inherits": "vs2026-x64",
+            "binaryDir": "${sourceDir}/build-vs2026-x64-bootstrap",
+            "cacheVariables": {
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "vs2026-x64"
+            }
+        },
+        {
+            "name": "vs2026-arm64",
+            "displayName": "Visual Studio 2026 ARM64 (uses pre-built deps)",
+            "inherits": "vs2026-x64",
+            "architecture": "ARM64",
+            "binaryDir": "${sourceDir}/build-vs2026-arm64",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-arm64/destdir/usr/local",
+                "SDR_KIT_ROOT":     "${sourceDir}/deps/build-vs2026-arm64/destdir/usr/local",
+                "OPT_BUILD_SDRPLAY_SOURCE":        "OFF",
+                "OPT_BUILD_HYDRASDR_RFONE_SOURCE": "OFF"
+            }
+        },
+        {
+            "name": "ninja-msvc-base",
+            "hidden": true,
+            "description": "Hidden base for Ninja+MSVC single-config builds. Run from a 'Developer PowerShell for VS 2026' (or vcvarsall'd shell) so cl.exe and ninja are on PATH. Each derived preset produces ONE configuration; switch configs by switching presets.",
+            "generator": "Ninja",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "default",
+                "COPY_MSVC_REDISTRIBUTABLES": "ON",
+                "OPT_BUILD_BLADERF_SOURCE":       "ON",
+                "OPT_BUILD_LIMESDR_SOURCE":       "ON",
+                "OPT_BUILD_PERSEUS_SOURCE":       "ON",
+                "OPT_BUILD_SDRPLAY_SOURCE":       "ON",
+                "OPT_BUILD_NEW_PORTAUDIO_SINK":   "ON",
+                "OPT_BUILD_M17_DECODER":          "ON",
+                "OPT_BUILD_RFNM_SOURCE":          "ON",
+                "OPT_BUILD_FOBOSSDR_SOURCE":      "ON",
+                "OPT_BUILD_HYDRASDR_RFONE_SOURCE":"ON"
+            }
+        },
+        {
+            "name": "msvc-x64-debug",
+            "displayName": "MSVC x64 Debug (Ninja, /MTd)",
+            "description": "Single-config Debug build: /MTd everywhere, MSVC STL debug iterators active, full debuggability into app and deps. Builds its own deps tree under deps/build-default-Debug.",
+            "inherits": "ninja-msvc-base",
+            "binaryDir": "${sourceDir}/build-msvc-x64-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "msvc-x64-relwithdebinfo",
+            "displayName": "MSVC x64 RelWithDebInfo (Ninja, /MT)",
+            "description": "Single-config RelWithDebInfo build: /MT, optimized with PDBs. Builds its own deps tree under deps/build-default-RelWithDebInfo.",
+            "inherits": "ninja-msvc-base",
+            "binaryDir": "${sourceDir}/build-msvc-x64-relwithdebinfo",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        },
+        {
+            "name": "msvc-x64-release",
+            "displayName": "MSVC x64 Release (Ninja, /MT)",
+            "description": "Single-config Release build: /MT, fully optimized, no debug info. Builds its own deps tree under deps/build-default-Release.",
+            "inherits": "ninja-msvc-base",
+            "binaryDir": "${sourceDir}/build-msvc-x64-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "linux-default",
+            "displayName": "Linux (system packages from apt/dpkg)",
+            "description": "Standard Linux dev build: relies on system pkg-config to resolve dependencies installed via apt.",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build-linux",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        }
+    ]
+}

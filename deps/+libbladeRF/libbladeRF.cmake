@@ -16,14 +16,13 @@ add_cmake_project(libbladeRF
         -DBUILD_DOCUMENTATION=OFF
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
         # Pre-set the cache variables that libbladeRF's bundled
-        # FindLibPThreadsWin32.cmake uses. The module calls find_library() with
-        # the name pthreadVC2 but we ship pthreads4w (v3). Pre-seeding the two
-        # internal cache variables (PTHREAD_LIBRARY / PTHREAD_DLL) that
-        # find_library/find_file populate causes CMake to skip its search and
-        # use our values directly, so LIBPTHREADSWIN32_LIBRARIES ends up
-        # pointing at pthreadVC3.lib and the shared library links correctly.
-        -DLIBPTHREADSWIN32_PATH=${SDRPP_DEPS_INSTALL_PREFIX}
+        # FindLibPThreadsWin32.cmake uses. The module expects an old
+        # pthreads-win32 v2 root containing COPYING.LIB, so point that root at
+        # a build-tree compatibility shim while feeding the real pthreads4w
+        # header, library, and DLL from the installed dependency prefix.
+        -DLIBPTHREADSWIN32_PATH=${SDRPP_DEPS_COMPAT_DIR}/pthreads-win32
         -DLIBPTHREADSWIN32_FOUND=TRUE
+        -DLIBPTHREADSWIN32_HEADER_FILE=${SDRPP_DEPS_INSTALL_PREFIX}/include/pthread.h
         -DPTHREAD_LIBRARY=${SDRPP_DEPS_INSTALL_PREFIX}/lib/pthreadVC3.lib
         -DPTHREAD_DLL=${SDRPP_DEPS_INSTALL_PREFIX}/bin/pthreadVC3.dll
         # Point libbladeRF's FindLibUSB at our install prefix so its DLL-copy
@@ -46,5 +45,12 @@ if (WIN32)
                       ${SDRPP_DEPS_INSTALL_PREFIX}/lib/bladeRF.dll
                       ${SDRPP_DEPS_INSTALL_PREFIX}/bin/bladeRF.dll
         COMMENT   "Mirroring bladeRF.dll from lib/ to bin/"
+        USES_TERMINAL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
     )
 endif ()
+
+sdrpp_emit_imported_config(libbladeRF
+    LIB_NAMES   bladeRF libbladeRF
+    DLL_NAMES   bladeRF.dll
+    HEADER      libbladeRF.h
+)

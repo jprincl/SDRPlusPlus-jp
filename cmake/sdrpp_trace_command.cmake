@@ -1,0 +1,101 @@
+cmake_minimum_required(VERSION 3.16)
+
+if (NOT DEFINED SDRPP_TRACE_LABEL)
+    set(SDRPP_TRACE_LABEL "cmake-child")
+endif ()
+if (NOT DEFINED SDRPP_TRACE_WORKING_DIRECTORY OR "${SDRPP_TRACE_WORKING_DIRECTORY}" STREQUAL "")
+    set(SDRPP_TRACE_WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+endif ()
+if (NOT DEFINED SDRPP_TRACE_ENABLED)
+    set(SDRPP_TRACE_ENABLED OFF)
+endif ()
+if (NOT DEFINED SDRPP_TRACE_SERIALIZE)
+    set(SDRPP_TRACE_SERIALIZE OFF)
+endif ()
+
+set(_cmd "")
+set(_after_separator OFF)
+math(EXPR _last_arg "${CMAKE_ARGC} - 1")
+foreach (_i RANGE 0 ${_last_arg})
+    set(_arg "${CMAKE_ARGV${_i}}")
+    if (_after_separator)
+        list(APPEND _cmd "${_arg}")
+    elseif ("${_arg}" STREQUAL "--")
+        set(_after_separator ON)
+    endif ()
+endforeach ()
+
+if (NOT _cmd)
+    message(FATAL_ERROR "sdrpp_trace_command: no command after --")
+endif ()
+
+function(_sdrpp_trace_log event detail)
+    if (NOT SDRPP_TRACE_ENABLED)
+        return()
+    endif ()
+
+    string(TIMESTAMP _ts "%Y-%m-%dT%H:%M:%S%z")
+    string(REPLACE ";" " " _cmd_pretty "${_cmd}")
+    set(_line "${_ts}\t${event}\t${SDRPP_TRACE_LABEL}\tcwd=${SDRPP_TRACE_WORKING_DIRECTORY}\t${detail}\tcmd=${_cmd_pretty}\n")
+
+    if (DEFINED SDRPP_TRACE_LOG AND NOT "${SDRPP_TRACE_LOG}" STREQUAL "")
+        get_filename_component(_trace_dir "${SDRPP_TRACE_LOG}" DIRECTORY)
+        if (NOT "${_trace_dir}" STREQUAL "")
+            file(MAKE_DIRECTORY "${_trace_dir}")
+        endif ()
+        if (DEFINED SDRPP_TRACE_LOG_LOCK AND NOT "${SDRPP_TRACE_LOG_LOCK}" STREQUAL "")
+            get_filename_component(_trace_lock_dir "${SDRPP_TRACE_LOG_LOCK}" DIRECTORY)
+            if (NOT "${_trace_lock_dir}" STREQUAL "")
+                file(MAKE_DIRECTORY "${_trace_lock_dir}")
+            endif ()
+            file(LOCK "${SDRPP_TRACE_LOG_LOCK}" GUARD FUNCTION TIMEOUT 600)
+        endif ()
+        file(APPEND "${SDRPP_TRACE_LOG}" "${_line}")
+    endif ()
+
+    message(STATUS "[sdrpp-cmake] ${event} ${SDRPP_TRACE_LABEL} ${detail}")
+endfunction()
+
+function(_sdrpp_trace_normalize_windows_path_env)
+    if (NOT WIN32)
+        return()
+    endif ()
+
+    # MSBuild's ToolTask environment table is case-insensitive and throws if a
+    # custom-command process inherits both Path and PATH. Keep one canonical
+    # spelling before spawning child CMake/MSBuild commands from the trace shim.
+    set(_path_value "")
+    if (DEFINED ENV{Path} AND NOT "$ENV{Path}" STREQUAL "")
+        set(_path_value "$ENV{Path}")
+    elseif (DEFINED ENV{PATH} AND NOT "$ENV{PATH}" STREQUAL "")
+        set(_path_value "$ENV{PATH}")
+    endif ()
+
+    unset(ENV{PATH})
+    unset(ENV{Path})
+    if (NOT "${_path_value}" STREQUAL "")
+        set(ENV{Path} "${_path_value}")
+    endif ()
+endfunction()
+
+if (SDRPP_TRACE_SERIALIZE AND DEFINED SDRPP_TRACE_RUN_LOCK AND NOT "${SDRPP_TRACE_RUN_LOCK}" STREQUAL "")
+    _sdrpp_trace_log("WAIT" "")
+    get_filename_component(_trace_run_lock_dir "${SDRPP_TRACE_RUN_LOCK}" DIRECTORY)
+    if (NOT "${_trace_run_lock_dir}" STREQUAL "")
+        file(MAKE_DIRECTORY "${_trace_run_lock_dir}")
+    endif ()
+    file(LOCK "${SDRPP_TRACE_RUN_LOCK}" GUARD PROCESS)
+endif ()
+
+_sdrpp_trace_log("ENTER" "")
+_sdrpp_trace_normalize_windows_path_env()
+execute_process(
+    COMMAND ${_cmd}
+    WORKING_DIRECTORY "${SDRPP_TRACE_WORKING_DIRECTORY}"
+    RESULT_VARIABLE _result)
+_sdrpp_trace_log("EXIT" "result=${_result}")
+
+if (NOT _result EQUAL 0)
+    string(REPLACE ";" " " _cmd_pretty "${_cmd}")
+    message(FATAL_ERROR "sdrpp_trace_command: '${SDRPP_TRACE_LABEL}' failed with ${_result}: ${_cmd_pretty}")
+endif ()

@@ -15,29 +15,37 @@
             }
         },
         {
-            "name": "vs2022-x64",
-            "displayName": "Visual Studio 2022, x64",
+            "name": "vs2026-x64",
+            "displayName": "Visual Studio 2026, x64",
             "inherits": "default",
-            "generator": "Visual Studio 17 2022",
+            "generator": "Visual Studio 18 2026",
             "architecture": "x64",
-            "binaryDir": "${sourceDir}/build-vs2022-x64",
+            "binaryDir": "${sourceDir}/build-vs2026-x64",
             "condition": {
                 "type": "equals",
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "SDRPP_DEP_PROFILE": "portable"
             }
         },
         {
-            "name": "vs2022-arm64ec",
-            "displayName": "Visual Studio 2022, ARM64EC",
+            "name": "vs2026-arm64",
+            "displayName": "Visual Studio 2026, ARM64",
             "inherits": "default",
-            "generator": "Visual Studio 17 2022",
-            "architecture": "ARM64EC",
-            "binaryDir": "${sourceDir}/build-vs2022-arm64ec",
+            "generator": "Visual Studio 18 2026",
+            "architecture": "ARM64",
+            "binaryDir": "${sourceDir}/build-vs2026-arm64",
             "condition": {
                 "type": "equals",
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "SDRPP_DEP_PROFILE": "portable"
             }
         },
         {
@@ -90,6 +98,23 @@
             "cacheVariables": {
                 "ANDROID_ABI": "x86_64",
                 "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/x86_64"
+            }
+        },
+        {
+            "name": "appimage",
+            "displayName": "Linux AppImage portable deps",
+            "inherits": "default",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build-appimage",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "SDRPP_DEP_PROFILE": "portable",
+                "SDRPP_DEP_FORCE_SYSTEM": "glfw3"
             }
         }
     ]

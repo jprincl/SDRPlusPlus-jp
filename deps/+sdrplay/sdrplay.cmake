@@ -9,14 +9,23 @@
 
 include(ExternalProject)
 
-if (CMAKE_GENERATOR_PLATFORM STREQUAL "x64" OR CMAKE_SIZEOF_VOID_P EQUAL 8)
+sdrpp_dep_builds_shared(sdrplay _sdrplay_builds_shared)
+if (NOT _sdrplay_builds_shared)
+    message(FATAL_ERROR "sdrplay is distributed as a shared binary only; remove it from SDRPP_DEP_FORCE_STATIC.")
+endif ()
+
+# SDRplay's Windows API ships only x86/x64 user-mode binaries and matching
+# x86/x64 kernel drivers. ARM64 Windows cannot load those drivers, so the
+# device never enumerates. Skip on any ARM64 target — the check runs before
+# the x64 branch so CMAKE_SIZEOF_VOID_P=8 on ARM64 doesn't mis-route us into
+# installing an unusable x64 DLL.
+if (CMAKE_GENERATOR_PLATFORM MATCHES "^ARM64")
+    message(WARNING "SDRplay: no ARM64 Windows kernel driver available, skipping")
+    return()
+elseif (CMAKE_GENERATOR_PLATFORM STREQUAL "x64" OR CMAKE_SIZEOF_VOID_P EQUAL 8)
     set(_arch_dir x64)
 elseif (CMAKE_GENERATOR_PLATFORM STREQUAL "Win32" OR CMAKE_GENERATOR_PLATFORM STREQUAL "")
     set(_arch_dir x86)
-elseif (CMAKE_GENERATOR_PLATFORM MATCHES "ARM64")
-    # SDRplay's Windows API does not currently ship ARM64 binaries.
-    message(WARNING "SDRplay: no ARM64 binary available, skipping")
-    return()
 endif ()
 
 set(_prefix ${SDRPP_DEPS_INSTALL_PREFIX})
@@ -46,6 +55,7 @@ ExternalProject_Add(dep_sdrplay
             ${CMAKE_COMMAND} -E copy_if_different
                 <SOURCE_DIR>/API/${_arch_dir}/sdrplay_api.dll
                 ${_prefix}/bin/sdrplay_api.dll
+    USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
 )
 
 sdrpp_emit_imported_config(sdrplay
