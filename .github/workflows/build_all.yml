@@ -119,23 +119,20 @@ jobs:
           with:
             submodules: recursive
 
-        - name: Create Build Environment
-          run: cmake -E make_directory ${{runner.workspace}}/build
-
         - name: Install Python package for volk
           run: python -m pip install --user mako
 
-        - name: Prepare CMake
-          working-directory: ${{runner.workspace}}/build
-          run: cmake -G "Visual Studio 18 2026" -A x64 -DCOPY_MSVC_REDISTRIBUTABLES=ON -DOPT_BUILD_DEPS=ON -DSDRPP_DEPS_PRESET=vs2026-x64 -DSDRPP_DEPS_BUILD_CONFIG=RelWithDebInfo "$Env:GITHUB_WORKSPACE" -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_PERSEUS_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON
+        - name: Configure
+          working-directory: ${{ github.workspace }}
+          run: cmake --preset msvc-vs-x64-release
 
         - name: Build
-          working-directory: ${{runner.workspace}}/build
-          run: cmake --build . --config Release --verbose
+          working-directory: ${{ github.workspace }}
+          run: cmake --build build-msvc-vs-x64-release --config Release --verbose
 
         - name: Create Archive
           working-directory: ${{runner.workspace}}
-          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ./build ($Env:GITHUB_WORKSPACE + "/root")'
+          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-msvc-vs-x64-release") ($Env:GITHUB_WORKSPACE + "/root")'
 
         - name: Save Archive
           uses: actions/upload-artifact@v4
@@ -152,23 +149,20 @@ jobs:
           with:
             submodules: recursive
 
-        - name: Create Build Environment
-          run: cmake -E make_directory ${{runner.workspace}}/build
-
         - name: Install Python package for volk
           run: python -m pip install --user mako
 
-        - name: Prepare CMake
-          working-directory: ${{runner.workspace}}/build
-          run: cmake -G "Visual Studio 18 2026" -A ARM64 -DCOPY_MSVC_REDISTRIBUTABLES=ON -DOPT_BUILD_DEPS=ON -DSDRPP_DEPS_PRESET=vs2026-arm64 -DSDRPP_DEPS_BUILD_CONFIG=RelWithDebInfo "$Env:GITHUB_WORKSPACE" -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_PERSEUS_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=OFF -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=OFF
+        - name: Configure
+          working-directory: ${{ github.workspace }}
+          run: cmake --preset msvc-vs-arm64-release
 
         - name: Build
-          working-directory: ${{runner.workspace}}/build
-          run: cmake --build . --config Release --verbose
+          working-directory: ${{ github.workspace }}
+          run: cmake --build build-msvc-vs-arm64-release --config Release --verbose
 
         - name: Create Archive
           working-directory: ${{runner.workspace}}
-          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ./build ($Env:GITHUB_WORKSPACE + "/root") Release arm64'
+          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-msvc-vs-arm64-release") ($Env:GITHUB_WORKSPACE + "/root") Release arm64'
 
         - name: Save Archive
           uses: actions/upload-artifact@v4

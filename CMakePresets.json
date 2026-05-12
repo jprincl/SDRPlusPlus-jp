@@ -53,6 +53,24 @@
             }
         },
         {
+            "name": "msvc-vs-x64-release",
+            "displayName": "MSVC x64 Release (Visual Studio)",
+            "description": "CI-friendly Visual Studio Release build that bootstraps deps without requiring a pre-configured developer shell.",
+            "inherits": "vs2026-x64-bootstrap",
+            "binaryDir": "${sourceDir}/build-msvc-vs-x64-release"
+        },
+        {
+            "name": "msvc-vs-arm64-release",
+            "displayName": "MSVC ARM64 Release (Visual Studio)",
+            "description": "CI-friendly Visual Studio ARM64 Release build that bootstraps deps without requiring a pre-configured developer shell.",
+            "inherits": "vs2026-arm64",
+            "binaryDir": "${sourceDir}/build-msvc-vs-arm64-release",
+            "cacheVariables": {
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "vs2026-arm64"
+            }
+        },
+        {
             "name": "ninja-msvc-base",
             "hidden": true,
             "description": "Hidden base for Ninja+MSVC single-config builds. Run from a 'Developer PowerShell for VS 2026' (or vcvarsall'd shell) so cl.exe and ninja are on PATH. Each derived preset produces ONE configuration; switch configs by switching presets.",
@@ -105,6 +123,17 @@
             "binaryDir": "${sourceDir}/build-msvc-x64-release",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "msvc-arm64-release",
+            "displayName": "MSVC ARM64 Release (Ninja, /MT)",
+            "description": "Single-config ARM64 Release build: /MT, fully optimized, no debug info. Requires an ARM64-targeted MSVC developer shell.",
+            "inherits": "msvc-x64-release",
+            "binaryDir": "${sourceDir}/build-msvc-arm64-release",
+            "cacheVariables": {
+                "OPT_BUILD_SDRPLAY_SOURCE": "OFF",
+                "OPT_BUILD_HYDRASDR_RFONE_SOURCE": "OFF"
             }
         },
         {
