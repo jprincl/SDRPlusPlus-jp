@@ -116,23 +116,21 @@ jobs:
 
         steps:
         - uses: actions/checkout@v4
-          with:
-            submodules: recursive
 
         - name: Install Python package for volk
           run: python -m pip install --user mako
 
         - name: Configure
           working-directory: ${{ github.workspace }}
-          run: cmake --preset msvc-vs-x64-release
+          run: cmake --preset msvc-x64-release
 
         - name: Build
           working-directory: ${{ github.workspace }}
-          run: cmake --build build-msvc-vs-x64-release --config Release --verbose
+          run: cmake --build build-msvc-x64-release --config Release --verbose
 
         - name: Create Archive
           working-directory: ${{runner.workspace}}
-          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-msvc-vs-x64-release") ($Env:GITHUB_WORKSPACE + "/root")'
+          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-msvc-x64-release") ($Env:GITHUB_WORKSPACE + "/root") Release x64'
 
         - name: Save Archive
           uses: actions/upload-artifact@v4
@@ -146,23 +144,21 @@ jobs:
 
         steps:
         - uses: actions/checkout@v4
-          with:
-            submodules: recursive
 
         - name: Install Python package for volk
           run: python -m pip install --user mako
 
         - name: Configure
           working-directory: ${{ github.workspace }}
-          run: cmake --preset msvc-vs-arm64-release
+          run: cmake --preset msvc-arm64-release
 
         - name: Build
           working-directory: ${{ github.workspace }}
-          run: cmake --build build-msvc-vs-arm64-release --config Release --verbose
+          run: cmake --build build-msvc-arm64-release --config Release --verbose
 
         - name: Create Archive
           working-directory: ${{runner.workspace}}
-          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-msvc-vs-arm64-release") ($Env:GITHUB_WORKSPACE + "/root") Release arm64'
+          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-msvc-arm64-release") ($Env:GITHUB_WORKSPACE + "/root") Release arm64'
 
         - name: Save Archive
           uses: actions/upload-artifact@v4
@@ -319,8 +315,6 @@ jobs:
 
         steps:
         - uses: actions/checkout@v4
-          with:
-            submodules: recursive
 
         - name: Fetch container
           working-directory: ${{runner.workspace}}

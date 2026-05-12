@@ -34,8 +34,6 @@ jobs:
 
         steps:
         - uses: actions/checkout@v4
-          with:
-            submodules: recursive
 
         - name: Create Docker Image
           run: docker build --build-arg BASE_IMAGE=${{ inputs.base_image }} -f $GITHUB_WORKSPACE/docker_builds/Dockerfile $GITHUB_WORKSPACE/docker_builds --tag sdrpp_build

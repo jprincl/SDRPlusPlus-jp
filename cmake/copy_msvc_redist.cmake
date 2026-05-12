@@ -2,6 +2,12 @@ if (NOT DEFINED CONFIG OR NOT DEFINED DST OR NOT DEFINED REDIST_MANIFEST)
     message(FATAL_ERROR "copy_msvc_redist.cmake requires -DCONFIG=<config>, -DDST=<dir>, and -DREDIST_MANIFEST=<file>")
 endif ()
 
+foreach (_arg CONFIG DST REDIST_MANIFEST)
+    if (${_arg} MATCHES "^\"(.*)\"$")
+        set(${_arg} "${CMAKE_MATCH_1}")
+    endif ()
+endforeach ()
+
 if (NOT EXISTS "${REDIST_MANIFEST}")
     message(FATAL_ERROR "MSVC redistributable manifest not found: ${REDIST_MANIFEST}")
 endif ()

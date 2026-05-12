@@ -1,0 +1,219 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e62c58a..00f4f4c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -78,8 +78,16 @@ add_custom_target(dist
+         | bzip2 > ${CMAKE_BINARY_DIR}/${ARCHIVE_NAME}.tar.bz2
+     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+ 
++if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
++    set(CODEC2_CLANGCL TRUE)
++else()
++    set(CODEC2_CLANGCL FALSE)
++endif()
++
+ # Set default C flags.
+-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-strict-overflow")
++if(NOT CODEC2_CLANGCL)
++    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-strict-overflow")
++endif()
+ 
+ # Check for what C standard is supported.
+ if(NOT WIN32)
+@@ -102,8 +110,15 @@ if((NOT WIN32) AND (NOT MICROCONTROLLER_BUILD))
+     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+ endif()
+ 
+-set(CMAKE_C_FLAGS_DEBUG "-g -O2 -DDUMP")
+-set(CMAKE_C_FLAGS_RELEASE "-O3")
++if(CODEC2_CLANGCL)
++    add_definitions(-DM_PI=3.14159265358979323846)
++    add_compile_options("/FI${CMAKE_CURRENT_SOURCE_DIR}/src/sdrpp_clangcl_complex.h")
++    set(CMAKE_C_FLAGS_DEBUG "/Zi /O2 -DDUMP")
++    set(CMAKE_C_FLAGS_RELEASE "/O2")
++else()
++    set(CMAKE_C_FLAGS_DEBUG "-g -O2 -DDUMP")
++    set(CMAKE_C_FLAGS_RELEASE "-O3")
++endif()
+ 
+ #
+ # Setup Windows/MinGW specifics here.
+@@ -213,7 +228,9 @@ endif()
+ # codec2 library and demo apps
+ #
+ add_subdirectory(src)
+-add_subdirectory(demo)
++if(NOT CODEC2_CLANGCL)
++    add_subdirectory(demo)
++endif()
+ 
+ 
+ if(UNITTEST)
+diff --git a/cmake/GetDependencies.cmake.in b/cmake/GetDependencies.cmake.in
+index 0d25f67..93eeb41 100644
+--- a/cmake/GetDependencies.cmake.in
++++ b/cmake/GetDependencies.cmake.in
+@@ -11,14 +11,19 @@ set(CMAKE_SYSTEM_LIBRARY_PATH @CMAKE_SYSTEM_LIBRARY_PATH@)
+ set(CMAKE_FIND_ROOT_PATH @CMAKE_FIND_ROOT_PATH@)
+ set(CODEC2_DLL ${CMAKE_BINARY_DIR}/src/libcodec2.dll)
+ 
+-include(${CMAKE_SOURCE_DIR}/cmake/GetPrerequisites.cmake)
+-get_prerequisites(${CODEC2_DLL} _deps 1 0 "" "")
+-foreach(_runtime ${_deps})
+-    message("Looking for ${_runtime}")
+-    find_library(RUNTIME_${_runtime} ${_runtime})
+-    message("${RUNTIME_${_runtime}}")
+-    if(RUNTIME_${_runtime})
++# GetPrerequisites.cmake was removed in CMake 4.0. Use the modern equivalent.
++if(EXISTS "${CODEC2_DLL}")
++    file(GET_RUNTIME_DEPENDENCIES
++        LIBRARIES "${CODEC2_DLL}"
++        RESOLVED_DEPENDENCIES_VAR _resolved
++        UNRESOLVED_DEPENDENCIES_VAR _unresolved
++        DIRECTORIES @CMAKE_SYSTEM_LIBRARY_PATH@
++        PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-"
++        POST_EXCLUDE_REGEXES ".*[Ss]ystem32/.*\\.dll$"
++    )
++    foreach(_dep IN LISTS _resolved)
++        message(STATUS "Installing runtime dep: ${_dep}")
+         file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/bin"
+-        TYPE EXECUTABLE FILES "${RUNTIME_${_runtime}}")
+-    endif()
+-endforeach()
++             TYPE EXECUTABLE FILES "${_dep}")
++    endforeach()
++endif()
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index fb10d28..160ebf4 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -75,7 +75,9 @@ else(CMAKE_CROSSCOMPILING)
+ # Build code generator binaries. These do not get installed.
+     # generate_codebook
+     add_executable(generate_codebook generate_codebook.c)
+-    target_link_libraries(generate_codebook m)
++    if(NOT CODEC2_CLANGCL)
++        target_link_libraries(generate_codebook m)
++    endif()
+     # Make native builds available for cross-compiling.
+     export(TARGETS generate_codebook
+         FILE ${CMAKE_BINARY_DIR}/ImportExecutables.cmake)
+@@ -243,9 +245,41 @@ set(CODEC2_PUBLIC_HEADERS
+ set(SOVERSION "${CODEC2_VERSION_MAJOR}.${CODEC2_VERSION_MINOR}")
+ message(STATUS "codec2 version: ${CODEC2_VERSION}")
+ add_library(codec2 ${CODEC2_SRCS})
++if(CODEC2_CLANGCL)
++    set_target_properties(codec2 PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
++endif()
+ if(UNIX)
+     target_link_libraries(codec2 PUBLIC m)
+ endif(UNIX)
++if(CODEC2_CLANGCL)
++    execute_process(
++        COMMAND "${CMAKE_C_COMPILER}" -print-resource-dir
++        OUTPUT_VARIABLE _clang_resource_dir
++        OUTPUT_STRIP_TRAILING_WHITESPACE
++        ERROR_QUIET)
++    set(_clang_rt_arch_candidates "")
++    if(CMAKE_GENERATOR_PLATFORM MATCHES "ARM64EC" OR CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64EC")
++        list(APPEND _clang_rt_arch_candidates arm64ec aarch64)
++    elseif(CMAKE_GENERATOR_PLATFORM MATCHES "ARM64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|AARCH64|aarch64")
++        list(APPEND _clang_rt_arch_candidates aarch64 arm64)
++    elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
++        list(APPEND _clang_rt_arch_candidates x86_64)
++    else()
++        list(APPEND _clang_rt_arch_candidates i386)
++    endif()
++    set(_clang_rt_builtins "")
++    foreach(_clang_rt_arch IN LISTS _clang_rt_arch_candidates)
++        set(_clang_rt_candidate "${_clang_resource_dir}/lib/windows/clang_rt.builtins-${_clang_rt_arch}.lib")
++        if(EXISTS "${_clang_rt_candidate}")
++            set(_clang_rt_builtins "${_clang_rt_candidate}")
++            break()
++        endif()
++    endforeach()
++    if(NOT _clang_rt_builtins)
++        message(FATAL_ERROR "Could not find clang_rt.builtins for codec2 clang-cl build below ${_clang_resource_dir}/lib/windows")
++    endif()
++    target_link_libraries(codec2 PRIVATE "${_clang_rt_builtins}")
++endif()
+ if(LPCNET AND lpcnetfreedv_FOUND)
+     target_link_libraries(codec2 PRIVATE lpcnetfreedv)
+ endif()
+@@ -272,6 +306,7 @@ export(TARGETS codec2
+     FILE ${CMAKE_BINARY_DIR}/codec2.cmake
+ )
+ 
++if(NOT CODEC2_CLANGCL)
+ add_executable(c2enc c2enc.c)
+ target_link_libraries(c2enc codec2)
+ 
+@@ -379,6 +414,8 @@ target_link_libraries(ldpc_enc codec2)
+ add_executable(ldpc_dec ldpc_dec.c)
+ target_link_libraries(ldpc_dec codec2)
+ 
++endif()
++
+ install(TARGETS codec2 EXPORT codec2-config
+     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT lib
+     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT lib
+diff --git a/src/sdrpp_clangcl_complex.h b/src/sdrpp_clangcl_complex.h
+new file mode 100644
+index 0000000..d331bb4
+--- /dev/null
++++ b/src/sdrpp_clangcl_complex.h
+@@ -0,0 +1,54 @@
++#ifndef SDRPP_CODEC2_CLANGCL_COMPLEX_H
++#define SDRPP_CODEC2_CLANGCL_COMPLEX_H
++
++#if defined(_MSC_VER) && defined(__clang__) && !defined(__cplusplus)
++
++#ifndef _COMPLEX_DEFINED
++#define _COMPLEX_DEFINED
++#endif
++
++#include <complex.h>
++#include <math.h>
++
++#ifdef complex
++#undef complex
++#endif
++#define complex _Complex
++
++#ifdef _Complex_I
++#undef _Complex_I
++#endif
++#ifdef I
++#undef I
++#endif
++#define _Complex_I (__builtin_complex(0.0f, 1.0f))
++#define I _Complex_I
++
++#ifdef crealf
++#undef crealf
++#endif
++#define crealf(z) (__real__(z))
++
++#ifdef cimagf
++#undef cimagf
++#endif
++#define cimagf(z) (__imag__(z))
++
++#ifdef conjf
++#undef conjf
++#endif
++#define conjf(z) (__builtin_conjf(z))
++
++#ifdef cabsf
++#undef cabsf
++#endif
++#define cabsf(z) (__builtin_cabsf(z))
++
++#ifdef cargf
++#undef cargf
++#endif
++#define cargf(z) (atan2f(__imag__(z), __real__(z)))
++
++#endif
++
++#endif
