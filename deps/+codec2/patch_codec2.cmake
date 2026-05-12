@@ -205,6 +205,20 @@ endif()
             _src_cmake_contents "${_src_cmake_contents}")
     endif ()
 
+    set(_codec2_exports_block [=[if(MSVC)
+    set_target_properties(codec2 PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()]=])
+    string(FIND "${_src_cmake_contents}" "WINDOWS_EXPORT_ALL_SYMBOLS" _codec2_exports_pos)
+    if (_codec2_exports_pos EQUAL -1)
+        string(REPLACE
+            [=[add_library(codec2 ${CODEC2_SRCS})]=]
+            [=[add_library(codec2 ${CODEC2_SRCS})
+if(MSVC)
+    set_target_properties(codec2 PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()]=]
+            _src_cmake_contents "${_src_cmake_contents}")
+    endif ()
+
     string(FIND "${_src_cmake_contents}" "generate_codebook.exe" _generate_codebook_exe_pos)
     if (_generate_codebook_exe_pos EQUAL -1)
         string(REPLACE
