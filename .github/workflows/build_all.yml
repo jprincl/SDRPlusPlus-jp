@@ -122,11 +122,17 @@ jobs:
 
         - name: Configure
           working-directory: ${{ github.workspace }}
-          run: cmake --preset msvc-x64-release
+          shell: cmd
+          run: |
+            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+            cmake --preset msvc-x64-release
 
         - name: Build
           working-directory: ${{ github.workspace }}
-          run: cmake --build build-msvc-x64-release --config Release --verbose
+          shell: cmd
+          run: |
+            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+            cmake --build build-msvc-x64-release --config Release --verbose
 
         - name: Create Archive
           working-directory: ${{runner.workspace}}
@@ -150,11 +156,17 @@ jobs:
 
         - name: Configure
           working-directory: ${{ github.workspace }}
-          run: cmake --preset msvc-arm64-release
+          shell: cmd
+          run: |
+            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
+            cmake --preset msvc-arm64-release
 
         - name: Build
           working-directory: ${{ github.workspace }}
-          run: cmake --build build-msvc-arm64-release --config Release --verbose
+          shell: cmd
+          run: |
+            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
+            cmake --build build-msvc-arm64-release --config Release --verbose
 
         - name: Create Archive
           working-directory: ${{runner.workspace}}
