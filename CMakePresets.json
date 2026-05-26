@@ -128,11 +128,13 @@
         {
             "name": "msvc-arm64-release",
             "displayName": "MSVC ARM64 Release (Ninja, /MT)",
-            "description": "Single-config ARM64 Release build: /MT, fully optimized, no debug info. Requires an ARM64-targeted MSVC developer shell.",
-            "inherits": "msvc-x64-release",
+            "description": "Single-config ARM64 Release build: /MT, fully optimized, no debug info. Requires an ARM64-targeted MSVC developer shell. Uses a dedicated deps preset (default-arm64) so the deps tree does not collide with the x64 Ninja builds.",
+            "inherits": "ninja-msvc-base",
             "binaryDir": "${sourceDir}/build-msvc-arm64-release",
             "cacheVariables": {
-                "OPT_BUILD_SDRPLAY_SOURCE": "OFF",
+                "CMAKE_BUILD_TYPE": "Release",
+                "SDRPP_DEPS_PRESET": "default-arm64",
+                "OPT_BUILD_SDRPLAY_SOURCE":        "OFF",
                 "OPT_BUILD_HYDRASDR_RFONE_SOURCE": "OFF"
             }
         },

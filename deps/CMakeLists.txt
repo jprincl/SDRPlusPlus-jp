@@ -182,6 +182,32 @@ if (ANDROID)
     )
 endif ()
 
+# Windows ARM64 cross-compile from an x64 host: CMake's compiler probe
+# correctly identifies the target arch and sets CMAKE_C_COMPILER_ARCHITECTURE_ID,
+# but CMAKE_SYSTEM_PROCESSOR stays at the host value (AMD64) because no
+# toolchain file is in play. That breaks dep CMakeLists that gate
+# x86/x64/arm/arm64 logic on CMAKE_SYSTEM_PROCESSOR (volk's SSE/NEON
+# dispatch, others).
+#
+# Forwarding -DCMAKE_SYSTEM_PROCESSOR alone isn't enough: CMake's
+# CMakeDetermineSystem.cmake only honors that variable when CMAKE_SYSTEM_NAME
+# (or a toolchain file) is set — otherwise project() overwrites it with the
+# host value. So we also force CMAKE_SYSTEM_NAME=Windows for the cross case,
+# which puts CMake into "explicit system" mode and keeps the user-supplied
+# CMAKE_SYSTEM_PROCESSOR sticky. Side effect: CMAKE_CROSSCOMPILING becomes
+# TRUE, which our codec2 recipe already handles via its GENERATE_CODEBOOK
+# preflight path.
+#
+# Gated on host != ARM64 so a native ARM64-host build doesn't unnecessarily
+# enter cross-compile mode.
+if (WIN32 AND CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "^ARM64"
+        AND NOT CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^([Aa][Rr][Mm]64|[Aa][Aa][Rr][Cc][Hh]64)")
+    list(APPEND DEP_CMAKE_OPTS
+        "-DCMAKE_SYSTEM_NAME:STRING=Windows"
+        "-DCMAKE_SYSTEM_PROCESSOR:STRING=ARM64"
+    )
+endif ()
+
 # pthreads4w (Windows only) — Windows sibling forks read pthreads paths
 # through two incompatible bundled find modules: the libairspy / libairspyhf
 # / libhackrf / libhydrasdr / libmirisdr forks use CMake's FindThreads style

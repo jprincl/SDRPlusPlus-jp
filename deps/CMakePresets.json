@@ -15,6 +15,16 @@
             }
         },
         {
+            "name": "default-arm64",
+            "displayName": "Default (ARM64 host/env)",
+            "description": "Like 'default' but yields a distinct build directory so ARM64 deps don't share deps/build-default-* with x64 builds. Generator and target arch come from the environment; run from an ARM64-targeted MSVC developer shell.",
+            "inherits": "default",
+            "binaryDir": "${sourceDir}/build-default-arm64",
+            "cacheVariables": {
+                "SDRPP_DEP_PROFILE": "portable"
+            }
+        },
+        {
             "name": "vs2026-x64",
             "displayName": "Visual Studio 2026, x64",
             "inherits": "default",

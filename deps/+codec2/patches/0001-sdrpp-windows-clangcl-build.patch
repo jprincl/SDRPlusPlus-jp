@@ -5,7 +5,7 @@ index e62c58a..00f4f4c 100644
 @@ -78,8 +78,16 @@ add_custom_target(dist
          | bzip2 > ${CMAKE_BINARY_DIR}/${ARCHIVE_NAME}.tar.bz2
      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
- 
+
 +if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
 +    set(CODEC2_CLANGCL TRUE)
 +else()
@@ -17,13 +17,13 @@ index e62c58a..00f4f4c 100644
 +if(NOT CODEC2_CLANGCL)
 +    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-strict-overflow")
 +endif()
- 
+
  # Check for what C standard is supported.
  if(NOT WIN32)
 @@ -102,8 +110,15 @@ if((NOT WIN32) AND (NOT MICROCONTROLLER_BUILD))
      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
  endif()
- 
+
 -set(CMAKE_C_FLAGS_DEBUG "-g -O2 -DDUMP")
 -set(CMAKE_C_FLAGS_RELEASE "-O3")
 +if(CODEC2_CLANGCL)
@@ -35,7 +35,7 @@ index e62c58a..00f4f4c 100644
 +    set(CMAKE_C_FLAGS_DEBUG "-g -O2 -DDUMP")
 +    set(CMAKE_C_FLAGS_RELEASE "-O3")
 +endif()
- 
+
  #
  # Setup Windows/MinGW specifics here.
 @@ -213,7 +228,9 @@ endif()
@@ -46,8 +46,8 @@ index e62c58a..00f4f4c 100644
 +if(NOT CODEC2_CLANGCL)
 +    add_subdirectory(demo)
 +endif()
- 
- 
+
+
  if(UNITTEST)
 diff --git a/cmake/GetDependencies.cmake.in b/cmake/GetDependencies.cmake.in
 index 0d25f67..93eeb41 100644
@@ -56,7 +56,7 @@ index 0d25f67..93eeb41 100644
 @@ -11,14 +11,19 @@ set(CMAKE_SYSTEM_LIBRARY_PATH @CMAKE_SYSTEM_LIBRARY_PATH@)
  set(CMAKE_FIND_ROOT_PATH @CMAKE_FIND_ROOT_PATH@)
  set(CODEC2_DLL ${CMAKE_BINARY_DIR}/src/libcodec2.dll)
- 
+
 -include(${CMAKE_SOURCE_DIR}/cmake/GetPrerequisites.cmake)
 -get_prerequisites(${CODEC2_DLL} _deps 1 0 "" "")
 -foreach(_runtime ${_deps})
@@ -98,7 +98,7 @@ index fb10d28..160ebf4 100644
      # Make native builds available for cross-compiling.
      export(TARGETS generate_codebook
          FILE ${CMAKE_BINARY_DIR}/ImportExecutables.cmake)
-@@ -243,9 +245,41 @@ set(CODEC2_PUBLIC_HEADERS
+@@ -243,9 +245,62 @@ set(CODEC2_PUBLIC_HEADERS
  set(SOVERSION "${CODEC2_VERSION_MAJOR}.${CODEC2_VERSION_MINOR}")
  message(STATUS "codec2 version: ${CODEC2_VERSION}")
  add_library(codec2 ${CODEC2_SRCS})
@@ -114,6 +114,21 @@ index fb10d28..160ebf4 100644
 +        OUTPUT_VARIABLE _clang_resource_dir
 +        OUTPUT_STRIP_TRAILING_WHITESPACE
 +        ERROR_QUIET)
++    # Search roots for the target-arch builtins library: the host clang's own
++    # resource dir (which ships builtins matching the host arch), plus every
++    # VS-bundled sibling Llvm/<arch>/ install — each ships clang_rt.builtins-*
++    # as static archives, linkable from an x64-hosted clang frontend even
++    # though their compiler binaries can't run on the host. This is what makes
++    # cross-compile to ARM64 work.
++    set(_clang_rt_search_roots "")
++    if(_clang_resource_dir)
++        list(APPEND _clang_rt_search_roots "${_clang_resource_dir}/lib/windows")
++    endif()
++    if(DEFINED ENV{VCINSTALLDIR})
++        file(GLOB _vs_llvm_dirs "$ENV{VCINSTALLDIR}/Tools/Llvm/*/lib/clang/*/lib/windows")
++        list(APPEND _clang_rt_search_roots ${_vs_llvm_dirs})
++    endif()
++    list(REMOVE_DUPLICATES _clang_rt_search_roots)
 +    set(_clang_rt_arch_candidates "")
 +    if(CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "ARM64EC" OR CMAKE_C_COMPILER_TARGET MATCHES "arm64ec" OR CMAKE_GENERATOR_PLATFORM MATCHES "ARM64EC" OR CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64EC")
 +        list(APPEND _clang_rt_arch_candidates arm64ec aarch64)
@@ -126,32 +141,38 @@ index fb10d28..160ebf4 100644
 +    endif()
 +    set(_clang_rt_builtins "")
 +    foreach(_clang_rt_arch IN LISTS _clang_rt_arch_candidates)
-+        set(_clang_rt_candidate "${_clang_resource_dir}/lib/windows/clang_rt.builtins-${_clang_rt_arch}.lib")
-+        if(EXISTS "${_clang_rt_candidate}")
-+            set(_clang_rt_builtins "${_clang_rt_candidate}")
++        foreach(_clang_rt_root IN LISTS _clang_rt_search_roots)
++            set(_clang_rt_candidate "${_clang_rt_root}/clang_rt.builtins-${_clang_rt_arch}.lib")
++            if(EXISTS "${_clang_rt_candidate}")
++                set(_clang_rt_builtins "${_clang_rt_candidate}")
++                break()
++            endif()
++        endforeach()
++        if(_clang_rt_builtins)
 +            break()
 +        endif()
 +    endforeach()
 +    if(NOT _clang_rt_builtins)
-+        message(FATAL_ERROR "Could not find clang_rt.builtins for codec2 clang-cl build below ${_clang_resource_dir}/lib/windows")
++        string(REPLACE ";" "\n    " _clang_rt_search_roots_pretty "${_clang_rt_search_roots}")
++        message(FATAL_ERROR "Could not find clang_rt.builtins for codec2 clang-cl build under:\n    ${_clang_rt_search_roots_pretty}")
 +    endif()
 +    target_link_libraries(codec2 PRIVATE "${_clang_rt_builtins}")
 +endif()
  if(LPCNET AND lpcnetfreedv_FOUND)
      target_link_libraries(codec2 PRIVATE lpcnetfreedv)
  endif()
-@@ -272,6 +306,7 @@ export(TARGETS codec2
+@@ -272,6 +327,7 @@ export(TARGETS codec2
      FILE ${CMAKE_BINARY_DIR}/codec2.cmake
  )
- 
+
 +if(NOT CODEC2_CLANGCL)
  add_executable(c2enc c2enc.c)
  target_link_libraries(c2enc codec2)
- 
-@@ -379,6 +414,8 @@ target_link_libraries(ldpc_enc codec2)
+
+@@ -379,6 +435,8 @@ target_link_libraries(ldpc_enc codec2)
  add_executable(ldpc_dec ldpc_dec.c)
  target_link_libraries(ldpc_dec codec2)
- 
+
 +endif()
 +
  install(TARGETS codec2 EXPORT codec2-config

@@ -54,3 +54,42 @@ foreach (_patch IN LISTS _codec2_patches)
         endif ()
     endif ()
 endforeach ()
+
+#
+# Additional string-replacement patch — insert a GENERATE_CODEBOOK branch at
+# the top of the if(CMAKE_CROSSCOMPILING)/else() chain in src/CMakeLists.txt
+# so the recipe can supply a pre-built native helper exe and short-circuit
+# both the nested ExternalProject (which inherits the cross-target compiler
+# and thus also fails) and the native build (which produces an unrunnable
+# target-arch helper). Mirrors the -DGENERATE_CODEBOOK=... pattern used by
+# the Android cross-build script.
+#
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_helpers.cmake)
+
+set(_src_cmakelists "${SRC}/src/CMakeLists.txt")
+file(READ "${_src_cmakelists}" _src_content)
+patch_replace_or_fail(_src_content
+"# when crosscompiling we need a native executable
+if(CMAKE_CROSSCOMPILING)"
+"# when crosscompiling we need a native executable
+if(GENERATE_CODEBOOK)
+    # Pre-built native helper supplied by the caller (e.g. SDR++ iak deps
+    # build when cross-compiling x64 host -> ARM64 target). Avoids the
+    # nested ExternalProject below, which would inherit the cross-target
+    # compiler env and produce an equally un-runnable helper exe.
+    add_executable(generate_codebook IMPORTED)
+    set_target_properties(generate_codebook PROPERTIES
+        IMPORTED_LOCATION \"\${GENERATE_CODEBOOK}\")
+elseif(CMAKE_CROSSCOMPILING)")
+# Drop the legacy if/endif labels — they referred to the original
+# if(CMAKE_CROSSCOMPILING), but with the new top branch above CMake warns
+# about mis-matched block arguments. else()/endif() with no labels match
+# any open block.
+patch_replace_or_fail(_src_content
+    "else(CMAKE_CROSSCOMPILING)"
+    "else()")
+patch_replace_or_fail(_src_content
+    "endif(CMAKE_CROSSCOMPILING)"
+    "endif()")
+file(WRITE "${_src_cmakelists}" "${_src_content}")
+message(STATUS "patch_codec2: inserted GENERATE_CODEBOOK branch in ${_src_cmakelists}")
