@@ -5,7 +5,7 @@ index e62c58a..00f4f4c 100644
 @@ -78,8 +78,16 @@ add_custom_target(dist
          | bzip2 > ${CMAKE_BINARY_DIR}/${ARCHIVE_NAME}.tar.bz2
      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-
+ 
 +if(MSVC AND CMAKE_C_COMPILER_ID MATCHES "Clang")
 +    set(CODEC2_CLANGCL TRUE)
 +else()
@@ -17,13 +17,13 @@ index e62c58a..00f4f4c 100644
 +if(NOT CODEC2_CLANGCL)
 +    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-strict-overflow")
 +endif()
-
+ 
  # Check for what C standard is supported.
  if(NOT WIN32)
 @@ -102,8 +110,15 @@ if((NOT WIN32) AND (NOT MICROCONTROLLER_BUILD))
      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
  endif()
-
+ 
 -set(CMAKE_C_FLAGS_DEBUG "-g -O2 -DDUMP")
 -set(CMAKE_C_FLAGS_RELEASE "-O3")
 +if(CODEC2_CLANGCL)
@@ -35,7 +35,7 @@ index e62c58a..00f4f4c 100644
 +    set(CMAKE_C_FLAGS_DEBUG "-g -O2 -DDUMP")
 +    set(CMAKE_C_FLAGS_RELEASE "-O3")
 +endif()
-
+ 
  #
  # Setup Windows/MinGW specifics here.
 @@ -213,7 +228,9 @@ endif()
@@ -46,8 +46,8 @@ index e62c58a..00f4f4c 100644
 +if(NOT CODEC2_CLANGCL)
 +    add_subdirectory(demo)
 +endif()
-
-
+ 
+ 
  if(UNITTEST)
 diff --git a/cmake/GetDependencies.cmake.in b/cmake/GetDependencies.cmake.in
 index 0d25f67..93eeb41 100644
@@ -56,7 +56,7 @@ index 0d25f67..93eeb41 100644
 @@ -11,14 +11,19 @@ set(CMAKE_SYSTEM_LIBRARY_PATH @CMAKE_SYSTEM_LIBRARY_PATH@)
  set(CMAKE_FIND_ROOT_PATH @CMAKE_FIND_ROOT_PATH@)
  set(CODEC2_DLL ${CMAKE_BINARY_DIR}/src/libcodec2.dll)
-
+ 
 -include(${CMAKE_SOURCE_DIR}/cmake/GetPrerequisites.cmake)
 -get_prerequisites(${CODEC2_DLL} _deps 1 0 "" "")
 -foreach(_runtime ${_deps})
@@ -164,15 +164,15 @@ index fb10d28..160ebf4 100644
 @@ -272,6 +327,7 @@ export(TARGETS codec2
      FILE ${CMAKE_BINARY_DIR}/codec2.cmake
  )
-
+ 
 +if(NOT CODEC2_CLANGCL)
  add_executable(c2enc c2enc.c)
  target_link_libraries(c2enc codec2)
-
+ 
 @@ -379,6 +435,8 @@ target_link_libraries(ldpc_enc codec2)
  add_executable(ldpc_dec ldpc_dec.c)
  target_link_libraries(ldpc_dec codec2)
-
+ 
 +endif()
 +
  install(TARGETS codec2 EXPORT codec2-config
