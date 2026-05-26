@@ -7,9 +7,7 @@
 # Recursive submodules are required (cpu_features).
 #
 
-# Locate the host Python 3 interpreter (cross-compile safe).
-# Override with -DHOST_PYTHON_EXECUTABLE=<path> if auto-detection fails.
-include(${CMAKE_CURRENT_LIST_DIR}/../cmake/FindHostPython.cmake)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_cmake_project(volk
     GIT_REPOSITORY      https://github.com/gnuradio/volk
@@ -19,11 +17,8 @@ add_cmake_project(volk
         -DENABLE_TESTING=OFF
         -DENABLE_MODTOOL=OFF
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-        # Pass the host Python to both VolkPython.cmake (PYTHON_EXECUTABLE) and
-        # directly to FindPython3 as a cache variable so the Android sysroot
-        # search and any stale INTERNAL cache entry are both bypassed.
-        -DPYTHON_EXECUTABLE:FILEPATH=${HOST_PYTHON_EXECUTABLE}
-        -DPython3_EXECUTABLE:FILEPATH=${HOST_PYTHON_EXECUTABLE}
+        -DPYTHON_EXECUTABLE:FILEPATH=${Python3_EXECUTABLE}
+        -DPython3_EXECUTABLE:FILEPATH=${Python3_EXECUTABLE}
 )
 
 sdrpp_validate_dep(volk

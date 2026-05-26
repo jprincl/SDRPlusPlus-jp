@@ -122,14 +122,17 @@ jobs:
             python-version: '3.12'
 
         - name: Install Python package for volk
-          run: python -m pip install --user mako
+          shell: pwsh
+          run: |
+            & "$env:pythonLocation\python.exe" -m pip install --user mako
+            & "$env:pythonLocation\python.exe" -c "import sys, mako; print('VOLK Python:', sys.executable); print('Mako:', mako.__version__)"
 
         - name: Configure
           working-directory: ${{ github.workspace }}
           shell: cmd
           run: |
             call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-            cmake --preset msvc-x64-release
+            cmake --preset msvc-x64-release "-DPython3_EXECUTABLE=%pythonLocation%\python.exe"
 
         - name: Build
           working-directory: ${{ github.workspace }}
@@ -160,14 +163,17 @@ jobs:
             python-version: '3.12'
 
         - name: Install Python package for volk
-          run: python -m pip install --user mako
+          shell: pwsh
+          run: |
+            & "$env:pythonLocation\python.exe" -m pip install --user mako
+            & "$env:pythonLocation\python.exe" -c "import sys, mako; print('VOLK Python:', sys.executable); print('Mako:', mako.__version__)"
 
         - name: Configure
           working-directory: ${{ github.workspace }}
           shell: cmd
           run: |
             call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
-            cmake --preset msvc-arm64-release
+            cmake --preset msvc-arm64-release "-DPython3_EXECUTABLE=%pythonLocation%\python.exe"
 
         - name: Build
           working-directory: ${{ github.workspace }}
