@@ -21,6 +21,9 @@ add_cmake_project(libhackrf
 )
 
 set(DEP_libhackrf_DEPENDS libusb fftw3)
+if (WIN32)
+    list(APPEND DEP_libhackrf_DEPENDS pthreads)
+endif ()
 
 sdrpp_emit_imported_config(libhackrf
     LIB_NAMES   hackrf

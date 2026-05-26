@@ -1,17 +1,17 @@
 #
 # pthreads4w - POSIX threads compatibility layer for Windows. Required
-# transitively by libbladeRF and libhydrasdr (use pthread_* APIs).
+# transitively by libbladeRF, libhydrasdr and the libairspy* / libhackrf
+# forks that call pthread_* APIs.
 #
-# Windows builds follow the vcpkg pthreads port: build the PThreads4W 3.0.0
-# NMake project with the Windows ARM fixes instead of using a CMake mirror that
-# relies on try_run() for target-architecture detection.
+# Built from the PThreads4W 3.0.0 NMake project with our Windows-ARM and
+# Makefile fixes. Skipped entirely on POSIX where libc provides pthreads.
+#
+# Installs a real CMake package config at
+#   <prefix>/lib/cmake/pthreads4w/pthreads4w-config.cmake
+# defining the imported target pthreads4w::pthreadVC3.
 #
 
 if (NOT WIN32)
-    # Define a stub target so DEP_*_DEPENDS lookups from Windows-only consumers
-    # resolve harmlessly on platforms with native pthreads in libc.
-    add_custom_target(dep_pthreads)
-    set_target_properties(dep_pthreads PROPERTIES EXCLUDE_FROM_ALL TRUE)
     return()
 endif ()
 
@@ -35,32 +35,29 @@ if (NOT _pthreads_builds_shared)
     list(APPEND _pthreads_nmake_args BUILD_STATIC=1)
 endif ()
 
-set(_pthreads_target_arch "")
-foreach(_pthreads_arch_probe
-        "${CMAKE_GENERATOR_PLATFORM}"
-        "${CMAKE_VS_PLATFORM_NAME}"
-        "${CMAKE_C_COMPILER_ARCHITECTURE_ID}"
-        "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}"
-        "$ENV{VSCMD_ARG_TGT_ARCH}"
-        "${CMAKE_SYSTEM_PROCESSOR}")
-    if (_pthreads_arch_probe MATCHES "^([Aa][Rr][Mm]64|[Aa][Aa][Rr][Cc][Hh]64)")
-        set(_pthreads_target_arch ARM64)
-        break()
-    elseif (_pthreads_arch_probe MATCHES "^[Aa][Rr][Mm]")
-        set(_pthreads_target_arch ARM)
-        break()
-    elseif (_pthreads_arch_probe MATCHES "^([Ww][Ii][Nn]32|[Xx]86)")
-        set(_pthreads_target_arch x86)
-        break()
-    elseif (_pthreads_arch_probe MATCHES "^([Xx]64|[Aa][Mm][Dd]64)")
-        set(_pthreads_target_arch AMD64)
-        break()
-    endif ()
-endforeach()
-
-if (NOT _pthreads_target_arch AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+# Resolve the target architecture in the form the PThreads4W NMakefile
+# expects (AMD64 / x86 / ARM / ARM64). Prefer the explicit Visual Studio
+# generator platform; fall back to pointer size for older generators that
+# don't set it.
+set(_pthreads_arch_probe "${CMAKE_GENERATOR_PLATFORM}")
+if (NOT _pthreads_arch_probe)
+    set(_pthreads_arch_probe "${CMAKE_VS_PLATFORM_NAME}")
+endif ()
+if (NOT _pthreads_arch_probe)
+    set(_pthreads_arch_probe "$ENV{VSCMD_ARG_TGT_ARCH}")
+endif ()
+string(TOUPPER "${_pthreads_arch_probe}" _pthreads_arch_probe)
+if (_pthreads_arch_probe MATCHES "^(ARM64|AARCH64)$")
+    set(_pthreads_target_arch ARM64)
+elseif (_pthreads_arch_probe MATCHES "^ARM")
+    set(_pthreads_target_arch ARM)
+elseif (_pthreads_arch_probe MATCHES "^(WIN32|X86)$")
+    set(_pthreads_target_arch x86)
+elseif (_pthreads_arch_probe MATCHES "^(X64|AMD64)$")
     set(_pthreads_target_arch AMD64)
-elseif (NOT _pthreads_target_arch)
+elseif (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(_pthreads_target_arch AMD64)
+else ()
     set(_pthreads_target_arch x86)
 endif ()
 
@@ -106,10 +103,6 @@ ExternalProject_Add(dep_pthreads
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_LIST_DIR}/pthreads4w-config.cmake
             ${SDRPP_DEPS_INSTALL_PREFIX}/lib/cmake/pthreads4w/pthreads4w-config.cmake
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SDRPP_DEPS_INSTALL_PREFIX}/lib/cmake/PThreads4W
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_CURRENT_LIST_DIR}/pthreads4w-config.cmake
-            ${SDRPP_DEPS_INSTALL_PREFIX}/lib/cmake/PThreads4W/PThreads4WConfig.cmake
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SDRPP_DEPS_INSTALL_PREFIX}/lib/pkgconfig
         COMMAND ${CMAKE_COMMAND} -E remove_directory ${SDRPP_DEPS_INSTALL_PREFIX}/share/pkgconfig
     USES_TERMINAL_PATCH ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
@@ -117,7 +110,15 @@ ExternalProject_Add(dep_pthreads
     USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
 )
 
-# libbladeRF's FindLibPThreadsWin32.cmake gates on the presence of a
+sdrpp_validate_dep(pthreads
+    PACKAGE_NAME pthreads4w
+    TARGET       pthreads4w::pthreadVC3
+    LIB_NAMES    pthreadVC3
+    DLL_NAMES    pthreadVC3.dll
+    HEADER       pthread.h
+    REQUIRES_CONFIG)
+
+# libbladeRF's bundled FindLibPThreadsWin32.cmake gates on the presence of a
 # COPYING.LIB file (a relic of the pthreads-win32 v2 source tree). pthreads4w
 # v3 does not ship it. Write the stub into a build-tree compatibility shim, not
 # into the installed dependency prefix.
@@ -127,11 +128,5 @@ file(WRITE "${_pthreads_win32_compat_dir}/COPYING.LIB"
 "This stub file exists to satisfy libbladeRF's FindLibPThreadsWin32.cmake,
 which uses the presence of COPYING.LIB as a sentinel for pthreads-win32 v2's
 source tree. We use pthreads4w v3, which is licensed under the Apache 2.0
-License. See the installed pthreads4w artifacts for the actual project files.
+License. See <prefix>/lib/cmake/pthreads4w/ for the real package config.
 ")
-
-sdrpp_validate_dep(pthreads
-    TARGET    pthreadVC3
-    LIB_NAMES pthreadVC3
-    DLL_NAMES pthreadVC3.dll
-    HEADER    pthread.h)

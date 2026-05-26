@@ -173,24 +173,42 @@ list(APPEND DEP_CMAKE_OPTS
     "-DLIBXML2_FOUND=TRUE"
 )
 
-# Same trick for pthreads-win32 — many SDR libs ship a bundled FindThreads.cmake
-# that gates on THREADS_PTHREADS_WIN32_LIBRARY on Windows. We build pthreads4w
-# above; pre-feed its install paths so every recipe finds it.
-if (WIN32)
-    set(_pthreads_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include")
-    set(_pthreads_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/pthreadVC3.lib")
-    list(APPEND DEP_CMAKE_OPTS
-        "-DTHREADS_PTHREADS_INCLUDE_DIR=${_pthreads_inc}"
-        "-DTHREADS_PTHREADS_WIN32_LIBRARY=${_pthreads_lib}"
-    )
-endif ()
-
 # Android has system pthreads in Bionic. When cross-compiling, FindThreads
 # cannot run its probe binary, so pre-feed the compiler flag used by the
 # Android toolchain instead of building or linking a separate pthreads library.
 if (ANDROID)
     list(APPEND DEP_CMAKE_OPTS
         "-DTHREADS_PTHREAD_ARG=-pthread"
+    )
+endif ()
+
+# pthreads4w (Windows only) — Windows sibling forks read pthreads paths
+# through two incompatible bundled find modules: the libairspy / libairspyhf
+# / libhackrf / libhydrasdr / libmirisdr forks use CMake's FindThreads style
+# (THREADS_PTHREADS_*), while libbladeRF uses its own FindLibPThreadsWin32
+# style (LIBPTHREADSWIN32_* + PTHREAD_LIBRARY / PTHREAD_DLL, plus a COPYING.LIB
+# sentinel under LIBPTHREADSWIN32_PATH that +pthreads/pthreads.cmake stubs).
+# Pre-feed both naming schemes here against the layout that pthreads.cmake
+# installs; the args are harmless cache entries to deps that don't read them.
+if (WIN32)
+    set(_pthreads4w_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include")
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(_pthreads4w_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/pthreadVC3d.lib")
+        set(_pthreads4w_dll "${SDRPP_DEPS_INSTALL_PREFIX}/bin/pthreadVC3d.dll")
+    else ()
+        set(_pthreads4w_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/pthreadVC3.lib")
+        set(_pthreads4w_dll "${SDRPP_DEPS_INSTALL_PREFIX}/bin/pthreadVC3.dll")
+    endif ()
+    list(APPEND DEP_CMAKE_OPTS
+        # FindThreads style (libairspy, libairspyhf, libhackrf, libhydrasdr, libmirisdr)
+        "-DTHREADS_PTHREADS_INCLUDE_DIR=${_pthreads4w_inc}"
+        "-DTHREADS_PTHREADS_WIN32_LIBRARY=${_pthreads4w_lib}"
+        # FindLibPThreadsWin32 style (libbladeRF)
+        "-DLIBPTHREADSWIN32_PATH=${SDRPP_DEPS_COMPAT_DIR}/pthreads-win32"
+        "-DLIBPTHREADSWIN32_FOUND=TRUE"
+        "-DLIBPTHREADSWIN32_HEADER_FILE=${_pthreads4w_inc}/pthread.h"
+        "-DPTHREAD_LIBRARY=${_pthreads4w_lib}"
+        "-DPTHREAD_DLL=${_pthreads4w_dll}"
     )
 endif ()
 

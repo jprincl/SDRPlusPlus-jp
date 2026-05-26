@@ -1,6 +1,11 @@
 #
 # libbladeRF — Nuand bladeRF driver. CMake project lives in host/.
 #
+# Windows pthreads4w paths (the LIBPTHREADSWIN32_* / PTHREAD_LIBRARY /
+# PTHREAD_DLL names libbladeRF's bundled FindLibPThreadsWin32.cmake reads,
+# plus the COPYING.LIB-sentinel compat dir) are pre-fed centrally from
+# deps/CMakeLists.txt — nothing pthreads-specific to wire here.
+#
 add_cmake_project(libbladeRF
     GIT_REPOSITORY https://github.com/Nuand/bladeRF
     GIT_TAG        libbladeRF_v2.5.0
@@ -15,23 +20,16 @@ add_cmake_project(libbladeRF
         -DTREAT_WARNINGS_AS_ERRORS=OFF
         -DBUILD_DOCUMENTATION=OFF
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-        # Pre-set the cache variables that libbladeRF's bundled
-        # FindLibPThreadsWin32.cmake uses. The module expects an old
-        # pthreads-win32 v2 root containing COPYING.LIB, so point that root at
-        # a build-tree compatibility shim while feeding the real pthreads4w
-        # header, library, and DLL from the installed dependency prefix.
-        -DLIBPTHREADSWIN32_PATH=${SDRPP_DEPS_COMPAT_DIR}/pthreads-win32
-        -DLIBPTHREADSWIN32_FOUND=TRUE
-        -DLIBPTHREADSWIN32_HEADER_FILE=${SDRPP_DEPS_INSTALL_PREFIX}/include/pthread.h
-        -DPTHREAD_LIBRARY=${SDRPP_DEPS_INSTALL_PREFIX}/lib/pthreadVC3.lib
-        -DPTHREAD_DLL=${SDRPP_DEPS_INSTALL_PREFIX}/bin/pthreadVC3.dll
         # Point libbladeRF's FindLibUSB at our install prefix so its DLL-copy
         # custom command can locate libusb-1.0.dll. The suffix is patched to
         # 'bin' (see patch_libbladerf.cmake) to match our destdir layout.
         -DLIBUSB_PATH=${SDRPP_DEPS_INSTALL_PREFIX}
 )
 
-set(DEP_libbladeRF_DEPENDS libusb pthreads)
+set(DEP_libbladeRF_DEPENDS libusb)
+if (WIN32)
+    list(APPEND DEP_libbladeRF_DEPENDS pthreads)
+endif ()
 
 # libbladeRF's host/CMakeLists.txt installs the runtime DLL into lib/ instead
 # of bin/ on Windows. Mirror it into bin/ post-install so the imported-config
