@@ -12,6 +12,14 @@
 #   2. Appends install rules — upstream ships none, so cmake --target install
 #      would otherwise fail with "unknown target 'install'".
 #
+# Patches libperseus-sdr's src/perseus-sdr.h:
+#   3. Fixes the dbgprintf / errorset variadic macros: upstream writes
+#      `format, __VA_ARGS__`, which leaves a trailing comma when callers
+#      pass no variadic args (e.g. errorset(PERSEUS_NOMEM, "can't alloc")).
+#      Modern GCC rejects this as "expected expression before ')'". Switch
+#      to the GCC/Clang/MSVC-supported `, ##__VA_ARGS__` form which swallows
+#      the comma when __VA_ARGS__ is empty.
+#
 
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_helpers.cmake)
 
@@ -44,3 +52,17 @@ install(FILES
 endif ()
 
 file(WRITE "${_f}" "${_content}")
+
+# --- Patch 3: fix variadic-macro trailing-comma in perseus-sdr.h ---
+set(_h "${SRC}/src/perseus-sdr.h")
+file(READ "${_h}" _hcontent)
+
+patch_replace_or_fail(_hcontent
+    "fprintf(stderr, format, __VA_ARGS__)"
+    "fprintf(stderr, format, ##__VA_ARGS__)")
+
+patch_replace_or_fail(_hcontent
+    "snprintf(perseus_error_str, sizeof(perseus_error_str) - 1, format, __VA_ARGS__)"
+    "snprintf(perseus_error_str, sizeof(perseus_error_str) - 1, format, ##__VA_ARGS__)")
+
+file(WRITE "${_h}" "${_hcontent}")
