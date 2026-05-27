@@ -20,7 +20,16 @@ foreach (_dir IN LISTS _artifact_dirs)
         continue()
     endif ()
     file(GLOB _dir_dll_files "${_dir}/*.dll")
-    file(GLOB _dir_lib_files "${_dir}/*.lib" "${_dir}/*.so" "${_dir}/*.so.*")
+    # Match every plausible library artifact, regardless of profile:
+    #   *.lib                — MSVC import or static lib
+    #   *.so / *.so.*        — Linux shared (versioned and unversioned)
+    #   *.a                  — UNIX static archive (static dep policy)
+    #   *.dylib / *.dylib.*  — macOS shared (versioned and unversioned)
+    file(GLOB _dir_lib_files
+        "${_dir}/*.lib"
+        "${_dir}/*.so" "${_dir}/*.so.*"
+        "${_dir}/*.a"
+        "${_dir}/*.dylib" "${_dir}/*.dylib.*")
     file(GLOB _dir_pdb_files "${_dir}/*.pdb")
     list(APPEND _dll_files ${_dir_dll_files})
     list(APPEND _lib_files ${_dir_lib_files})
