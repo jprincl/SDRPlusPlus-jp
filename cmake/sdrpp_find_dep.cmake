@@ -174,10 +174,19 @@ function(sdrpp_link_dep target pkg)
 
     _sdrpp_link_dep_collect_prefix_hints(_prefix_hints)
 
+    # System-sourced deps (e.g. libcurl on distro profiles) intentionally live
+    # outside the deps install prefix — they come from the host packages. The
+    # strict step-1 gate below must not fire for them; fall through to the
+    # system Config.cmake / pkg-config branches instead.
+    set(_is_system FALSE)
+    if (COMMAND sdrpp_dep_is_system)
+        sdrpp_dep_is_system(${pkg} _is_system)
+    endif ()
+
     # Step 1 - require Config.cmake from the deps / SDR kit prefixes when
     # explicit prefixes were provided. Falling through would let host system
     # packages or pkg-config mask a broken bundled dependency install.
-    if (_prefix_hints)
+    if (_prefix_hints AND NOT _is_system)
         find_package(${_package} CONFIG QUIET PATHS ${_prefix_hints} NO_DEFAULT_PATH)
     endif ()
     foreach (t ${_targets})
@@ -187,7 +196,7 @@ function(sdrpp_link_dep target pkg)
             return()
         endif ()
     endforeach ()
-    if (_prefix_hints)
+    if (_prefix_hints AND NOT _is_system)
         message(FATAL_ERROR
             "sdrpp_link_dep(${target} ${pkg}) could not resolve ${pkg}: "
             "find_package(${_package} CONFIG) found no target matching [${_targets}] in SDR_KIT_ROOT/CMAKE_PREFIX_PATH. "
@@ -213,7 +222,9 @@ function(sdrpp_link_dep target pkg)
         endif ()
     endforeach ()
 
-    # Step 3 - pkg-config on Unix desktop builds without explicit prefixes.
+    # Step 3 - pkg-config on Unix desktop builds. Reached when no explicit
+    # prefixes were provided, or the dep is system-sourced (the deps prefix
+    # intentionally doesn't carry it).
     find_package(PkgConfig QUIET)
     if (NOT PkgConfig_FOUND)
         message(FATAL_ERROR "sdrpp_link_dep(${target} ${pkg}) could not resolve ${pkg}: find_package(${_package} CONFIG) found no target matching [${_targets}] and pkg-config is unavailable.")
