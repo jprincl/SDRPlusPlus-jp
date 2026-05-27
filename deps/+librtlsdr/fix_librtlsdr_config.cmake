@@ -27,7 +27,14 @@ find_package(libusb CONFIG REQUIRED PATHS "${_root}" NO_DEFAULT_PATH)
 
 if (NOT TARGET rtlsdr::rtlsdr_static)
     add_library(rtlsdr::rtlsdr_static STATIC IMPORTED)
-    find_library(_rtlsdr_static_imp NAMES rtlsdr_static HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH ${_sdrpp_no_cache})
+    set(_rtlsdr_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
+    if (WIN32)
+        find_library(_rtlsdr_static_imp NAMES rtlsdr_static HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH ${_sdrpp_no_cache})
+    else ()
+        set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+        find_library(_rtlsdr_static_imp NAMES rtlsdr_static rtlsdr HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH ${_sdrpp_no_cache})
+    endif ()
+    set(CMAKE_FIND_LIBRARY_SUFFIXES "${_rtlsdr_saved_suffixes}")
     find_path(_rtlsdr_inc "rtl-sdr.h" HINTS "${_root}/include" NO_DEFAULT_PATH ${_sdrpp_no_cache})
     set_target_properties(rtlsdr::rtlsdr_static PROPERTIES
         IMPORTED_LOCATION "${_rtlsdr_static_imp}"
