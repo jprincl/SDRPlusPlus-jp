@@ -81,6 +81,13 @@ endfunction()
 set(_errors "")
 
 # 1. Library file (.lib/.a/.so/.dylib).
+# On UNIX, some upstreams (zlib) install both shared and static variants under
+# the same basename (libz.dylib + libz.a). The default suffix order on macOS
+# prefers .dylib, so a static-policy validation would silently latch onto the
+# shared lib. Restrict to .a when SHARED=0 to keep the linkage choice honest.
+if (NOT WIN AND NOT SHARED)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+endif ()
 unset(_lib CACHE)
 find_library(_lib NAMES ${LIB_NAMES}
     HINTS "${PREFIX}/lib" "${PREFIX}/bin"

@@ -157,6 +157,17 @@ function(add_cmake_project projectname)
         # forwards BUILD_SHARED_LIBS in its own CMAKE_ARGS.
         -DBUILD_SHARED_LIBS:BOOL=${_project_build_shared_libs})
 
+    # If policy resolved this dep to a system-provided source (e.g. distro
+    # builds taking glfw3 from libglfw3-dev), define the ExternalProject target
+    # for graph-completeness but keep it out of the default ALL build — we'll
+    # find_package() it against the host instead. Without this, ExternalProject
+    # builds it anyway and trips over build-time deps (Wayland/xkbcommon) the
+    # host package already encapsulates.
+    set(_exclude_from_all FALSE)
+    if (_policy_SOURCE STREQUAL "system")
+        set(_exclude_from_all TRUE)
+    endif ()
+
     set(_source_dir "<SOURCE_DIR>")
     if (P_ARGS_SOURCE_SUBDIR)
         set(_source_dir "<SOURCE_DIR>/${P_ARGS_SOURCE_SUBDIR}")
@@ -197,6 +208,7 @@ function(add_cmake_project projectname)
         INSTALL_DIR     ${SDRPP_DEPS_INSTALL_PREFIX}
         DOWNLOAD_DIR    ${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}/${projectname}
         BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/builds/${projectname}
+        EXCLUDE_FROM_ALL ${_exclude_from_all}
         ${_source_subdir_arg}
         ${P_ARGS_UNPARSED_ARGUMENTS}
         CONFIGURE_COMMAND ${_configure_command}
