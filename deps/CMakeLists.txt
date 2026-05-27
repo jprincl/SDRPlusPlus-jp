@@ -130,48 +130,58 @@ else ()
 endif ()
 
 # Many SDR libraries ship their own FindLIBUSB.cmake or call pkg_check_modules
-# for libusb-1.0, with no fallback to find_package(libusb CONFIG). Pre-feed
-# the variables they expect, computed against our deps install prefix, so
-# every sub-build can locate the libusb we built ourselves without needing
-# pkg-config on the host. The override is harmless to libs that don't use it.
-set(_libusb_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include/libusb-1.0")
-if (WIN32)
-    set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/usb-1.0.lib")
-elseif (APPLE)
-    set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libusb-1.0.dylib")
-else ()
-    set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libusb-1.0.so")
+# for libusb-1.0, with no fallback to find_package(libusb CONFIG). When we
+# build libusb ourselves (bundled policy), pre-feed the variables they expect
+# against our deps install prefix so every sub-build can locate it without
+# needing pkg-config on the host. When libusb is system-provided (distro
+# profile), skip the override — destdir doesn't contain libusb, and the host
+# has pkg-config available to discover the real system paths.
+sdrpp_dep_is_system(libusb _libusb_is_system)
+if (NOT _libusb_is_system)
+    set(_libusb_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include/libusb-1.0")
+    if (WIN32)
+        set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/usb-1.0.lib")
+    elseif (APPLE)
+        set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libusb-1.0.dylib")
+    else ()
+        set(_libusb_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libusb-1.0.so")
+    endif ()
+    list(APPEND DEP_CMAKE_OPTS
+        # singular forms (FindLIBUSB.cmake convention used by libairspy/airspyhf/
+        # hackrf/perseus and most SDR forks)
+        "-DLIBUSB_INCLUDE_DIR=${_libusb_inc}"
+        "-DLIBUSB_LIBRARY=${_libusb_lib}"
+        # plural forms (libiio convention via pkg_check_modules result vars)
+        "-DLIBUSB_INCLUDE_DIRS=${_libusb_inc}"
+        "-DLIBUSB_LIBRARIES=${_libusb_lib}"
+        "-DLIBUSB_FOUND=TRUE"
+        "-DLIBUSB_VERSION=1.0.27"
+    )
 endif ()
-list(APPEND DEP_CMAKE_OPTS
-    # singular forms (FindLIBUSB.cmake convention used by libairspy/airspyhf/
-    # hackrf/perseus and most SDR forks)
-    "-DLIBUSB_INCLUDE_DIR=${_libusb_inc}"
-    "-DLIBUSB_LIBRARY=${_libusb_lib}"
-    # plural forms (libiio convention via pkg_check_modules result vars)
-    "-DLIBUSB_INCLUDE_DIRS=${_libusb_inc}"
-    "-DLIBUSB_LIBRARIES=${_libusb_lib}"
-    "-DLIBUSB_FOUND=TRUE"
-    "-DLIBUSB_VERSION=1.0.27"
-)
 
 # libiio v0.24 uses CMake's FindLibXml2 module and does not reliably pick up
 # the libxml2 Config package from the cross-built prefix. Feed the legacy
-# module variables directly, matching the libusb/fftw override style above.
-set(_libxml2_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include/libxml2")
-if (WIN32)
-    set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.lib")
-elseif (APPLE)
-    set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.dylib")
-else ()
-    set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.so")
+# module variables directly, matching the libusb override style above — but
+# only when libxml2 is bundled. On distro builds libxml2 is system-provided,
+# so let dep recipes discover it through find_package / pkg-config naturally.
+sdrpp_dep_is_system(libxml2 _libxml2_is_system)
+if (NOT _libxml2_is_system)
+    set(_libxml2_inc "${SDRPP_DEPS_INSTALL_PREFIX}/include/libxml2")
+    if (WIN32)
+        set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.lib")
+    elseif (APPLE)
+        set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.dylib")
+    else ()
+        set(_libxml2_lib "${SDRPP_DEPS_INSTALL_PREFIX}/lib/libxml2.so")
+    endif ()
+    list(APPEND DEP_CMAKE_OPTS
+        "-DLIBXML2_INCLUDE_DIR=${_libxml2_inc}"
+        "-DLIBXML2_INCLUDE_DIRS=${_libxml2_inc}"
+        "-DLIBXML2_LIBRARY=${_libxml2_lib}"
+        "-DLIBXML2_LIBRARIES=${_libxml2_lib}"
+        "-DLIBXML2_FOUND=TRUE"
+    )
 endif ()
-list(APPEND DEP_CMAKE_OPTS
-    "-DLIBXML2_INCLUDE_DIR=${_libxml2_inc}"
-    "-DLIBXML2_INCLUDE_DIRS=${_libxml2_inc}"
-    "-DLIBXML2_LIBRARY=${_libxml2_lib}"
-    "-DLIBXML2_LIBRARIES=${_libxml2_lib}"
-    "-DLIBXML2_FOUND=TRUE"
-)
 
 # Android has system pthreads in Bionic. When cross-compiling, FindThreads
 # cannot run its probe binary, so pre-feed the compiler flag used by the

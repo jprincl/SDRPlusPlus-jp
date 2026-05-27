@@ -39,8 +39,12 @@ string(REGEX REPLACE
     _content "${_content}")
 
 set(_stub "
-# >>> SDR++ deps build: stub PkgConfig::libusb when pkg-config isn't available
-if (NOT TARGET PkgConfig::libusb)
+# >>> SDR++ deps build: stub PkgConfig::libusb when pkg-config isn't available.
+# Only fires when our deps tree has populated the override vars (bundled libusb
+# path). When libusb is system-provided, LIBUSB_INCLUDE_DIR / LIBUSB_LIBRARY are
+# empty — skip the stub so the subsequent pkg_check_modules() can populate the
+# target from the host's pkg-config with the correct system paths.
+if (NOT TARGET PkgConfig::libusb AND LIBUSB_INCLUDE_DIR AND LIBUSB_LIBRARY)
     add_library(PkgConfig::libusb INTERFACE IMPORTED)
     set_target_properties(PkgConfig::libusb PROPERTIES
         INTERFACE_LINK_LIBRARIES \"\${LIBUSB_LIBRARY}\"
