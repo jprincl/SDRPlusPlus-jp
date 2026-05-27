@@ -121,21 +121,12 @@ elseif (UNIX AND NOT APPLE)
                 ${_sdrplay_7z} x -y -o${_sdrplay_scratch}
                     ${_sdrplay_scratch}/${_sdrplay_run_basename}
             COMMAND
-                ${CMAKE_COMMAND} -E make_directory ${_prefix}/lib
-            COMMAND
-                ${CMAKE_COMMAND} -E make_directory ${_prefix}/include/SDRplay
-            COMMAND
-                ${CMAKE_COMMAND} -E copy
-                    ${_sdrplay_scratch}/${_sdrplay_arch_dir}/${_sdrplay_so_versioned}
-                    ${_prefix}/lib/${_sdrplay_so_versioned}
-            COMMAND
-                ${CMAKE_COMMAND} -E create_symlink
-                    ${_sdrplay_so_versioned}
-                    ${_prefix}/lib/libsdrplay_api.so
-            COMMAND
-                ${CMAKE_COMMAND} -E copy_directory
-                    ${_sdrplay_scratch}/inc
-                    ${_prefix}/include/SDRplay
+                ${CMAKE_COMMAND}
+                    -DSCRATCH=${_sdrplay_scratch}
+                    -DARCH=${_sdrplay_arch_dir}
+                    -DPREFIX=${_prefix}
+                    -DSO_VERSIONED=${_sdrplay_so_versioned}
+                    -P ${CMAKE_CURRENT_LIST_DIR}/install_linux.cmake
         USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
     )
 else ()

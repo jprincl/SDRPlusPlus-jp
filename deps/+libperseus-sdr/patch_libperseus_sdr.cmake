@@ -20,6 +20,13 @@
 #      to the GCC/Clang/MSVC-supported `, ##__VA_ARGS__` form which swallows
 #      the comma when __VA_ARGS__ is empty.
 #
+# Patches libperseus-sdr's CMakeLists.txt (continued):
+#   4. Gates the pkg_check_modules(libusb-1.0) call on LIBUSB not already
+#      being resolved by the caller. The parent autobuild passes
+#      -DLIBUSB_INCLUDE_DIRS / -DLIBUSB_LIBRARIES / -DLIBUSB_FOUND when libusb
+#      is built as a bundled dep (no system .pc file), but upstream's
+#      unconditional pkg_check_modules ignores those and fails the configure.
+#
 
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_helpers.cmake)
 
@@ -30,6 +37,16 @@ file(READ "${_f}" _content)
 patch_replace_or_fail(_content
     "add_library(perseus-sdr SHARED \${SRC})"
     "add_library(perseus-sdr \${SRC})")
+
+# --- Patch 4: skip pkg_check_modules when LIBUSB is pre-resolved by parent ---
+patch_replace_or_fail(_content
+    "    find_package(PkgConfig)
+
+    pkg_check_modules(LIBUSB REQUIRED libusb-1.0)"
+    "    if (NOT LIBUSB_FOUND)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+    endif ()")
 
 # --- Patch 2: append install rules (upstream has none) ---
 # Idempotency via marker — patch_replace_or_fail can't help here because this
