@@ -243,7 +243,9 @@ function(_normalize_path out_var path)
         return()
     endif ()
     file(TO_CMAKE_PATH "${path}" _path)
-    get_filename_component(_path "${_path}" ABSOLUTE)
+    # REALPATH (not ABSOLUTE) so versioned ELF symlinks resolve to their target:
+    # find_library returns libfoo.so, the imported target points at libfoo.so.X.Y.
+    get_filename_component(_path "${_path}" REALPATH)
     set(${out_var} "${_path}" PARENT_SCOPE)
 endfunction()
 
