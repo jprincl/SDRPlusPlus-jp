@@ -89,13 +89,34 @@ endif ()
 
 _sdrpp_trace_log("ENTER" "")
 _sdrpp_trace_normalize_windows_path_env()
+# Capture stdout/stderr instead of inheriting parent pipes. Under parallel
+# make (-j>1) the child's output can land far above the failure marker —
+# sometimes scrolled off, sometimes interleaved past recognition. Capturing
+# lets us re-emit the output adjacent to the FATAL_ERROR below, so the real
+# cause is always next to the failure label in the CI log. The captured
+# bytes are also echoed on success so live progress isn't lost.
 execute_process(
     COMMAND ${_cmd}
     WORKING_DIRECTORY "${SDRPP_TRACE_WORKING_DIRECTORY}"
+    OUTPUT_VARIABLE _child_stdout
+    ERROR_VARIABLE  _child_stderr
     RESULT_VARIABLE _result)
 _sdrpp_trace_log("EXIT" "result=${_result}")
 
 if (NOT _result EQUAL 0)
+    message("----- ${SDRPP_TRACE_LABEL} stdout -----")
+endif ()
+if (NOT "${_child_stdout}" STREQUAL "")
+    message("${_child_stdout}")
+endif ()
+if (NOT _result EQUAL 0)
+    message("----- ${SDRPP_TRACE_LABEL} stderr -----")
+endif ()
+if (NOT "${_child_stderr}" STREQUAL "")
+    message("${_child_stderr}")
+endif ()
+if (NOT _result EQUAL 0)
+    message("---------------------------------------")
     string(REPLACE ";" " " _cmd_pretty "${_cmd}")
     message(FATAL_ERROR "sdrpp_trace_command: '${SDRPP_TRACE_LABEL}' failed with ${_result}: ${_cmd_pretty}")
 endif ()
