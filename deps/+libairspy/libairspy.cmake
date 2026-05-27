@@ -32,7 +32,12 @@ endif ()
 # depending on the version. Ours wins on our prefix and is self-relative.
 sdrpp_emit_imported_config(libairspy
     LIB_NAMES        airspy
-    STATIC_LIB_NAMES airspy_static
+    # Upstream's static target is named `airspy_static` and installs with that
+    # name on Windows (so the import lib `airspy.lib` and the static archive
+    # don't collide). On UNIX the same target overrides OUTPUT_NAME back to
+    # `airspy`, producing `libairspy.a` alongside `libairspy.so*`. List both
+    # basenames so find_library matches either install layout.
+    STATIC_LIB_NAMES airspy_static airspy
     SHARED_LIB_NAMES airspy
     DLL_NAMES        airspy.dll
     HEADER           airspy.h

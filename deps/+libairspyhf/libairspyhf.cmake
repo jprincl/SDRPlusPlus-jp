@@ -30,7 +30,11 @@ endif ()
 
 sdrpp_emit_imported_config(libairspyhf
     LIB_NAMES        airspyhf
-    STATIC_LIB_NAMES airspyhf_static
+    # Upstream's static target keeps the `_static` suffix on Windows but
+    # overrides OUTPUT_NAME back to `airspyhf` on UNIX, producing
+    # `libairspyhf.a` alongside `libairspyhf.so*`. List both basenames so
+    # find_library matches either install layout.
+    STATIC_LIB_NAMES airspyhf_static airspyhf
     SHARED_LIB_NAMES airspyhf
     DLL_NAMES        airspyhf.dll
     HEADER           airspyhf.h

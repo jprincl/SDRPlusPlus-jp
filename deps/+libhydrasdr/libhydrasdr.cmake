@@ -33,7 +33,12 @@ endif ()
 
 sdrpp_emit_imported_config(libhydrasdr
     LIB_NAMES        hydrasdr
-    STATIC_LIB_NAMES hydrasdr_static
+    # Upstream's static target is named `hydrasdr_static` and installs with
+    # that name on Windows (so the import lib `hydrasdr.lib` and the static
+    # archive don't collide). On UNIX the same target overrides OUTPUT_NAME
+    # back to `hydrasdr`, producing `libhydrasdr.a` alongside `libhydrasdr.so*`.
+    # List both basenames so find_library matches either install layout.
+    STATIC_LIB_NAMES hydrasdr_static hydrasdr
     SHARED_LIB_NAMES hydrasdr
     DLL_NAMES        hydrasdr.dll
     HEADER           hydrasdr.h

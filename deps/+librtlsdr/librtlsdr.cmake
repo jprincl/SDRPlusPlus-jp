@@ -25,7 +25,11 @@ sdrpp_validate_dep(librtlsdr
     STATIC_TARGET    rtlsdr::rtlsdr_static
     SHARED_TARGET    rtlsdr::rtlsdr
     LIB_NAMES        rtlsdr
-    STATIC_LIB_NAMES rtlsdr_static
+    # Upstream's static target keeps the `_static` suffix on Windows but
+    # overrides OUTPUT_NAME back to `rtlsdr` on UNIX, producing `librtlsdr.a`
+    # alongside `librtlsdr.so*`. List both basenames so find_library matches
+    # either install layout.
+    STATIC_LIB_NAMES rtlsdr_static rtlsdr
     SHARED_LIB_NAMES rtlsdr
     DLL_NAMES        rtlsdr.dll
     HEADER           rtl-sdr.h
