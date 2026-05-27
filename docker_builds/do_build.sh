@@ -21,6 +21,22 @@ apt-get -o Acquire::Retries=3 install -y build-essential cmake git pkg-config li
     libiio-dev libad9361-dev librtaudio-dev libhackrf-dev librtlsdr-dev libbladerf-dev liblimesuite-dev p7zip-full wget portaudio19-dev \
     libcodec2-dev autoconf libtool xxd libspdlog-dev ${EXTRA_APT}
 
+# Older base images (Debian bullseye, Ubuntu focal) ship a cmake too old for
+# the --preset CLI (3.19+) and CMakePresets v3 (3.21+) that deps/ relies on.
+# Pull a current cmake from PyPI when apt's is too old. PEP 668 isn't enforced
+# on these distros so a plain `pip install` is fine.
+CMAKE_VER=$(cmake --version 2>/dev/null | head -n1 | awk '{print $3}')
+if [ -n "$CMAKE_VER" ]; then
+    CMAKE_MAJOR=$(echo "$CMAKE_VER" | cut -d. -f1)
+    CMAKE_MINOR=$(echo "$CMAKE_VER" | cut -d. -f2)
+    if [ "$CMAKE_MAJOR" -lt 3 ] || { [ "$CMAKE_MAJOR" -eq 3 ] && [ "$CMAKE_MINOR" -lt 21 ]; }; then
+        echo "apt cmake $CMAKE_VER is too old for deps/ presets; upgrading via pip"
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends python3-pip
+        python3 -m pip install --no-cache-dir cmake
+        hash -r
+    fi
+fi
+
 # Allow git commands on the volume-mounted repo (git ≥ 2.35.2 safe.directory check)
 git config --global --add safe.directory /root/SDRPlusPlus
 
