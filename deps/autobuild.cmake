@@ -101,26 +101,29 @@ list(APPEND _deps_configure_cmd -B "${_build_dir}" ${_build_args})
 sdrpp_wrap_traced_command(_deps_configure_cmd "root:deps-configure" "${_deps_src_dir}" NO_SERIALIZE ${_deps_configure_cmd})
 sdrpp_wrap_traced_command(_deps_build_cmd "root:deps-build" "${_build_dir}" NO_SERIALIZE ${_deps_build_cmd})
 
+# Let stdout/stderr stream live to the parent process. Capturing stderr into
+# a variable (the prior approach) buffers the entire child build and only
+# dumps it at the end inside the FATAL_ERROR body, where CI log viewers
+# truncate the head — i.e. exactly where the real error lives. Streaming
+# keeps the failure visible in context as it happens.
 execute_process(
     COMMAND ${_deps_configure_cmd}
     WORKING_DIRECTORY ${_deps_src_dir}
     ${_output_quiet}
-    ERROR_VARIABLE _deps_configure_output
     RESULT_VARIABLE _deps_configure_result
 )
 if (NOT _deps_configure_result EQUAL 0)
-    message(FATAL_ERROR "Dependency configure failed:\n${_deps_configure_output}")
+    message(FATAL_ERROR "Dependency configure failed (see output above)")
 endif ()
 
 execute_process(
     COMMAND ${_deps_build_cmd}
     WORKING_DIRECTORY ${_build_dir}
     ${_output_quiet}
-    ERROR_VARIABLE _deps_build_output
     RESULT_VARIABLE _deps_build_result
 )
 if (NOT _deps_build_result EQUAL 0)
-    message(FATAL_ERROR "Dependency build failed:\n${_deps_build_output}")
+    message(FATAL_ERROR "Dependency build failed (see output above)")
 endif ()
 
 set(_deps_install_prefix "${_build_dir}/destdir/usr/local")

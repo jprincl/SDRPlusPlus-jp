@@ -24,6 +24,18 @@ add_cmake_project(libiio
         -DWITH_USB_BACKEND=${_libiio_usb_backend}
         -DWITH_NETWORK_BACKEND=ON
         -DHAVE_DNS_SD=OFF
+        # SDR++ uses libiio purely as a client library. On Linux, libiio
+        # defaults WITH_IIOD=ON, which pulls in the IIO daemon and its
+        # flex/bison-generated parser — extra host build deps we don't want
+        # to require for a portable AppImage. Disable the daemon explicitly.
+        -DWITH_IIOD=OFF
+        # On Darwin, libiio's CMakeLists defaults OSX_FRAMEWORK + OSX_PACKAGE
+        # to ON, which sets SKIP_INSTALL_ALL=ON and routes install into a
+        # /Library/Frameworks .pkg instead of CMAKE_INSTALL_PREFIX. Disable
+        # both so the standard install(TARGETS iio ...) drops libiio.dylib +
+        # iio.h under our destdir like every other dep.
+        -DOSX_FRAMEWORK=OFF
+        -DOSX_PACKAGE=OFF
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
 
