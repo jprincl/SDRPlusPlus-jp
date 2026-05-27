@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # generic build tools).
 RUN apt-get -o Acquire::Retries=3 update && \
     apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
-        build-essential cmake git pkg-config ca-certificates \
+        build-essential git pkg-config ca-certificates \
         python3 python3-pip \
         wget unzip p7zip-full file patchelf xxd \
         autoconf automake libtool \
@@ -17,7 +17,10 @@ RUN apt-get -o Acquire::Retries=3 update && \
         libssl-dev liborc-0.4-dev && \
     rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir mako
+# Focal's apt cmake (3.16) predates `cmake --preset` (needs 3.19+) and
+# CMakePresets v3 (needs 3.21+), both of which deps/ relies on. Pull a current
+# cmake from PyPI — it installs to /usr/local/bin and shadows the apt one.
+RUN python3 -m pip install --no-cache-dir mako cmake
 
 # Install linuxdeploy and appimagetool for the host architecture.
 # Both ship as AppImages that need FUSE — inside Docker we extract them once.
