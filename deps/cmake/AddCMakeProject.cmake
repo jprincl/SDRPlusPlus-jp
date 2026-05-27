@@ -337,7 +337,29 @@ function(sdrpp_emit_imported_config name)
     endforeach ()
     string(APPEND _content "if (NOT TARGET ${_target})\n")
     string(APPEND _content "    add_library(${_target} ${_imported_type} IMPORTED)\n")
+    # When both static (.a) and shared (.so/.dylib) variants live in the same
+    # install dir, find_library's default suffix order (.so;.a on Linux,
+    # .dylib;.so;.a on macOS) picks shared first regardless of names — because
+    # it iterates suffixes for every name before moving to the next name. We
+    # need find_library to honor the policy-resolved linkage, so constrain
+    # CMAKE_FIND_LIBRARY_SUFFIXES around the call. Windows already uses .lib
+    # for both static and import libs, so the naming convention (e.g.
+    # *_static.lib) is what disambiguates there — leave the default suffix.
+    if (NOT _policy_BUILDS_SHARED)
+        string(APPEND _content "    set(_sdrpp_saved_suffixes \"\${CMAKE_FIND_LIBRARY_SUFFIXES}\")\n")
+        string(APPEND _content "    if (NOT WIN32)\n")
+        string(APPEND _content "        set(CMAKE_FIND_LIBRARY_SUFFIXES \".a\")\n")
+        string(APPEND _content "    endif ()\n")
+    else ()
+        string(APPEND _content "    set(_sdrpp_saved_suffixes \"\${CMAKE_FIND_LIBRARY_SUFFIXES}\")\n")
+        string(APPEND _content "    if (APPLE)\n")
+        string(APPEND _content "        set(CMAKE_FIND_LIBRARY_SUFFIXES \".dylib\")\n")
+        string(APPEND _content "    elseif (UNIX)\n")
+        string(APPEND _content "        set(CMAKE_FIND_LIBRARY_SUFFIXES \".so\")\n")
+        string(APPEND _content "    endif ()\n")
+    endif ()
     string(APPEND _content "    find_library(_${name}_imp NAMES ${_lib_names_str} HINTS \"\${_root}/lib\" \"\${_root}/bin\" NO_DEFAULT_PATH \${_sdrpp_no_cache})\n")
+    string(APPEND _content "    set(CMAKE_FIND_LIBRARY_SUFFIXES \"\${_sdrpp_saved_suffixes}\")\n")
     if (P_HEADER)
         string(APPEND _content "    find_path(_${name}_inc \"${P_HEADER}\" HINTS \"${_inc_dir}\" \"\${_root}/include\" NO_DEFAULT_PATH \${_sdrpp_no_cache})\n")
     endif ()
