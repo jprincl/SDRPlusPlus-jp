@@ -22,6 +22,7 @@ add_cmake_project(volk
 )
 
 sdrpp_validate_dep(volk
+    PACKAGE_NAME   Volk
     TARGET         Volk::volk
     LIB_NAMES      volk
     DLL_NAMES      volk.dll
