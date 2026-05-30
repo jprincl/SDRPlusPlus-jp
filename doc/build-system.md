@@ -337,6 +337,66 @@ If a package resolved to `static`, its imported target must not be emitted as a
 shared target. Otherwise the consumer side and the produced artifacts will drift
 out of sync.
 
+#### 7.4.1 Cross-toolchain root-path filtering (`NO_CMAKE_FIND_ROOT_PATH`)
+
+Cross-compilation toolchains restrict CMake's find commands to search only
+inside the cross-root. The Android NDK toolchain sets:
+
+- `CMAKE_FIND_ROOT_PATH = <NDK sysroot>` (plus Gradle's prefab dir when invoked
+  by the Android Gradle Plugin)
+- `CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = ONLY` (some NDK / AGP combinations)
+- `CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = ONLY`
+- `CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = ONLY`
+
+Under these modes the find commands ignore any path that is not a subtree of
+`CMAKE_FIND_ROOT_PATH`, **including paths passed explicitly via `PATHS` and
+`HINTS`**. The deps install prefix sits outside the NDK sysroot, so without
+intervention every `find_package`, `find_library`, `find_path`, and `find_file`
+that targets the deps prefix silently returns `-NOTFOUND`. Downstream symptoms:
+
+- `find_package(CURL CONFIG PATHS deps_prefix NO_DEFAULT_PATH)` reports the
+  package as not found even though `CURLConfig.cmake` exists at the path.
+- Emitted `<name>Config.cmake` files load successfully but populate the
+  imported target with `IMPORTED_LOCATION = "-NOTFOUND"` and
+  `INTERFACE_INCLUDE_DIRECTORIES = "_<name>_inc-NOTFOUND"`, which trips
+  CMake's generate-time validation that listed paths exist on disk.
+- The validator's CONFIG-target probe in `ValidateDepStep.cmake` (which
+  re-configures a tiny sub-project under the same toolchain) hits the same
+  filtering and falsely reports the install as broken.
+
+The fix is to add `NO_CMAKE_FIND_ROOT_PATH` to every find command that points
+at the deps prefix. This is a per-call opt-out from the root-path restriction
+and is a no-op on native toolchains where `CMAKE_FIND_ROOT_PATH` isn't set, so
+it's safe to apply unconditionally rather than gating on `if (ANDROID)`.
+
+Three places own the find calls and must all apply the flag consistently:
+
+| Location                                                              | Lookups covered                                                                          |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `cmake/sdrpp_find_dep.cmake` (consumer side, `sdrpp_link_dep`)        | the strict step-1 `find_package(<pkg> CONFIG PATHS deps_prefix NO_DEFAULT_PATH)`         |
+| `deps/cmake/ValidateDepStep.cmake` (validator probe)                  | the probe sub-project's `find_package(<pkg> CONFIG PATHS deps_prefix NO_DEFAULT_PATH)`   |
+| `deps/cmake/AddCMakeProject.cmake` (`sdrpp_emit_imported_config`)     | `find_package` for each `PACKAGE_DEPENDENCIES` entry, plus `find_library` / `find_path` / `find_file` that populate the imported target |
+| `deps/+librtlsdr/fix_librtlsdr_config.cmake` (custom Config rewriter) | every find call inside the hand-written rtlsdr Config (`find_package(libusb …)`, two `find_library`, two `find_path`, one Windows `find_file`) |
+
+Any new dep that ships its own custom Config rewriter (rather than going
+through `sdrpp_emit_imported_config`) must apply the same pattern.
+
+**Boundary:** this only applies to our own explicit lookups into the deps
+prefix. Upstream-provided Configs (e.g. curl's own `CURLConfig.cmake`) bake
+in their target paths at install time and do not call `find_library` /
+`find_path` at consume time, so they are unaffected and need no change. The
+NDK toolchain's restriction is correct for them — they should resolve through
+their own provenance, not through cross-root probes.
+
+**Why not centralize via `CMAKE_FIND_ROOT_PATH` extension?** An earlier
+attempt appended the deps prefix to `CMAKE_FIND_ROOT_PATH` in
+`deps/autobuild.cmake` so the toolchain restriction would naturally permit
+it. That didn't work in practice: the Android Gradle Plugin re-passes
+`CMAKE_FIND_ROOT_PATH` on every reconfigure with its prefab value, which
+overrides our append. Opting out per-call via `NO_CMAKE_FIND_ROOT_PATH`
+avoids the override problem entirely and keeps the toolchain's intended
+behavior for everything we don't explicitly point at.
+
 ### 7.5 `cmake/sdrpp_find_dep.cmake`
 
 This file is already close to the right consumer behavior for distro Linux:

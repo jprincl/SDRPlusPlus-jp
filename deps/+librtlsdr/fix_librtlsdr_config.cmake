@@ -23,19 +23,23 @@ else ()
     set(_sdrpp_no_cache "")
 endif ()
 
-find_package(libusb CONFIG REQUIRED PATHS "${_root}" NO_DEFAULT_PATH)
+# NO_CMAKE_FIND_ROOT_PATH on every find_* call bypasses cross-toolchain
+# root-path filtering (Android NDK restricts find_library / find_path /
+# find_package to the NDK sysroot, which doesn't contain our deps prefix).
+# No-op on native toolchains. Same rationale as deps/cmake/AddCMakeProject.cmake.
+find_package(libusb CONFIG REQUIRED PATHS "${_root}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 
 if (NOT TARGET rtlsdr::rtlsdr_static)
     add_library(rtlsdr::rtlsdr_static STATIC IMPORTED)
     set(_rtlsdr_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
     if (WIN32)
-        find_library(_rtlsdr_static_imp NAMES rtlsdr_static HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH ${_sdrpp_no_cache})
+        find_library(_rtlsdr_static_imp NAMES rtlsdr_static HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH ${_sdrpp_no_cache})
     else ()
         set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
-        find_library(_rtlsdr_static_imp NAMES rtlsdr_static rtlsdr HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH ${_sdrpp_no_cache})
+        find_library(_rtlsdr_static_imp NAMES rtlsdr_static rtlsdr HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH ${_sdrpp_no_cache})
     endif ()
     set(CMAKE_FIND_LIBRARY_SUFFIXES "${_rtlsdr_saved_suffixes}")
-    find_path(_rtlsdr_inc "rtl-sdr.h" HINTS "${_root}/include" NO_DEFAULT_PATH ${_sdrpp_no_cache})
+    find_path(_rtlsdr_inc "rtl-sdr.h" HINTS "${_root}/include" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH ${_sdrpp_no_cache})
     set_target_properties(rtlsdr::rtlsdr_static PROPERTIES
         IMPORTED_LOCATION "${_rtlsdr_static_imp}"
         INTERFACE_INCLUDE_DIRECTORIES "${_rtlsdr_inc}"
@@ -45,10 +49,10 @@ endif ()
 
 if (NOT TARGET rtlsdr::rtlsdr)
     add_library(rtlsdr::rtlsdr SHARED IMPORTED)
-    find_library(_rtlsdr_shared_imp NAMES rtlsdr HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH ${_sdrpp_no_cache})
-    find_path(_rtlsdr_inc "rtl-sdr.h" HINTS "${_root}/include" NO_DEFAULT_PATH ${_sdrpp_no_cache})
+    find_library(_rtlsdr_shared_imp NAMES rtlsdr HINTS "${_root}/lib" "${_root}/bin" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH ${_sdrpp_no_cache})
+    find_path(_rtlsdr_inc "rtl-sdr.h" HINTS "${_root}/include" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH ${_sdrpp_no_cache})
     if (WIN32)
-        find_file(_rtlsdr_shared_loc NAMES rtlsdr.dll HINTS "${_root}/bin" NO_DEFAULT_PATH ${_sdrpp_no_cache})
+        find_file(_rtlsdr_shared_loc NAMES rtlsdr.dll HINTS "${_root}/bin" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH ${_sdrpp_no_cache})
         set_target_properties(rtlsdr::rtlsdr PROPERTIES
             IMPORTED_LOCATION "${_rtlsdr_shared_loc}"
             IMPORTED_IMPLIB "${_rtlsdr_shared_imp}"

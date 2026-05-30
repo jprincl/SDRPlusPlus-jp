@@ -373,18 +373,26 @@ function(sdrpp_emit_imported_config name)
     # into the prefix (distro profile with source=system). The PATH_SUFFIXES
     # entry covers multi-arch system include dirs (/usr/include/libusb-1.0
     # etc.) when find_path falls through to defaults.
-    string(APPEND _content "    find_library(_${name}_imp NAMES ${_lib_names_str} HINTS \"\${_root}/lib\" \"\${_root}/bin\" \${_sdrpp_no_cache})\n")
+    #
+    # NO_CMAKE_FIND_ROOT_PATH bypasses cross-toolchain root-path filtering
+    # (Android NDK sets CMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY and
+    # CMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY, which would otherwise restrict
+    # find_library / find_path to the NDK sysroot and miss our deps prefix
+    # entirely, yielding IMPORTED_LOCATION="-NOTFOUND" and
+    # INTERFACE_INCLUDE_DIRECTORIES="_<name>_inc-NOTFOUND" on the imported
+    # target). No-op on native toolchains that don't set CMAKE_FIND_ROOT_PATH.
+    string(APPEND _content "    find_library(_${name}_imp NAMES ${_lib_names_str} HINTS \"\${_root}/lib\" \"\${_root}/bin\" NO_CMAKE_FIND_ROOT_PATH \${_sdrpp_no_cache})\n")
     string(APPEND _content "    set(CMAKE_FIND_LIBRARY_SUFFIXES \"\${_sdrpp_saved_suffixes}\")\n")
     if (P_HEADER)
         set(_path_suffixes_arg "")
         if (P_INCLUDE_SUBDIR)
             set(_path_suffixes_arg "PATH_SUFFIXES ${P_INCLUDE_SUBDIR}")
         endif ()
-        string(APPEND _content "    find_path(_${name}_inc \"${P_HEADER}\" HINTS \"${_inc_dir}\" \"\${_root}/include\" ${_path_suffixes_arg} \${_sdrpp_no_cache})\n")
+        string(APPEND _content "    find_path(_${name}_inc \"${P_HEADER}\" HINTS \"${_inc_dir}\" \"\${_root}/include\" ${_path_suffixes_arg} NO_CMAKE_FIND_ROOT_PATH \${_sdrpp_no_cache})\n")
     endif ()
     if (_policy_BUILDS_SHARED)
         string(APPEND _content "    if (WIN32)\n")
-        string(APPEND _content "        find_file(_${name}_loc NAMES ${_dll_names_str} HINTS \"\${_root}/bin\" NO_DEFAULT_PATH \${_sdrpp_no_cache})\n")
+        string(APPEND _content "        find_file(_${name}_loc NAMES ${_dll_names_str} HINTS \"\${_root}/bin\" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH \${_sdrpp_no_cache})\n")
         string(APPEND _content "        set_target_properties(${_target} PROPERTIES IMPORTED_LOCATION \"\${_${name}_loc}\" IMPORTED_IMPLIB \"\${_${name}_imp}\")\n")
         string(APPEND _content "    else ()\n")
         string(APPEND _content "        set_target_properties(${_target} PROPERTIES IMPORTED_LOCATION \"\${_${name}_imp}\")\n")
