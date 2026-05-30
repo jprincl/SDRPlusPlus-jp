@@ -107,6 +107,32 @@ option(USE_INTERNAL_LIBCORRECT "Use an internal version of libcorrect" ON)
 option(USE_BUNDLE_DEFAULTS "Set the default resource and module directories to the right ones for a MacOS .app" OFF)
 option(COPY_MSVC_REDISTRIBUTABLES "Copy over the Visual C++ Redistributable" OFF)
 
+# SDRplay distributes its API as a closed-source binary built only for desktop
+# x86/x86_64 Windows and Linux. Auto-disable on every other target so the
+# deps/+sdrplay recipe and the sdrplay_source plugin are skipped together —
+# both rely on the same OPT_BUILD_SDRPLAY_SOURCE flag, so flipping it OFF here
+# centralizes the policy for every entry point (CI scripts, dev builds, IDEs).
+if (OPT_BUILD_SDRPLAY_SOURCE)
+    set(_sdrplay_unsupported "")
+    if (ANDROID)
+        set(_sdrplay_unsupported "Android")
+    elseif (WIN32 AND (CMAKE_GENERATOR_PLATFORM MATCHES "^ARM64"
+                       OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|aarch64)"))
+        set(_sdrplay_unsupported "Windows on ARM64")
+    elseif (APPLE AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)"
+                       OR "arm64" IN_LIST CMAKE_OSX_ARCHITECTURES))
+        set(_sdrplay_unsupported "macOS on Apple Silicon")
+    elseif (UNIX AND NOT APPLE AND NOT ANDROID
+            AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|armv6|armv7)")
+        set(_sdrplay_unsupported "Linux ${CMAKE_SYSTEM_PROCESSOR}")
+    endif ()
+    if (_sdrplay_unsupported)
+        message(STATUS "SDRplay: no upstream binary available for ${_sdrplay_unsupported}; disabling OPT_BUILD_SDRPLAY_SOURCE")
+        set(OPT_BUILD_SDRPLAY_SOURCE OFF CACHE BOOL
+            "Build SDRplay Source Module (Dependencies: libsdrplay)" FORCE)
+    endif ()
+endif ()
+
 include(${CMAKE_SOURCE_DIR}/cmake/sdrpp_collect_required_deps.cmake)
 sdrpp_collect_required_dep_roots(_sdrpp_dep_root_packages_auto)
 if (SDRPP_DEP_ROOT_PACKAGES)
