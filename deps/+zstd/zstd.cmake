@@ -31,7 +31,7 @@ add_cmake_project(zstd
 sdrpp_validate_dep(zstd
     TARGET           ${_zstd_imported_target}
     LIB_NAMES        zstd zstd_static libzstd_static
-    STATIC_LIB_NAMES zstd_static libzstd_static
+    STATIC_LIB_NAMES zstd zstd_static libzstd_static
     SHARED_LIB_NAMES zstd
     DLL_NAMES        zstd.dll
     HEADER           zstd.h
