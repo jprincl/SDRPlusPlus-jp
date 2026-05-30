@@ -96,9 +96,14 @@ elseif (UNIX AND NOT APPLE)
 
     # The .so inside the installer is versioned major.minor (e.g. .so.3.15);
     # derive it from the installer version so a future SDRplay bump only needs
-    # to change _sdrplay_run_version above.
+    # to change _sdrplay_run_version above. The SONAME embedded in the .so is
+    # major-only (e.g. libsdrplay_api.so.3) — plugins linked against the API get
+    # that as their NEEDED entry, so we must publish a matching symlink for
+    # linuxdeploy/ldd to resolve at AppImage bundle time.
     string(REGEX MATCH "^([0-9]+\\.[0-9]+)" _sdrplay_so_mm "${_sdrplay_run_version}")
+    string(REGEX MATCH "^([0-9]+)" _sdrplay_so_major "${_sdrplay_run_version}")
     set(_sdrplay_so_versioned libsdrplay_api.so.${_sdrplay_so_mm})
+    set(_sdrplay_so_soname libsdrplay_api.so.${_sdrplay_so_major})
 
     set(_sdrplay_scratch ${CMAKE_CURRENT_BINARY_DIR}/sources/sdrplay/extracted)
 
@@ -126,6 +131,7 @@ elseif (UNIX AND NOT APPLE)
                     -DARCH=${_sdrplay_arch_dir}
                     -DPREFIX=${_prefix}
                     -DSO_VERSIONED=${_sdrplay_so_versioned}
+                    -DSO_SONAME=${_sdrplay_so_soname}
                     -P ${CMAKE_CURRENT_LIST_DIR}/install_linux.cmake
         USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
     )

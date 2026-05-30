@@ -9,7 +9,7 @@
 # by globbing under <scratch> and copy them into the deps prefix.
 #
 
-foreach (_var SCRATCH ARCH PREFIX SO_VERSIONED)
+foreach (_var SCRATCH ARCH PREFIX SO_VERSIONED SO_SONAME)
     if (NOT DEFINED ${_var})
         message(FATAL_ERROR "install_linux.cmake: ${_var} not set")
     endif ()
@@ -66,19 +66,22 @@ file(COPY "${_so_path}"
     DESTINATION "${PREFIX}/lib"
     FOLLOW_SYMLINK_CHAIN)
 
-# Recreate the linker-name symlink so find_library(sdrplay_api) resolves.
-set(_unversioned "${PREFIX}/lib/libsdrplay_api.so")
-file(REMOVE "${_unversioned}")
-if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.14)
-    file(CREATE_LINK "${SO_VERSIONED}" "${_unversioned}" SYMBOLIC)
-else ()
-    execute_process(
-        COMMAND ${CMAKE_COMMAND} -E create_symlink "${SO_VERSIONED}" "${_unversioned}"
-        RESULT_VARIABLE _ln_rc)
-    if (NOT _ln_rc EQUAL 0)
-        message(FATAL_ERROR "install_linux.cmake: failed to create symlink ${_unversioned} -> ${SO_VERSIONED}")
+# Recreate the linker-name symlink so find_library(sdrplay_api) resolves, and
+# the SONAME-name symlink (e.g. libsdrplay_api.so.3) so the dynamic linker /
+# linuxdeploy can resolve the NEEDED entry baked into consumers at link time.
+foreach (_link "${PREFIX}/lib/libsdrplay_api.so" "${PREFIX}/lib/${SO_SONAME}")
+    file(REMOVE "${_link}")
+    if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.14)
+        file(CREATE_LINK "${SO_VERSIONED}" "${_link}" SYMBOLIC)
+    else ()
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E create_symlink "${SO_VERSIONED}" "${_link}"
+            RESULT_VARIABLE _ln_rc)
+        if (NOT _ln_rc EQUAL 0)
+            message(FATAL_ERROR "install_linux.cmake: failed to create symlink ${_link} -> ${SO_VERSIONED}")
+        endif ()
     endif ()
-endif ()
+endforeach ()
 
 file(GLOB _hdrs "${_inc_src_dir}/*.h")
 foreach (_h IN LISTS _hdrs)
