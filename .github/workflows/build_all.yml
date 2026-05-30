@@ -337,89 +337,14 @@ jobs:
 
     build_android:
         needs: [get_version, validate_tag]
-        runs-on: ubuntu-latest
-
-        steps:
-        - uses: actions/checkout@v4
-
-        - name: Fetch container
-          working-directory: ${{runner.workspace}}
-          run: git clone https://github.com/bubnikv/android-sdr-kit-iak android-sdr-kit
-        
-        - name: Build container
-          working-directory: ${{runner.workspace}}/android-sdr-kit
-          run: docker build --progress=plain -t android-sdr-kit .
-
-        - name: Build Debug APKs
-          run: docker run --name build -v $GITHUB_WORKSPACE:/root/SDRPlusPlus android-sdr-kit /bin/bash -l -c "cd /root/SDRPlusPlus/android && gradle --info -PoptBuildDeps=ON assembleArmDebug assembleX86Debug"
-
-        - name: Recover Debug APKs
-          working-directory: ${{runner.workspace}}
-          run: |
-            docker cp build:/root/SDRPlusPlus/android/app/build/outputs/apk/arm/debug/app-arm-debug.apk ./sdrpp_arm_debug.apk
-            docker cp build:/root/SDRPlusPlus/android/app/build/outputs/apk/x86/debug/app-x86-debug.apk ./sdrpp_x86_debug.apk
-
-        - name: Save ARM Debug APK
-          uses: actions/upload-artifact@v4
-          with:
-              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-android-arm-debug
-              path: ${{runner.workspace}}/sdrpp_arm_debug.apk
-
-        - name: Save x86 Debug APK
-          uses: actions/upload-artifact@v4
-          with:
-              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-android-x86-debug
-              path: ${{runner.workspace}}/sdrpp_x86_debug.apk
-
-        - name: Decode Keystore
-          id: check_signing
-          run: |
-            if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-              echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > ${{runner.workspace}}/release.keystore
-              echo "has_keystore=true" >> $GITHUB_OUTPUT
-            else
-              echo "has_keystore=false" >> $GITHUB_OUTPUT
-            fi
-          env:
+        uses: ./.github/workflows/build_android.yml
+        with:
+            version_full: ${{ needs.get_version.outputs.version_full }}
+        secrets:
             ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-
-        - name: Build Signed Release APKs
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          env:
             ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
             ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
             ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          run: |
-            docker rm build
-            docker run --name build_release \
-              -e ANDROID_KEYSTORE_FILE=/root/release.keystore \
-              -e ANDROID_KEYSTORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD" \
-              -e ANDROID_KEY_ALIAS="$ANDROID_KEY_ALIAS" \
-              -e ANDROID_KEY_PASSWORD="$ANDROID_KEY_PASSWORD" \
-              -v $GITHUB_WORKSPACE:/root/SDRPlusPlus \
-              -v ${{runner.workspace}}/release.keystore:/root/release.keystore \
-              android-sdr-kit /bin/bash -l -c "cd /root/SDRPlusPlus/android && gradle --info -PoptBuildDeps=ON assembleArmRelease assembleX86Release"
-
-        - name: Recover Release APKs
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          working-directory: ${{runner.workspace}}
-          run: |
-            docker cp build_release:/root/SDRPlusPlus/android/app/build/outputs/apk/arm/release/app-arm-release.apk ./sdrpp_arm_release.apk
-            docker cp build_release:/root/SDRPlusPlus/android/app/build/outputs/apk/x86/release/app-x86-release.apk ./sdrpp_x86_release.apk
-
-        - name: Save ARM Release APK
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          uses: actions/upload-artifact@v4
-          with:
-              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-android-arm-release
-              path: ${{runner.workspace}}/sdrpp_arm_release.apk
-
-        - name: Save x86 Release APK
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          uses: actions/upload-artifact@v4
-          with:
-              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-android-x86-release
-              path: ${{runner.workspace}}/sdrpp_x86_release.apk
 
     create_full_archive:
         needs: [

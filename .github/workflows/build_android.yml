@@ -1,0 +1,87 @@
+name: Build Android
+
+on:
+    workflow_call:
+        inputs:
+            version_full:
+                required: true
+                type: string
+        secrets:
+            ANDROID_KEYSTORE_BASE64:
+                required: false
+            ANDROID_KEYSTORE_PASSWORD:
+                required: false
+            ANDROID_KEY_ALIAS:
+                required: false
+            ANDROID_KEY_PASSWORD:
+                required: false
+
+env:
+    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+
+        steps:
+        - uses: actions/checkout@v4
+
+        - name: Install build tools
+          run: |
+            sudo apt update -y
+            sudo apt install -y wget git p7zip-full openjdk-17-jdk build-essential cmake patchelf python3-mako
+
+        - name: Install Android development environment
+          run: bash ./install_android_devenv.sh
+
+        - name: Build Debug APKs
+          working-directory: ${{ github.workspace }}/android
+          run: bash ./gradlew --info -PoptBuildDeps=ON -PsdrKitRoot="$GITHUB_WORKSPACE/deps" assembleArmDebug assembleX86Debug
+
+        - name: Save ARM Debug APK
+          uses: actions/upload-artifact@v4
+          with:
+              name: sdrpp-iak-${{ inputs.version_full }}-android-arm-debug
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/arm/debug/app-arm-debug.apk
+
+        - name: Save x86 Debug APK
+          uses: actions/upload-artifact@v4
+          with:
+              name: sdrpp-iak-${{ inputs.version_full }}-android-x86-debug
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/x86/debug/app-x86-debug.apk
+
+        - name: Decode Keystore
+          id: check_signing
+          run: |
+            if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+              echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > ${{runner.workspace}}/release.keystore
+              echo "has_keystore=true" >> $GITHUB_OUTPUT
+            else
+              echo "has_keystore=false" >> $GITHUB_OUTPUT
+            fi
+          env:
+            ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+        - name: Build Signed Release APKs
+          if: steps.check_signing.outputs.has_keystore == 'true'
+          env:
+            ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+            ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+            ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+            ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
+          working-directory: ${{ github.workspace }}/android
+          run: bash ./gradlew --info -PoptBuildDeps=ON -PsdrKitRoot="$GITHUB_WORKSPACE/deps" assembleArmRelease assembleX86Release
+
+        - name: Save ARM Release APK
+          if: steps.check_signing.outputs.has_keystore == 'true'
+          uses: actions/upload-artifact@v4
+          with:
+              name: sdrpp-iak-${{ inputs.version_full }}-android-arm-release
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/arm/release/app-arm-release.apk
+
+        - name: Save x86 Release APK
+          if: steps.check_signing.outputs.has_keystore == 'true'
+          uses: actions/upload-artifact@v4
+          with:
+              name: sdrpp-iak-${{ inputs.version_full }}-android-x86-release
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/x86/release/app-x86-release.apk
