@@ -17,7 +17,7 @@ fi
 
 # Install dependencies and tools
 apt-get -o Acquire::Retries=3 update
-apt-get -o Acquire::Retries=3 install -y build-essential cmake git pkg-config libfftw3-dev libglfw3-dev ${VOLK_PACKAGE} libzstd-dev libcurl4-openssl-dev libairspy-dev libairspyhf-dev \
+apt-get -o Acquire::Retries=3 install -y build-essential cmake git pkg-config libfftw3-dev libglfw3-dev ${VOLK_PACKAGE} liborc-0.4-dev libzstd-dev libcurl4-openssl-dev libairspy-dev libairspyhf-dev \
     libiio-dev libad9361-dev librtaudio-dev libhackrf-dev librtlsdr-dev libbladerf-dev liblimesuite-dev p7zip-full wget portaudio19-dev \
     libcodec2-dev autoconf libtool xxd libspdlog-dev ${EXTRA_APT}
 
