@@ -5,4 +5,4 @@ file(GLOB SRC "src/*.cpp")
 
 include(${SDRPP_MODULE_CMAKE})
 
-sdrpp_link_dep(audio_source rtaudio PACKAGE_NAME RtAudio TARGETS RtAudio::rtaudio rtaudio)
+sdrpp_link_dep(audio_source RtAudio TARGETS RtAudio::rtaudio rtaudio)

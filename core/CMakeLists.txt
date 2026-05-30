@@ -114,7 +114,7 @@ if (MSVC)
         sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
     endif ()
 
-    sdrpp_link_dep(sdrpp_core fftw3 PUBLIC PACKAGE_NAME FFTW3f PC_NAME fftw3f TARGETS FFTW3::fftw3f)
+    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
 
     # WinSock2
     target_link_libraries(sdrpp_core PUBLIC wsock32 ws2_32 iphlpapi)
@@ -124,7 +124,7 @@ if (MSVC)
         SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
         STATIC_TARGETS zstd::libzstd_static)
 
-    sdrpp_link_dep(sdrpp_core volk PUBLIC PACKAGE_NAME Volk PC_NAME volk TARGETS Volk::volk volk::volk volk)
+    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
 elseif (ANDROID)
     target_include_directories(sdrpp_core PUBLIC
         ${ANDROID_NDK}/sources/android/native_app_glue
@@ -134,12 +134,12 @@ elseif (ANDROID)
         sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
     endif ()
 
-    sdrpp_link_dep(sdrpp_core fftw3 PUBLIC PACKAGE_NAME FFTW3f PC_NAME fftw3f TARGETS FFTW3::fftw3f)
+    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
     sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
         TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
         SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
         STATIC_TARGETS zstd::libzstd_static)
-    sdrpp_link_dep(sdrpp_core volk PUBLIC PACKAGE_NAME Volk PC_NAME volk TARGETS Volk::volk volk::volk volk)
+    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
     target_link_libraries(sdrpp_core PUBLIC
         android
         EGL
@@ -152,12 +152,12 @@ else()
     if (OPT_BACKEND_GLFW)
         sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
     endif ()
-    sdrpp_link_dep(sdrpp_core fftw3 PUBLIC PACKAGE_NAME FFTW3f PC_NAME fftw3f TARGETS FFTW3::fftw3f)
+    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
     sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
         TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
         SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
         STATIC_TARGETS zstd::libzstd_static)
-    sdrpp_link_dep(sdrpp_core volk PUBLIC PACKAGE_NAME Volk PC_NAME volk TARGETS Volk::volk volk::volk volk)
+    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
     target_link_libraries(sdrpp_core PUBLIC
         ${OPENGL_LIBRARIES}
     )

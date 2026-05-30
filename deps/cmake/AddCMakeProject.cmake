@@ -254,6 +254,18 @@ function(sdrpp_emit_imported_config name)
 
     sdrpp_resolve_dep_policy(${name} _policy)
 
+    # When the policy resolves this dep to system, the host package provides
+    # its own discovery (a distro Config.cmake, a .pc file, or a FindXxx
+    # module). Emitting our own Config.cmake into the deps prefix would
+    # shadow that with one whose find_library / find_path probes only look
+    # at the empty deps prefix — yielding INTERFACE_INCLUDE_DIRECTORIES set
+    # to "_<name>_inc-NOTFOUND" at consume time and a hard generate-step
+    # error in the parent build. Skip emission and validation here; the
+    # consumer's sdrpp_link_dep will fall through to step 2/3.
+    if ("${_policy_SOURCE}" STREQUAL "system")
+        return()
+    endif ()
+
     set(_target ${P_TARGET})
     if (NOT _target)
         set(_target ${name}::${name})

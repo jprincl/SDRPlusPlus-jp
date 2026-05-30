@@ -183,6 +183,20 @@ function(sdrpp_link_dep target pkg)
         sdrpp_dep_is_system(${pkg} _is_system)
     endif ()
 
+    # The strict FATAL gate only makes sense for deps we own a recipe for.
+    # Callers may pass an upstream package name (FFTW3f, Volk, RtAudio, UHD,
+    # SoapySDR, ...) that doesn't match any deps/+<name>/ recipe — in that
+    # case the prefix has no Config.cmake we promised to install, so a miss
+    # here is not the silent-bundled-build-failure the gate is supposed to
+    # catch. We still try the prefix first (some unregistered upstream packages
+    # land in the prefix as a side effect of a registered recipe — e.g. fftw3
+    # installing FFTW3fConfig.cmake), we just don't fatally error if missing.
+    set(_dep_registered FALSE)
+    get_property(_registered_packages GLOBAL PROPERTY SDRPP_DEP_REGISTERED_PACKAGES)
+    if ("${pkg}" IN_LIST _registered_packages)
+        set(_dep_registered TRUE)
+    endif ()
+
     # Step 1 - require Config.cmake from the deps / SDR kit prefixes when
     # explicit prefixes were provided. Falling through would let host system
     # packages or pkg-config mask a broken bundled dependency install.
@@ -196,7 +210,7 @@ function(sdrpp_link_dep target pkg)
             return()
         endif ()
     endforeach ()
-    if (_prefix_hints AND NOT _is_system)
+    if (_prefix_hints AND NOT _is_system AND _dep_registered)
         message(FATAL_ERROR
             "sdrpp_link_dep(${target} ${pkg}) could not resolve ${pkg}: "
             "find_package(${_package} CONFIG) found no target matching [${_targets}] in SDR_KIT_ROOT/CMAKE_PREFIX_PATH. "
