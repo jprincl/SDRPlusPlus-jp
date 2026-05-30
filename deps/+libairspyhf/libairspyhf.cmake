@@ -12,7 +12,10 @@ add_cmake_project(libairspyhf
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
 
-set(DEP_libairspyhf_DEPENDS libusb pthreads)
+set(DEP_libairspyhf_DEPENDS libusb)
+if (WIN32)
+    list(APPEND DEP_libairspyhf_DEPENDS pthreads)
+endif ()
 
 set(_libairspyhf_compile_definitions "")
 set(_libairspyhf_package_dependencies "")

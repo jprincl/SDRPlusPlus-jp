@@ -14,7 +14,10 @@ add_cmake_project(libxml2
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
 
-set(DEP_libxml2_DEPENDS zlib)
+# Android's NDK supplies libz from the sysroot.
+if (NOT ANDROID)
+    set(DEP_libxml2_DEPENDS zlib)
+endif ()
 
 sdrpp_validate_dep(libxml2
     TARGET         LibXml2::LibXml2

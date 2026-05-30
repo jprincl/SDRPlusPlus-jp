@@ -12,7 +12,10 @@ add_cmake_project(libairspy
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
 
-set(DEP_libairspy_DEPENDS libusb pthreads)
+set(DEP_libairspy_DEPENDS libusb)
+if (WIN32)
+    list(APPEND DEP_libairspy_DEPENDS pthreads)
+endif ()
 
 set(_libairspy_compile_definitions "")
 set(_libairspy_package_dependencies "")
