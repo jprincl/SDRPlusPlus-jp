@@ -332,8 +332,12 @@ function(sdrpp_emit_imported_config name)
     string(APPEND _content "else ()\n")
     string(APPEND _content "    set(_sdrpp_no_cache \"\")\n")
     string(APPEND _content "endif ()\n")
+    # NO_CMAKE_FIND_ROOT_PATH bypasses cross-toolchain root-path filtering
+    # (Android NDK sets CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY, which would
+    # otherwise reject the explicit PATHS for living outside the NDK sysroot).
+    # Same rationale as the consumer-side fix in cmake/sdrpp_find_dep.cmake.
     foreach (_dependency ${P_PACKAGE_DEPENDENCIES})
-        string(APPEND _content "find_package(${_dependency} CONFIG REQUIRED PATHS \"\${_root}\" NO_DEFAULT_PATH)\n")
+        string(APPEND _content "find_package(${_dependency} CONFIG REQUIRED PATHS \"\${_root}\" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)\n")
     endforeach ()
     string(APPEND _content "if (NOT TARGET ${_target})\n")
     string(APPEND _content "    add_library(${_target} ${_imported_type} IMPORTED)\n")
