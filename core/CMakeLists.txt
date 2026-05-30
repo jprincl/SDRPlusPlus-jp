@@ -81,15 +81,37 @@ sdrpp_link_dep(sdrpp_core libcurl PRIVATE
 
 # WebSocket support is mandatory. The bundled recipe always forces
 # ENABLE_WEBSOCKETS=ON; distro libcurl may have been packaged without
-# it (Ubuntu 20.04 ships 7.68, no WS at all), so probe explicitly when
-# the imported target is in module form.
+# it (Ubuntu 20.04 / 22.04 jammy ship 7.68 / 7.81, no WS at all), so
+# probe explicitly when the imported target is in module form.
 if (TARGET CURL::libcurl)
     include(CheckSymbolExists)
     get_target_property(_sdrpp_curl_inc CURL::libcurl INTERFACE_INCLUDE_DIRECTORIES)
     if (_sdrpp_curl_inc)
         set(CMAKE_REQUIRED_INCLUDES "${_sdrpp_curl_inc}")
     endif ()
-    set(CMAKE_REQUIRED_LIBRARIES CURL::libcurl)
+    # check_symbol_exists internally calls try_compile, whose generated sub
+    # project can't see IMPORTED targets from the parent. Pass libcurl as
+    # the actual library file instead. IMPORTED_LOCATION for single-config
+    # generators; IMPORTED_LOCATION_<CFG> when the Config.cmake only set
+    # the config-specific variant (multi-config or per-config-only export).
+    set(_sdrpp_curl_lib "")
+    get_target_property(_sdrpp_curl_lib CURL::libcurl IMPORTED_LOCATION)
+    if (NOT _sdrpp_curl_lib)
+        foreach (_cfg RELEASE RELWITHDEBINFO MINSIZEREL DEBUG NOCONFIG)
+            get_target_property(_sdrpp_curl_lib_cfg CURL::libcurl IMPORTED_LOCATION_${_cfg})
+            if (_sdrpp_curl_lib_cfg)
+                set(_sdrpp_curl_lib "${_sdrpp_curl_lib_cfg}")
+                break ()
+            endif ()
+        endforeach ()
+    endif ()
+    if (_sdrpp_curl_lib)
+        set(CMAKE_REQUIRED_LIBRARIES "${_sdrpp_curl_lib}")
+    else ()
+        # PkgConfig-backed target with no IMPORTED_LOCATION — fall back to
+        # the bare linker name and let the host's default lib search find it.
+        set(CMAKE_REQUIRED_LIBRARIES curl)
+    endif ()
     check_symbol_exists(curl_ws_send "curl/curl.h" SDRPP_CURL_HAS_WS)
     unset(CMAKE_REQUIRED_INCLUDES)
     unset(CMAKE_REQUIRED_LIBRARIES)

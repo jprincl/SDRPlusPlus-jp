@@ -54,22 +54,29 @@ cd $ORIG_DIR
 
 STAGE="$ORIG_DIR/sdrpp_debian_pkg"
 
-# SDRplay's API is a closed-source binary blob: no Debian package ships it,
-# and our deps build lays it down under deps/build-<preset>-<config>/destdir
-# rather than the main install tree. Without it in $STAGE, dpkg-shlibdeps
-# can't resolve sdrplay_source.so's NEEDED entry (libsdrplay_api.so.3) and
-# the resulting .deb would install a plugin the dynamic linker can't load.
-# Ship the .so + its SONAME / linker-name symlinks alongside the rest of
-# our libraries in /usr/lib so both build-time shlibdeps and runtime dlopen
-# resolve through standard paths. AppImage builds don't need this — linux
-# deploy bundles the library into the AppDir automatically.
-SDRPLAY_LIB_REAL=$(find "$SCRIPT_DIR/deps" -type f -name 'libsdrplay_api.so.*.*' 2>/dev/null | head -n1)
-if [ -n "$SDRPLAY_LIB_REAL" ]; then
-    SDRPLAY_LIB_DIR=$(dirname "$SDRPLAY_LIB_REAL")
+# Bundled-shared deps (sdrplay's closed-source blob, librfnm, any other dep
+# the policy resolved to distro:bundled distro:shared) live under
+# deps/build-<preset>-<config>/destdir/usr/local/lib/ rather than the main
+# install tree. Without them in $STAGE, dpkg-shlibdeps can't resolve the
+# plugins' NEEDED entries (libsdrplay_api.so.3, librfnm.so, ...) and the
+# resulting .deb would install plugins the dynamic linker can't load.
+# Ship them alongside the rest of our libraries under /usr/lib so both
+# build-time shlibdeps and runtime dlopen resolve through standard paths.
+# AppImage builds don't need this — linuxdeploy bundles them into the
+# AppDir automatically.
+#
+# Restricting the glob to destdir/usr/local/lib (not the deps build tree
+# at large) is important: the SDRplay installer's 7z extraction scratch
+# under deps/build-*/builds/sdrplay/extracted/ holds the .so for EVERY
+# architecture in the SDRplay tarball, and a broader find would pull in
+# the wrong arch (e.g. arm32 libsdrplay_api.so on an amd64 build).
+DEPS_LIB_DIR=$(ls -d "$SCRIPT_DIR"/deps/build-*/destdir/usr/local/lib 2>/dev/null | head -n1)
+if [ -n "$DEPS_LIB_DIR" ]; then
     mkdir -p "$STAGE/usr/lib"
-    # cp -P preserves the SONAME and linker-name symlinks created by
-    # deps/+sdrplay/install_linux.cmake.
-    cp -P "$SDRPLAY_LIB_DIR"/libsdrplay_api.so* "$STAGE/usr/lib/"
+    # cp -P preserves SONAME / linker-name symlinks (libsdrplay_api.so.3 ->
+    # libsdrplay_api.so.3.15, etc.). The glob's `|| true` swallows the no-
+    # match case (build resolved every shared dep to system).
+    cp -P "$DEPS_LIB_DIR"/*.so* "$STAGE/usr/lib/" 2>/dev/null || true
 fi
 
 # Resolve runtime deps via dpkg-shlibdeps. This adapts to the build host's
