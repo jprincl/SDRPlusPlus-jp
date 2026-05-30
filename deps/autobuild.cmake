@@ -42,6 +42,23 @@ if (DEFINED _sdrpp_dep_root_packages_effective AND _sdrpp_dep_root_packages_effe
     list(JOIN _sdrpp_dep_root_packages_effective "," _dep_root_packages_arg)
     list(APPEND _build_args "-DSDRPP_DEP_ROOT_PACKAGES=${_dep_root_packages_arg}")
 endif ()
+
+# Policy overrides set on the main project's cmake invocation only take effect
+# on the deps sub-build if forwarded explicitly — the sub-build configures via
+# `cmake --preset`, so it reads its own cache, not the parent's. Without this,
+# the parent resolves a dep as bundled (and expects a Config.cmake in the deps
+# prefix) while the sub-build resolves it as system and never builds it.
+foreach (_var IN ITEMS
+        SDRPP_DEP_PROFILE
+        SDRPP_DEP_FORCE_BUNDLED
+        SDRPP_DEP_FORCE_SYSTEM
+        SDRPP_DEP_FORCE_SHARED
+        SDRPP_DEP_FORCE_STATIC
+        SDRPP_DEP_POLICY_STRICT)
+    if (DEFINED ${_var} AND NOT "${${_var}}" STREQUAL "")
+        list(APPEND _build_args "-D${_var}=${${_var}}")
+    endif ()
+endforeach ()
 set(_trace_dep_artifacts_arg "${SDRPP_TRACE_DEP_ARTIFACTS}")
 string(REPLACE ";" "," _trace_dep_artifacts_arg "${_trace_dep_artifacts_arg}")
 list(APPEND _build_args
