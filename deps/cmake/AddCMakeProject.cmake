@@ -383,9 +383,16 @@ function(sdrpp_emit_imported_config name)
         string(APPEND _content "    set_target_properties(${_target} PROPERTIES IMPORTED_LOCATION \"\${_${name}_imp}\")\n")
     endif ()
     if (P_HEADER)
-        string(APPEND _content "    set_target_properties(${_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES \"\${_${name}_inc}\")\n")
+        # Emit BOTH the resolved include dir AND the prefix's include root so
+        # consumers can include the header either way:
+        #   #include <libusb.h>          (needs /include/libusb-1.0 in path)
+        #   #include <librfnm/librfnm.h> (needs /include in path)
+        # Both forms appear in this codebase; emitting both dirs keeps the
+        # Config consumer-agnostic. CMake dedups, so the no-subdir case
+        # where _<name>_inc already == _root/include costs nothing.
+        string(APPEND _content "    set_target_properties(${_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES \"\${_${name}_inc};\${_root}/include\")\n")
     else ()
-        string(APPEND _content "    set_target_properties(${_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES \"${_inc_dir}\")\n")
+        string(APPEND _content "    set_target_properties(${_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES \"${_inc_dir};\${_root}/include\")\n")
     endif ()
     if (P_COMPILE_DEFINITIONS)
         set(_compile_definitions "${P_COMPILE_DEFINITIONS}")
