@@ -351,9 +351,15 @@ function(sdrpp_emit_imported_config name)
         string(APPEND _content "        set(CMAKE_FIND_LIBRARY_SUFFIXES \".a\")\n")
         string(APPEND _content "    endif ()\n")
     else ()
+        # Constrain find_library to shared-library suffixes so a co-installed
+        # static archive (libfoo.a alongside libfoo.dylib / libfoo.so) doesn't
+        # latch onto the wrong artifact. On Apple we also keep .so in the
+        # list because SDRplay's macOS binary blob uses the .so extension
+        # instead of the conventional .dylib — without it find_library inside
+        # the emitted sdrplayConfig.cmake misses the install we just laid down.
         string(APPEND _content "    set(_sdrpp_saved_suffixes \"\${CMAKE_FIND_LIBRARY_SUFFIXES}\")\n")
         string(APPEND _content "    if (APPLE)\n")
-        string(APPEND _content "        set(CMAKE_FIND_LIBRARY_SUFFIXES \".dylib\")\n")
+        string(APPEND _content "        set(CMAKE_FIND_LIBRARY_SUFFIXES \".dylib;.so\")\n")
         string(APPEND _content "    elseif (UNIX)\n")
         string(APPEND _content "        set(CMAKE_FIND_LIBRARY_SUFFIXES \".so\")\n")
         string(APPEND _content "    endif ()\n")
