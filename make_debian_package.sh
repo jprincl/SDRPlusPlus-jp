@@ -54,6 +54,24 @@ cd $ORIG_DIR
 
 STAGE="$ORIG_DIR/sdrpp_debian_pkg"
 
+# SDRplay's API is a closed-source binary blob: no Debian package ships it,
+# and our deps build lays it down under deps/build-<preset>-<config>/destdir
+# rather than the main install tree. Without it in $STAGE, dpkg-shlibdeps
+# can't resolve sdrplay_source.so's NEEDED entry (libsdrplay_api.so.3) and
+# the resulting .deb would install a plugin the dynamic linker can't load.
+# Ship the .so + its SONAME / linker-name symlinks alongside the rest of
+# our libraries in /usr/lib so both build-time shlibdeps and runtime dlopen
+# resolve through standard paths. AppImage builds don't need this — linux
+# deploy bundles the library into the AppDir automatically.
+SDRPLAY_LIB_REAL=$(find "$SCRIPT_DIR/deps" -type f -name 'libsdrplay_api.so.*.*' 2>/dev/null | head -n1)
+if [ -n "$SDRPLAY_LIB_REAL" ]; then
+    SDRPLAY_LIB_DIR=$(dirname "$SDRPLAY_LIB_REAL")
+    mkdir -p "$STAGE/usr/lib"
+    # cp -P preserves the SONAME and linker-name symlinks created by
+    # deps/+sdrplay/install_linux.cmake.
+    cp -P "$SDRPLAY_LIB_DIR"/libsdrplay_api.so* "$STAGE/usr/lib/"
+fi
+
 # Resolve runtime deps via dpkg-shlibdeps. This adapts to the build host's
 # distribution conventions (libcurl4 vs libcurl4t64, libvolk2.X vs libvolk3,
 # the libssl ABI of the day) instead of relying on a hand-maintained list of
