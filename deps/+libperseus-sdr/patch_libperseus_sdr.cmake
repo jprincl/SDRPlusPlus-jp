@@ -27,6 +27,13 @@
 #      is built as a bundled dep (no system .pc file), but upstream's
 #      unconditional pkg_check_modules ignores those and fails the configure.
 #
+# Patches libperseus-sdr's src/perseus-sdr.c:
+#   5. Adds <unistd.h> on non-Windows so sleep() is declared. GCC 14
+#      (Debian trixie / Ubuntu noble) promotes -Wimplicit-function-declaration
+#      to an error, so the missing include is no longer tolerated.
+#   6. Gates the Windows-only Sleep() call behind _WIN32 and uses usleep()
+#      on POSIX. Same GCC 14 implicit-declaration error otherwise.
+#
 
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_helpers.cmake)
 
@@ -83,3 +90,30 @@ patch_replace_or_fail(_hcontent
     "snprintf(perseus_error_str, sizeof(perseus_error_str) - 1, format, ##__VA_ARGS__)")
 
 file(WRITE "${_h}" "${_hcontent}")
+
+# --- Patches 5 & 6: GCC 14 implicit-declaration fixes in perseus-sdr.c ---
+set(_c "${SRC}/src/perseus-sdr.c")
+file(READ "${_c}" _ccontent)
+
+patch_replace_or_fail(_ccontent
+    "#if !defined(_WIN32)
+#include <dlfcn.h>
+#else
+#include <windows.h>
+#endif"
+    "#if !defined(_WIN32)
+#include <dlfcn.h>
+#include <unistd.h>
+#else
+#include <windows.h>
+#endif")
+
+patch_replace_or_fail(_ccontent
+    "            Sleep(1);"
+    "#ifdef _WIN32
+            Sleep(1);
+#else
+            usleep(1000);
+#endif")
+
+file(WRITE "${_c}" "${_ccontent}")
