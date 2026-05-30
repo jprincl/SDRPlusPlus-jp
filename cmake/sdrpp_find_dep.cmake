@@ -157,9 +157,16 @@ function(sdrpp_link_dep target pkg)
         set(_scope INTERFACE)
     endif ()
 
+    # pkg-config module names are conventionally lowercase (rtaudio.pc,
+    # volk.pc, fftw3f.pc, libcurl.pc, ...), so default PC_NAME to the
+    # lowercase form of the caller's pkg arg — that way callers passing the
+    # upstream CamelCase package name (RtAudio, Volk, FFTW3f) don't also
+    # have to write `PC_NAME rtaudio` / `PC_NAME volk` / etc. Callers
+    # override PC_NAME explicitly when the .pc name diverges from a simple
+    # lowercase (libusb -> libusb-1.0, codec2 -> codec2, ...).
     set(_pc ${P_PC_NAME})
     if (NOT _pc)
-        set(_pc ${pkg})
+        string(TOLOWER "${pkg}" _pc)
     endif ()
 
     set(_package ${P_PACKAGE_NAME})
