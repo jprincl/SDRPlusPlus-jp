@@ -132,7 +132,7 @@ elseif (UNIX AND NOT APPLE)
                     -DPREFIX=${_prefix}
                     -DSO_VERSIONED=${_sdrplay_so_versioned}
                     -DSO_SONAME=${_sdrplay_so_soname}
-                    -P ${CMAKE_CURRENT_LIST_DIR}/install_linux.cmake
+                    -P ${CMAKE_CURRENT_LIST_DIR}/install_sdrplay.cmake
         USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
     )
 else ()
@@ -183,7 +183,7 @@ else ()
                     -DPREFIX=${_prefix}
                     -DSO_VERSIONED=${_sdrplay_so_versioned}
                     -DSO_SONAME=${_sdrplay_so_soname}
-                    -P ${CMAKE_CURRENT_LIST_DIR}/install_macos.cmake
+                    -P ${CMAKE_CURRENT_LIST_DIR}/install_sdrplay.cmake
         USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
     )
 endif ()

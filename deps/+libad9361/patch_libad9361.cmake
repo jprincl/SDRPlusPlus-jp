@@ -22,3 +22,14 @@ patch_replace_or_fail(_header_content
     "#   ifdef LIBAD9361_STATIC\n#\tdefine __api\n#   elif defined(LIBAD9361_EXPORTS)\n#\tdefine __api __declspec(dllexport)\n#   else\n#\tdefine __api __declspec(dllimport)\n#   endif")
 file(WRITE "${_header}" "${_header_content}")
 message(STATUS "Patched ${_header}")
+
+# ad9361_baseband_auto_rate.c calls snprintf without including <stdio.h>.
+# Clang 16+ (macOS / current LLVM) promotes implicit function declarations
+# from a warning to a hard error; older toolchains tolerated it.
+set(_baseband "${SRC}/ad9361_baseband_auto_rate.c")
+file(READ "${_baseband}" _baseband_content)
+patch_replace_or_fail(_baseband_content
+    "#include <stdlib.h>"
+    "#include <stdio.h>\n#include <stdlib.h>")
+file(WRITE "${_baseband}" "${_baseband_content}")
+message(STATUS "Patched ${_baseband}")
