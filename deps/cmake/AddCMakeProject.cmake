@@ -254,18 +254,6 @@ function(sdrpp_emit_imported_config name)
 
     sdrpp_resolve_dep_policy(${name} _policy)
 
-    # When the policy resolves this dep to system, the host package provides
-    # its own discovery (a distro Config.cmake, a .pc file, or a FindXxx
-    # module). Emitting our own Config.cmake into the deps prefix would
-    # shadow that with one whose find_library / find_path probes only look
-    # at the empty deps prefix — yielding INTERFACE_INCLUDE_DIRECTORIES set
-    # to "_<name>_inc-NOTFOUND" at consume time and a hard generate-step
-    # error in the parent build. Skip emission and validation here; the
-    # consumer's sdrpp_link_dep will fall through to step 2/3.
-    if ("${_policy_SOURCE}" STREQUAL "system")
-        return()
-    endif ()
-
     set(_target ${P_TARGET})
     if (NOT _target)
         set(_target ${name}::${name})
@@ -370,10 +358,19 @@ function(sdrpp_emit_imported_config name)
         string(APPEND _content "        set(CMAKE_FIND_LIBRARY_SUFFIXES \".so\")\n")
         string(APPEND _content "    endif ()\n")
     endif ()
-    string(APPEND _content "    find_library(_${name}_imp NAMES ${_lib_names_str} HINTS \"\${_root}/lib\" \"\${_root}/bin\" NO_DEFAULT_PATH \${_sdrpp_no_cache})\n")
+    # HINTS are searched before default paths; drop NO_DEFAULT_PATH so the
+    # emitted Config falls back to system search when the dep wasn't bundled
+    # into the prefix (distro profile with source=system). The PATH_SUFFIXES
+    # entry covers multi-arch system include dirs (/usr/include/libusb-1.0
+    # etc.) when find_path falls through to defaults.
+    string(APPEND _content "    find_library(_${name}_imp NAMES ${_lib_names_str} HINTS \"\${_root}/lib\" \"\${_root}/bin\" \${_sdrpp_no_cache})\n")
     string(APPEND _content "    set(CMAKE_FIND_LIBRARY_SUFFIXES \"\${_sdrpp_saved_suffixes}\")\n")
     if (P_HEADER)
-        string(APPEND _content "    find_path(_${name}_inc \"${P_HEADER}\" HINTS \"${_inc_dir}\" \"\${_root}/include\" NO_DEFAULT_PATH \${_sdrpp_no_cache})\n")
+        set(_path_suffixes_arg "")
+        if (P_INCLUDE_SUBDIR)
+            set(_path_suffixes_arg "PATH_SUFFIXES ${P_INCLUDE_SUBDIR}")
+        endif ()
+        string(APPEND _content "    find_path(_${name}_inc \"${P_HEADER}\" HINTS \"${_inc_dir}\" \"\${_root}/include\" ${_path_suffixes_arg} \${_sdrpp_no_cache})\n")
     endif ()
     if (_policy_BUILDS_SHARED)
         string(APPEND _content "    if (WIN32)\n")
@@ -406,11 +403,16 @@ function(sdrpp_emit_imported_config name)
     # Auto-validate the install we just promised to consume. The validator
     # checks both the selected artifacts and the imported target properties,
     # so policy mismatches surface before the app tries to link them.
-    sdrpp_validate_dep(${name}
-        TARGET         ${_target}
-        LIB_NAMES      ${_lib_names}
-        DLL_NAMES      ${_dll_names}
-        HEADER         ${P_HEADER}
-        INCLUDE_SUBDIR ${P_INCLUDE_SUBDIR}
-        REQUIRES_CONFIG)
+    # Skipped for system-resolved deps — the host provides the library, the
+    # deps prefix has nothing to validate, and the emitted Config's
+    # system-fallback search will resolve the target at consume time.
+    if (NOT "${_policy_SOURCE}" STREQUAL "system")
+        sdrpp_validate_dep(${name}
+            TARGET         ${_target}
+            LIB_NAMES      ${_lib_names}
+            DLL_NAMES      ${_dll_names}
+            HEADER         ${P_HEADER}
+            INCLUDE_SUBDIR ${P_INCLUDE_SUBDIR}
+            REQUIRES_CONFIG)
+    endif ()
 endfunction()
