@@ -85,7 +85,17 @@ sdrpp_register_dep(libbladeRF
 
 sdrpp_register_dep(libcurl
     DEFAULT_SOURCE  portable:bundled distro:system android:bundled
-    DEFAULT_LINKAGE portable:static distro:shared android:static
+    # Always static when we build it. Bundled+shared would ship libcurl.so.4
+    # in the .deb at /usr/lib/, which on multiarch Debian/Ubuntu sits behind
+    # /usr/lib/x86_64-linux-gnu/libcurl.so.4 in ld.so.cache order — the
+    # system curl would shadow ours at runtime, defeating the WS-mandatory
+    # bundled build. Static links curl's symbols (curl_ws_send included)
+    # directly into libsdrpp_iak_core.so and leaves only libssl/libcrypto/
+    # libz as NEEDED entries, which dpkg-shlibdeps maps to system packages.
+    # The distro:static value only takes effect when policy resolves the
+    # source to bundled (FORCE_BUNDLED or matrix curl_source=bundled);
+    # distro:system builds link the host's shared libcurl as before.
+    DEFAULT_LINKAGE portable:static distro:static android:static
     USAGE core)
 
 sdrpp_register_dep(mbedtls
