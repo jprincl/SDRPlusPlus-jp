@@ -136,14 +136,56 @@ elseif (UNIX AND NOT APPLE)
         USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
     )
 else ()
-    # macOS: SDRplay ships SDRplayAPI-macos-installer-universal-*.pkg, which
-    # would need xar + cpio extraction (or `pkgutil --expand-full`). Until
-    # that's automated, fail loudly so the build doesn't silently produce a
-    # broken sdrplay_source plugin.
-    message(FATAL_ERROR
-        "SDRplay: macOS auto-install is not implemented in deps/+sdrplay yet. "
-        "Either install the SDRplay API .pkg manually (sudo installer -pkg ... -target /) "
-        "and add a system-source path here, or disable OPT_BUILD_SDRPLAY_SOURCE for the macOS build.")
+    # macOS: SDRplay ships SDRplayAPI-macos-installer-universal-*.pkg — a
+    # universal binary (x86_64 + arm64), so the same .pkg covers both Intel
+    # and Apple Silicon. Extract offline with `pkgutil --expand-full` (no
+    # sudo, no installation into /usr/local) and plant the library + headers
+    # under the deps prefix, mirroring the Linux flow above.
+    #
+    # SDRplay's macOS .pkg lags the Linux .run version slightly; track it
+    # independently. SDRplay uses the .so extension on macOS instead of
+    # .dylib (idiosyncratic but consistent with their tooling).
+    set(_sdrplay_pkg_version 3.15.0)
+    set(_sdrplay_pkg_basename SDRplayAPI-macos-installer-universal-${_sdrplay_pkg_version}.pkg)
+    set(_sdrplay_pkg_url https://www.sdrplay.com/software/${_sdrplay_pkg_basename})
+
+    find_program(_sdrplay_pkgutil pkgutil)
+    if (NOT _sdrplay_pkgutil)
+        message(FATAL_ERROR
+            "SDRplay (macOS): pkgutil not found on PATH (this is a stock macOS "
+            "system tool — check the build environment).")
+    endif ()
+
+    string(REGEX MATCH "^([0-9]+\\.[0-9]+)" _sdrplay_so_mm "${_sdrplay_pkg_version}")
+    string(REGEX MATCH "^([0-9]+)" _sdrplay_so_major "${_sdrplay_pkg_version}")
+    set(_sdrplay_so_versioned libsdrplay_api.so.${_sdrplay_so_mm})
+    set(_sdrplay_so_soname libsdrplay_api.so.${_sdrplay_so_major})
+
+    set(_sdrplay_scratch ${CMAKE_CURRENT_BINARY_DIR}/sources/sdrplay/extracted)
+
+    ExternalProject_Add(dep_sdrplay
+        URL                 ${_sdrplay_pkg_url}
+        DOWNLOAD_NO_EXTRACT TRUE
+        DOWNLOAD_DIR        ${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}/sdrplay
+        SOURCE_DIR          ${CMAKE_CURRENT_BINARY_DIR}/sources/sdrplay
+        BINARY_DIR          ${CMAKE_CURRENT_BINARY_DIR}/builds/sdrplay
+        CONFIGURE_COMMAND   ""
+        BUILD_COMMAND       ""
+        INSTALL_COMMAND
+                ${CMAKE_COMMAND} -E rm -rf ${_sdrplay_scratch}
+            COMMAND
+                ${_sdrplay_pkgutil} --expand-full
+                    ${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}/sdrplay/${_sdrplay_pkg_basename}
+                    ${_sdrplay_scratch}
+            COMMAND
+                ${CMAKE_COMMAND}
+                    -DSCRATCH=${_sdrplay_scratch}
+                    -DPREFIX=${_prefix}
+                    -DSO_VERSIONED=${_sdrplay_so_versioned}
+                    -DSO_SONAME=${_sdrplay_so_soname}
+                    -P ${CMAKE_CURRENT_LIST_DIR}/install_macos.cmake
+        USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
+    )
 endif ()
 
 sdrpp_emit_imported_config(sdrplay

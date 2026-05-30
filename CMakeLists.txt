@@ -107,11 +107,14 @@ option(USE_INTERNAL_LIBCORRECT "Use an internal version of libcorrect" ON)
 option(USE_BUNDLE_DEFAULTS "Set the default resource and module directories to the right ones for a MacOS .app" OFF)
 option(COPY_MSVC_REDISTRIBUTABLES "Copy over the Visual C++ Redistributable" OFF)
 
-# SDRplay distributes its API as a closed-source binary built only for desktop
-# x86/x86_64 Windows and Linux. Auto-disable on every other target so the
-# deps/+sdrplay recipe and the sdrplay_source plugin are skipped together —
-# both rely on the same OPT_BUILD_SDRPLAY_SOURCE flag, so flipping it OFF here
-# centralizes the policy for every entry point (CI scripts, dev builds, IDEs).
+# SDRplay distributes its API as a closed-source binary. Available variants:
+#   - Linux x86_64 / Windows x86 / Windows x64: shipped per-arch and supported.
+#   - macOS: shipped as a universal .pkg (x86_64 + arm64 fat binary) — both
+#     Apple Silicon and Intel resolve through deps/+sdrplay/install_macos.cmake.
+#   - Linux ARM / Windows ARM64 / Android: no usable binary, auto-disable.
+# The recipe and plugin both gate on OPT_BUILD_SDRPLAY_SOURCE, so flipping it
+# OFF here centralizes the policy for every entry point (CI scripts, dev
+# builds, IDEs).
 if (OPT_BUILD_SDRPLAY_SOURCE)
     set(_sdrplay_unsupported "")
     if (ANDROID)
@@ -119,9 +122,6 @@ if (OPT_BUILD_SDRPLAY_SOURCE)
     elseif (WIN32 AND (CMAKE_GENERATOR_PLATFORM MATCHES "^ARM64"
                        OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|aarch64)"))
         set(_sdrplay_unsupported "Windows on ARM64")
-    elseif (APPLE AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)"
-                       OR "arm64" IN_LIST CMAKE_OSX_ARCHITECTURES))
-        set(_sdrplay_unsupported "macOS on Apple Silicon")
     elseif (UNIX AND NOT APPLE AND NOT ANDROID
             AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|armv6|armv7)")
         set(_sdrplay_unsupported "Linux ${CMAKE_SYSTEM_PROCESSOR}")
