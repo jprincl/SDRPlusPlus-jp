@@ -200,7 +200,13 @@ function(_sdrpp_validate_dep_write_target_probe out_var)
 
     string(CONFIGURE [=[
 cmake_minimum_required(VERSION 3.16)
-project(sdrpp_validate_dep_target NONE)
+# Enable C/C++ so CMake runs compiler-ABI detection — that's what populates
+# CMAKE_LIBRARY_ARCHITECTURE, which in turn adds Debian/Ubuntu multiarch
+# paths (e.g. /usr/lib/x86_64-linux-gnu) to find_library's default search.
+# With project(NONE) the probe can't resolve transitive system deps
+# (CURLConfig.cmake's find_dependency(ZLIB) finds zlib.h but misses libz.so
+# because the multiarch dir isn't searched).
+project(sdrpp_validate_dep_target C CXX)
 
 set(_prefix "@_probe_prefix@")
 set(_package_name "@PACKAGE_NAME@")
