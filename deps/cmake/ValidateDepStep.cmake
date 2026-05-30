@@ -233,7 +233,8 @@ list(PREPEND CMAKE_MODULE_PATH "${_probe_module_dir}")
 
 find_package(${_package_name} CONFIG REQUIRED
     PATHS "${_prefix}"
-    NO_DEFAULT_PATH)
+    NO_DEFAULT_PATH
+    NO_CMAKE_FIND_ROOT_PATH)
 
 if (NOT TARGET ${_target_name})
     message(FATAL_ERROR "package '${_package_name}' did not define target '${_target_name}'")

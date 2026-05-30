@@ -147,16 +147,4 @@ set(_deps_install_prefix "${_build_dir}/destdir/usr/local")
 list(APPEND CMAKE_PREFIX_PATH "${_deps_install_prefix}")
 set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" CACHE STRING "" FORCE)
 
-# Cross-toolchains (Android NDK, MinGW-w64, custom embedded toolchains) set
-# CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY, which restricts find_package's search
-# — including explicit PATHS — to subtrees of CMAKE_FIND_ROOT_PATH. Without
-# this, sdrpp_link_dep's find_package(<pkg> CONFIG PATHS deps_prefix
-# NO_DEFAULT_PATH) silently misses our bundled Config.cmake because the deps
-# prefix sits outside the NDK sysroot. Append our prefix as an additional
-# find-root so the cross-toolchain restriction permits it.
-if (DEFINED CMAKE_FIND_ROOT_PATH)
-    list(APPEND CMAKE_FIND_ROOT_PATH "${_deps_install_prefix}")
-    set(CMAKE_FIND_ROOT_PATH "${CMAKE_FIND_ROOT_PATH}" CACHE STRING "" FORCE)
-endif ()
-
 message(STATUS "Dependencies installed at ${_deps_install_prefix}")

@@ -196,8 +196,12 @@ function(sdrpp_link_dep target pkg)
     # Step 1 - require Config.cmake from the deps / SDR kit prefixes when
     # explicit prefixes were provided. Falling through would let host system
     # packages or pkg-config mask a broken bundled dependency install.
+    #
+    # NO_CMAKE_FIND_ROOT_PATH bypasses cross-toolchain root-path filtering
+    # (Android NDK sets CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY, which would
+    # otherwise reject our explicit PATHS for living outside the NDK sysroot).
     if (_prefix_hints AND NOT _is_system)
-        find_package(${_package} CONFIG QUIET PATHS ${_prefix_hints} NO_DEFAULT_PATH)
+        find_package(${_package} CONFIG QUIET PATHS ${_prefix_hints} NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
     endif ()
     foreach (t ${_targets})
         if (TARGET ${t})
@@ -207,10 +211,39 @@ function(sdrpp_link_dep target pkg)
         endif ()
     endforeach ()
     if (_prefix_hints AND NOT _is_system AND _dep_registered)
+        # Diagnostic context for debugging cross-toolchain / path-mode failures:
+        # what we asked for, where we looked, and what's actually on disk.
+        string(REPLACE ";" "\n    " _hints_pretty "${_prefix_hints}")
+        set(_diag "")
+        foreach (_hint IN LISTS _prefix_hints)
+            string(APPEND _diag "    ${_hint}:\n")
+            file(GLOB _cfg_files
+                "${_hint}/lib/cmake/${_package}/*Config.cmake"
+                "${_hint}/lib/cmake/${_package}/*-config.cmake"
+                "${_hint}/lib/cmake/${_package}/*config.cmake")
+            string(TOLOWER "${_package}" _package_lower)
+            file(GLOB _cfg_files_lower
+                "${_hint}/lib/cmake/${_package_lower}/*Config.cmake"
+                "${_hint}/lib/cmake/${_package_lower}/*-config.cmake"
+                "${_hint}/lib/cmake/${_package_lower}/*config.cmake")
+            list(APPEND _cfg_files ${_cfg_files_lower})
+            list(REMOVE_DUPLICATES _cfg_files)
+            if (_cfg_files)
+                foreach (_f IN LISTS _cfg_files)
+                    string(APPEND _diag "      found: ${_f}\n")
+                endforeach ()
+            else ()
+                string(APPEND _diag "      no Config.cmake under lib/cmake/${_package} or lib/cmake/${_package_lower}\n")
+            endif ()
+        endforeach ()
         message(FATAL_ERROR
             "sdrpp_link_dep(${target} ${pkg}) could not resolve ${pkg}: "
             "find_package(${_package} CONFIG) found no target matching [${_targets}] in CMAKE_PREFIX_PATH. "
-            "Explicit dependency prefixes must provide CMake config targets; pkg-config fallback is disabled for those prefixes.")
+            "Explicit dependency prefixes must provide CMake config targets; pkg-config fallback is disabled for those prefixes.\n"
+            "Searched these prefix hints:\n"
+            "${_diag}"
+            "CMAKE_FIND_ROOT_PATH=${CMAKE_FIND_ROOT_PATH}\n"
+            "CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=${CMAKE_FIND_ROOT_PATH_MODE_PACKAGE}")
     endif ()
 
     # Step 2 - system Config.cmake on Unix desktop builds.
