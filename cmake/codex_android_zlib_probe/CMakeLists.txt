@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.16)
+project(codex_android_zlib_probe C)
+
+find_package(ZLIB REQUIRED)
+message(STATUS "ZLIB_FOUND=${ZLIB_FOUND}")
+message(STATUS "ZLIB_LIBRARY=${ZLIB_LIBRARY}")
+message(STATUS "ZLIB_LIBRARIES=${ZLIB_LIBRARIES}")
+message(STATUS "ZLIB_INCLUDE_DIR=${ZLIB_INCLUDE_DIR}")
+if (TARGET ZLIB::ZLIB)
+    message(STATUS "ZLIB::ZLIB exists")
+endif ()
+
+find_package(CURL CONFIG REQUIRED)
+if (TARGET CURL::libcurl)
+    message(STATUS "CURL::libcurl exists")
+endif ()

@@ -60,8 +60,7 @@ What happens:
    (`/MTd`, full debug info, `_DEBUG` defined, MSVC STL debug iterators
    active).
 2. Deps install into `deps/build-default-Debug/destdir/usr/local/`.
-   `CMAKE_PREFIX_PATH` and `SDR_KIT_ROOT` are auto-pointed there for the
-   parent configure.
+   `CMAKE_PREFIX_PATH` is auto-pointed there for the parent configure.
 3. The parent configure continues — every `find_package` and `sdrpp_link_dep`
    resolves into the per-config deps prefix.
 4. The build step compiles app + plugins, copies runtime DLLs next to the

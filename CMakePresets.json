@@ -15,7 +15,6 @@
             },
             "cacheVariables": {
                 "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-x64/destdir/usr/local",
-                "SDR_KIT_ROOT":     "${sourceDir}/deps/build-vs2026-x64/destdir/usr/local",
                 "COPY_MSVC_REDISTRIBUTABLES": "ON",
                 "OPT_BUILD_BLADERF_SOURCE":       "ON",
                 "OPT_BUILD_LIMESDR_SOURCE":       "ON",
@@ -47,7 +46,6 @@
             "binaryDir": "${sourceDir}/build-vs2026-arm64",
             "cacheVariables": {
                 "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-arm64/destdir/usr/local",
-                "SDR_KIT_ROOT":     "${sourceDir}/deps/build-vs2026-arm64/destdir/usr/local",
                 "OPT_BUILD_SDRPLAY_SOURCE":        "OFF",
                 "OPT_BUILD_HYDRASDR_RFONE_SOURCE": "OFF"
             }

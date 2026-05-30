@@ -14,8 +14,7 @@
 # Validation manifests, generated probe projects, and compatibility shims stay
 # in <buildDir>/. Point the SDR++ build at the install prefix:
 #   cmake -S . -B build -G "Visual Studio 18 2026" -A x64 \
-#         -DCMAKE_PREFIX_PATH=<absolute>/deps/build-vs2026-x64/destdir/usr/local \
-#         -DSDR_KIT_ROOT=<absolute>/deps/build-vs2026-x64/destdir/usr/local
+#         -DCMAKE_PREFIX_PATH=<absolute>/deps/build-vs2026-x64/destdir/usr/local
 #
 # This is a single-config build system: each build tree produces exactly one
 # configuration, determined by CMAKE_BUILD_TYPE. Debug builds link against the

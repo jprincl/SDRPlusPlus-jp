@@ -76,8 +76,7 @@
             "inherits": "android-base",
             "binaryDir": "${sourceDir}/build-android-arm64-v8a",
             "cacheVariables": {
-                "ANDROID_ABI": "arm64-v8a",
-                "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/arm64-v8a"
+                "ANDROID_ABI": "arm64-v8a"
             }
         },
         {
@@ -86,8 +85,7 @@
             "inherits": "android-base",
             "binaryDir": "${sourceDir}/build-android-armeabi-v7a",
             "cacheVariables": {
-                "ANDROID_ABI": "armeabi-v7a",
-                "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/armeabi-v7a"
+                "ANDROID_ABI": "armeabi-v7a"
             }
         },
         {
@@ -96,8 +94,7 @@
             "inherits": "android-base",
             "binaryDir": "${sourceDir}/build-android-x86",
             "cacheVariables": {
-                "ANDROID_ABI": "x86",
-                "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/x86"
+                "ANDROID_ABI": "x86"
             }
         },
         {
@@ -106,8 +103,7 @@
             "inherits": "android-base",
             "binaryDir": "${sourceDir}/build-android-x86_64",
             "cacheVariables": {
-                "ANDROID_ABI": "x86_64",
-                "SDRPP_DEPS_INSTALL_PREFIX": "${sourceDir}/build-android/x86_64"
+                "ANDROID_ABI": "x86_64"
             }
         },
         {

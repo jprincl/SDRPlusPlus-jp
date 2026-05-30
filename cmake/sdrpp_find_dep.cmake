@@ -8,8 +8,8 @@
 #     [STATIC_TARGETS <names...>])
 #
 # Find a third-party library and link it into <target>. Strategy:
-#   1. If SDR_KIT_ROOT / CMAKE_PREFIX_PATH prefixes are provided, require a
-#      Config.cmake target from those prefixes and stop there.
+#   1. If CMAKE_PREFIX_PATH prefixes are provided, require a Config.cmake
+#      target from those prefixes and stop there.
 #   2. On Windows and Android, require the bundled deps / SDR kit flow.
 #   3. On Unix desktop builds without explicit prefixes, fall back to the
 #      system's Config.cmake or pkg-config package.
@@ -52,17 +52,6 @@ endif ()
 
 function(_sdrpp_link_dep_collect_prefix_hints out_var)
     set(_prefix_hints "")
-
-    if (ANDROID AND DEFINED SDR_KIT_ROOT AND DEFINED ANDROID_ABI)
-        set(_android_prefix "${SDR_KIT_ROOT}/${ANDROID_ABI}")
-        if (EXISTS "${_android_prefix}")
-            list(APPEND _prefix_hints "${_android_prefix}")
-        endif ()
-    endif ()
-
-    if (DEFINED SDR_KIT_ROOT AND NOT "${SDR_KIT_ROOT}" STREQUAL "" AND EXISTS "${SDR_KIT_ROOT}")
-        list(APPEND _prefix_hints "${SDR_KIT_ROOT}")
-    endif ()
 
     foreach (_prefix ${CMAKE_PREFIX_PATH})
         if (NOT "${_prefix}" STREQUAL "")
@@ -220,7 +209,7 @@ function(sdrpp_link_dep target pkg)
     if (_prefix_hints AND NOT _is_system AND _dep_registered)
         message(FATAL_ERROR
             "sdrpp_link_dep(${target} ${pkg}) could not resolve ${pkg}: "
-            "find_package(${_package} CONFIG) found no target matching [${_targets}] in SDR_KIT_ROOT/CMAKE_PREFIX_PATH. "
+            "find_package(${_package} CONFIG) found no target matching [${_targets}] in CMAKE_PREFIX_PATH. "
             "Explicit dependency prefixes must provide CMake config targets; pkg-config fallback is disabled for those prefixes.")
     endif ()
 
@@ -228,8 +217,8 @@ function(sdrpp_link_dep target pkg)
     if (WIN32 OR ANDROID)
         message(FATAL_ERROR
             "sdrpp_link_dep(${target} ${pkg}) could not resolve ${pkg}: "
-            "find_package(${_package} CONFIG) found no target matching [${_targets}] in SDR_KIT_ROOT/CMAKE_PREFIX_PATH. "
-            "Build the deps preset for this platform and point SDR_KIT_ROOT/CMAKE_PREFIX_PATH at its install prefix.")
+            "find_package(${_package} CONFIG) found no target matching [${_targets}] in CMAKE_PREFIX_PATH. "
+            "Build the deps preset for this platform and point CMAKE_PREFIX_PATH at its install prefix.")
     endif ()
 
     if (UNIX OR APPLE)

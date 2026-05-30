@@ -147,7 +147,4 @@ set(_deps_install_prefix "${_build_dir}/destdir/usr/local")
 list(APPEND CMAKE_PREFIX_PATH "${_deps_install_prefix}")
 set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" CACHE STRING "" FORCE)
 
-# Surface as SDR_KIT_ROOT for modules that look there directly (Android-style path resolution).
-set(SDR_KIT_ROOT "${_deps_install_prefix}" CACHE PATH "" FORCE)
-
 message(STATUS "Dependencies installed at ${_deps_install_prefix}")

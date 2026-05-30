@@ -12,20 +12,12 @@ endif ()
 option(OPT_BACKEND_GLFW "Use the GLFW backend" ON)
 option(OPT_BACKEND_ANDROID "Use the Android backend" OFF)
 
-# Paths
-if(DEFINED ENV{SDR_KIT_ROOT} AND NOT DEFINED SDR_KIT_ROOT)
-    set(SDR_KIT_ROOT_DEFAULT "$ENV{SDR_KIT_ROOT}")
-else()
-    set(SDR_KIT_ROOT_DEFAULT "/sdr-kit")
-endif()
-set(SDR_KIT_ROOT "${SDR_KIT_ROOT_DEFAULT}" CACHE PATH "Root path for the SDR kit libraries")
-
 # Dependency build management
 # When OPT_BUILD_DEPS=ON, deps/ is configured and built as a sub-project before
-# the main configure continues, and its install prefix is added to CMAKE_PREFIX_PATH
-# (and surfaced as SDR_KIT_ROOT). Default OFF — normal flow is to build deps once
+# the main configure continues, and its install prefix is added to
+# CMAKE_PREFIX_PATH. Default OFF — normal flow is to build deps once
 # (cmake --preset vs2026-x64 -S deps -B deps/build-vs2026-x64 && cmake --build ...)
-# and reuse the install prefix across many app builds.
+# and point the app build at the install prefix via CMAKE_PREFIX_PATH.
 option(OPT_BUILD_DEPS "Build third-party dependencies before configuring SDR++" OFF)
 option(SDRPP_DEPS_OUTPUT_QUIET "Suppress output of the dependency build" OFF)
 set(SDRPP_DEPS_PRESET "default" CACHE STRING "Preset name to use for the dependency build")
