@@ -407,10 +407,11 @@ jobs:
             # AppImages are optional on PRs (build_appimage may have been skipped).
             [ -d sdrpp-iak-${VER}-linux-appimage-x86_64 ]  && mv sdrpp-iak-${VER}-linux-appimage-x86_64/sdrpp-iak-${VER}-x86_64.AppImage   sdrpp_all/sdrpp-iak-${VER}-linux-x86_64.AppImage   || true
             [ -d sdrpp-iak-${VER}-linux-appimage-aarch64 ] && mv sdrpp-iak-${VER}-linux-appimage-aarch64/sdrpp-iak-${VER}-aarch64.AppImage sdrpp_all/sdrpp-iak-${VER}-linux-aarch64.AppImage || true
-            mv sdrpp-iak-${VER}-android-arm-debug/sdrpp_arm_debug.apk                             sdrpp_all/sdrpp-iak-${VER}-android-arm-debug.apk
-            mv sdrpp-iak-${VER}-android-x86-debug/sdrpp_x86_debug.apk                             sdrpp_all/sdrpp-iak-${VER}-android-x86-debug.apk
-            [ -d sdrpp-iak-${VER}-android-arm-release ] && mv sdrpp-iak-${VER}-android-arm-release/sdrpp_arm_release.apk sdrpp_all/sdrpp-iak-${VER}-android-arm-release.apk || true
-            [ -d sdrpp-iak-${VER}-android-x86-release ] && mv sdrpp-iak-${VER}-android-x86-release/sdrpp_x86_release.apk sdrpp_all/sdrpp-iak-${VER}-android-x86-release.apk || true
+            mv sdrpp-iak-${VER}-android-arm-debug/sdrpp-iak-arm-debug.apk                         sdrpp_all/sdrpp-iak-${VER}-android-arm-debug.apk
+            mv sdrpp-iak-${VER}-android-x86-debug/sdrpp-iak-x86-debug.apk                         sdrpp_all/sdrpp-iak-${VER}-android-x86-debug.apk
+            # Signed release APKs are optional when the Android keystore secret is unavailable.
+            [ -d sdrpp-iak-${VER}-android-arm-release ] && mv sdrpp-iak-${VER}-android-arm-release/sdrpp-iak-arm-release.apk sdrpp_all/sdrpp-iak-${VER}-android-arm-release.apk || true
+            [ -d sdrpp-iak-${VER}-android-x86-release ] && mv sdrpp-iak-${VER}-android-x86-release/sdrpp-iak-x86-release.apk sdrpp_all/sdrpp-iak-${VER}-android-x86-release.apk || true
 
         - uses: actions/upload-artifact@v4
           with:

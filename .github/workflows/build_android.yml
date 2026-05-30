@@ -42,13 +42,13 @@ jobs:
           uses: actions/upload-artifact@v4
           with:
               name: sdrpp-iak-${{ inputs.version_full }}-android-arm-debug
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/arm/debug/app-arm-debug.apk
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/arm/debug/sdrpp-iak-arm-debug.apk
 
         - name: Save x86 Debug APK
           uses: actions/upload-artifact@v4
           with:
               name: sdrpp-iak-${{ inputs.version_full }}-android-x86-debug
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/x86/debug/app-x86-debug.apk
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/x86/debug/sdrpp-iak-x86-debug.apk
 
         - name: Decode Keystore
           id: check_signing
@@ -77,11 +77,11 @@ jobs:
           uses: actions/upload-artifact@v4
           with:
               name: sdrpp-iak-${{ inputs.version_full }}-android-arm-release
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/arm/release/app-arm-release.apk
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/arm/release/sdrpp-iak-arm-release.apk
 
         - name: Save x86 Release APK
           if: steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v4
           with:
               name: sdrpp-iak-${{ inputs.version_full }}-android-x86-release
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/x86/release/app-x86-release.apk
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/x86/release/sdrpp-iak-x86-release.apk

@@ -116,6 +116,14 @@ android {
     }
 }
 
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.outputs.each { output ->
+            output.outputFileName.set("sdrpp-iak-${variant.flavorName}-${variant.buildType}.apk")
+        }
+    }
+}
+
 task deleteTempAssets (type: Delete) {
     delete 'assets'
 }

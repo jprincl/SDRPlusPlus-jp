@@ -29,12 +29,12 @@ ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION"
 ANDROID_NDK_TOOLCHAIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
 ANDROID_NDK_CMAKE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake"
 
-# Gradle 9.3+ matches the Android Gradle Plugin 9.0.1 we pin in
+# Gradle 9.4.1 matches the Android Gradle Plugin 9.2.1 we pin in
 # android/build.gradle. Override GRADLE_VERSION to upgrade in lockstep with
 # AGP; the wrapper jar in android/gradle/ is intentionally NOT committed
 # (per android/.gitignore) — we drive builds via system Gradle on PATH
 # instead so every environment runs the same pinned version.
-GRADLE_VERSION="${GRADLE_VERSION:-9.3.1}"
+GRADLE_VERSION="${GRADLE_VERSION:-9.4.1}"
 GRADLE_INSTALL_ROOT="${GRADLE_INSTALL_ROOT:-$HOME/gradle}"
 GRADLE_HOME="$GRADLE_INSTALL_ROOT/gradle-$GRADLE_VERSION"
 
