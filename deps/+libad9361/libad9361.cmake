@@ -12,6 +12,19 @@ if (WIN32)
     )
 endif ()
 
+# Apple Clang 16+ (Xcode 15+) promotes -Wimplicit-function-declaration to a
+# hard error by default. libad9361 v0.2's ad9361_baseband_auto_rate.c calls
+# snprintf (whose declaration *does* live in the <stdio.h> the source already
+# includes), but Clang errors anyway — likely an interaction with its
+# library-function detection. Downgrade the diagnostic for this sub-build
+# rather than carrying a fragile source patch that has to track the upstream
+# header layout.
+if (APPLE)
+    list(APPEND _libad9361_iio_args
+        -DCMAKE_C_FLAGS=-Wno-error=implicit-function-declaration
+    )
+endif ()
+
 add_cmake_project(libad9361
     URL                 https://github.com/analogdevicesinc/libad9361-iio/archive/refs/tags/v0.2.tar.gz
     # URL_HASH SHA256=<TODO: pin after first verified build>
