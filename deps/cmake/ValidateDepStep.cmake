@@ -3,7 +3,8 @@
 # Inputs (via -D):
 #   PREFIX, NAME, PACKAGE_NAME, TARGET_NAME, LIB_NAMES, DLL_NAMES, HEADER,
 #   INCLUDE_SUBDIR, CONFIG_SUBDIR, REQUIRES_CONFIG, SHARED, WIN,
-#   VALIDATION_DIR, PROBES_DIR, SDRPP_TRACE_DEP_ARTIFACTS
+#   VALIDATION_DIR, PROBES_DIR, SDRPP_TRACE_DEP_ARTIFACTS,
+#   CMAKE_TOOLCHAIN_FILE, and Android toolchain settings
 #
 # Re-splits the |-packed list args, runs file-existence probes against
 # the install prefix, and writes a manifest on success. Aggregates all
@@ -339,8 +340,24 @@ if (REQUIRES_CONFIG AND _cfg AND _lib AND NOT "${TARGET_NAME}" STREQUAL "")
     _sdrpp_validate_dep_write_target_probe(_probe_dirs)
     list(GET _probe_dirs 0 _probe_src)
     list(GET _probe_dirs 1 _probe_bin)
+    set(_probe_cmake_args "")
+    if (DEFINED CMAKE_TOOLCHAIN_FILE AND NOT "${CMAKE_TOOLCHAIN_FILE}" STREQUAL "")
+        list(APPEND _probe_cmake_args
+            "-DCMAKE_TOOLCHAIN_FILE:FILEPATH=${CMAKE_TOOLCHAIN_FILE}")
+    endif ()
+    foreach (_var IN ITEMS
+            ANDROID_ABI
+            ANDROID_PLATFORM
+            ANDROID_STL
+            ANDROID_ARM_MODE
+            ANDROID_ARM_NEON)
+        if (DEFINED ${_var} AND NOT "${${_var}}" STREQUAL "")
+            list(APPEND _probe_cmake_args "-D${_var}:STRING=${${_var}}")
+        endif ()
+    endforeach ()
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -S "${_probe_src}" -B "${_probe_bin}"
+            ${_probe_cmake_args}
         RESULT_VARIABLE _probe_result
         OUTPUT_VARIABLE _probe_stdout
         ERROR_VARIABLE _probe_stderr)
