@@ -36,7 +36,7 @@ jobs:
 
         - name: Build Debug APKs
           working-directory: ${{ github.workspace }}/android
-          run: bash ./gradlew --info -PoptBuildDeps=ON -PsdrKitRoot="$GITHUB_WORKSPACE/deps" assembleArmDebug assembleX86Debug
+          run: gradle --info -PoptBuildDeps=ON -PsdrKitRoot="$GITHUB_WORKSPACE/deps" assembleArmDebug assembleX86Debug
 
         - name: Save ARM Debug APK
           uses: actions/upload-artifact@v4
@@ -70,7 +70,7 @@ jobs:
             ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
             ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
           working-directory: ${{ github.workspace }}/android
-          run: bash ./gradlew --info -PoptBuildDeps=ON -PsdrKitRoot="$GITHUB_WORKSPACE/deps" assembleArmRelease assembleX86Release
+          run: gradle --info -PoptBuildDeps=ON -PsdrKitRoot="$GITHUB_WORKSPACE/deps" assembleArmRelease assembleX86Release
 
         - name: Save ARM Release APK
           if: steps.check_signing.outputs.has_keystore == 'true'

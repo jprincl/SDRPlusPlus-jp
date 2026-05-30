@@ -4,6 +4,8 @@
 # libad9361 v0.2 has only export/import modes in its public header. SDR++ uses
 # the bundled lib as a static module-private dependency on portable builds, so
 # add an explicit LIBAD9361_STATIC mode and define it on the library target.
+# Disable upstream's framework output too: the deps prefix and generated
+# package config consume a normal libad9361 archive or shared library.
 #
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_helpers.cmake)
 
@@ -12,6 +14,9 @@ file(READ "${_cmake}" _content)
 patch_replace_or_fail(_content
     "target_link_libraries(ad9361 LINK_PRIVATE \${LIBIIO_LIBRARIES})"
     "if (NOT BUILD_SHARED_LIBS)\n\ttarget_compile_definitions(ad9361 PRIVATE LIBAD9361_STATIC LIBIIO_STATIC)\nendif()\ntarget_link_libraries(ad9361 LINK_PRIVATE \${LIBIIO_LIBRARIES})")
+patch_replace_or_fail(_content
+    "\tFRAMEWORK TRUE"
+    "\tFRAMEWORK FALSE")
 file(WRITE "${_cmake}" "${_content}")
 message(STATUS "Patched ${_cmake}")
 

@@ -29,11 +29,21 @@ ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION"
 ANDROID_NDK_TOOLCHAIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
 ANDROID_NDK_CMAKE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake"
 
+# Gradle 9.3+ matches the Android Gradle Plugin 9.0.1 we pin in
+# android/build.gradle. Override GRADLE_VERSION to upgrade in lockstep with
+# AGP; the wrapper jar in android/gradle/ is intentionally NOT committed
+# (per android/.gitignore) — we drive builds via system Gradle on PATH
+# instead so every environment runs the same pinned version.
+GRADLE_VERSION="${GRADLE_VERSION:-9.3.1}"
+GRADLE_INSTALL_ROOT="${GRADLE_INSTALL_ROOT:-$HOME/gradle}"
+GRADLE_HOME="$GRADLE_INSTALL_ROOT/gradle-$GRADLE_VERSION"
+
 export ANDROID_HOME
 export ANDROID_SDK_ROOT
 export ANDROID_NDK_ROOT
 export ANDROID_NDK_TOOLCHAIN
 export ANDROID_NDK_CMAKE
+export GRADLE_HOME
 
 SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 if [ ! -x "$SDKMANAGER" ]; then
@@ -55,6 +65,17 @@ yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
     "ndk;$ANDROID_NDK_VERSION" \
     "cmake;$ANDROID_CMAKE_VERSION"
 
+# Install Gradle into $GRADLE_INSTALL_ROOT and put its bin/ on PATH. Skipped
+# if the pinned version is already there (re-runs on local dev machines).
+if [ ! -x "$GRADLE_HOME/bin/gradle" ]; then
+    GRADLE_DOWNLOAD_DIR="$(mktemp -d)"
+    GRADLE_ZIP="gradle-$GRADLE_VERSION-bin.zip"
+    wget -P "$GRADLE_DOWNLOAD_DIR" "https://services.gradle.org/distributions/$GRADLE_ZIP"
+    mkdir -p "$GRADLE_INSTALL_ROOT"
+    7z x -y -o"$GRADLE_INSTALL_ROOT" "$GRADLE_DOWNLOAD_DIR/$GRADLE_ZIP" >/dev/null
+    rm -rf "$GRADLE_DOWNLOAD_DIR"
+fi
+
 if [ -n "${GITHUB_ENV:-}" ]; then
     {
         echo "ANDROID_HOME=$ANDROID_HOME"
@@ -62,10 +83,12 @@ if [ -n "${GITHUB_ENV:-}" ]; then
         echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
         echo "ANDROID_NDK_TOOLCHAIN=$ANDROID_NDK_TOOLCHAIN"
         echo "ANDROID_NDK_CMAKE=$ANDROID_NDK_CMAKE"
+        echo "GRADLE_HOME=$GRADLE_HOME"
     } >> "$GITHUB_ENV"
 fi
 
 if [ -n "${GITHUB_PATH:-}" ]; then
     echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
     echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+    echo "$GRADLE_HOME/bin" >> "$GITHUB_PATH"
 fi
