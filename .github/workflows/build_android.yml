@@ -22,6 +22,37 @@ env:
 jobs:
     build:
         runs-on: ubuntu-latest
+        strategy:
+            # Don't abort sibling matrix jobs if one fails — the failure is
+            # usually specific to one (flavor, build_type) combination and
+            # we want to surface diagnostics for the working ones too.
+            fail-fast: false
+            matrix:
+                # Per-(flavor, build_type) matrix split. Each cell runs in its
+                # own parallel job, dropping the wall-clock from sum(per-cell)
+                # to max(per-cell). flavor maps to the productFlavors{} block
+                # in android/app/build.gradle ('arm' = armeabi-v7a + arm64-v8a,
+                # 'x86' = x86 + x86_64). flavor_caps / build_type_caps are
+                # CamelCase variants for the assemble<Flavor><BuildType>
+                # gradle task name — flavor / build_type stay lowercase
+                # because they appear in apk output paths and artifact names.
+                include:
+                  - flavor: arm
+                    flavor_caps: Arm
+                    build_type: debug
+                    build_type_caps: Debug
+                  - flavor: x86
+                    flavor_caps: X86
+                    build_type: debug
+                    build_type_caps: Debug
+                  - flavor: arm
+                    flavor_caps: Arm
+                    build_type: release
+                    build_type_caps: Release
+                  - flavor: x86
+                    flavor_caps: X86
+                    build_type: release
+                    build_type_caps: Release
 
         steps:
         - uses: actions/checkout@v4
@@ -57,44 +88,30 @@ jobs:
               restore-keys: |
                   deps-pkgcache-
 
-        # Cache the deps install prefix per ABI/config. Exact-match only — a
-        # partial restore would leave stale artifacts that don't match the
-        # current recipe hash. The recipe-hash marker autobuild.cmake writes
-        # into destdir/share/sdrpp-deps/ also guards against bad restores
-        # (mismatched hash forces a rebuild). Path glob covers all
-        # build-android-<abi>-<config> dirs so one cache step covers the
-        # cross-product of ABIs and build types gradle drives in one run.
-        - name: Cache deps install prefixes (Android)
+        # Per-(flavor, build_type) install-prefix cache. Glob covers both
+        # ABIs in this flavor (arm* matches armeabi-v7a + arm64-v8a; x86*
+        # matches x86 + x86_64) for the specific build type. Exact-key only
+        # — autobuild.cmake's recipe-hash marker is the safety net against
+        # stale state slipping through.
+        - name: Cache deps install prefix (${{ matrix.flavor }} / ${{ matrix.build_type_caps }})
           uses: actions/cache@v4
           with:
-              path: |
-                  deps/build-android-*/destdir
-              key: deps-destdir-android-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'android/app/build.gradle') }}
+              path: deps/build-android-${{ matrix.flavor }}*-${{ matrix.build_type_caps }}/destdir
+              key: deps-destdir-android-${{ matrix.flavor }}-${{ matrix.build_type_caps }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'android/app/build.gradle') }}
 
         - name: Install Android development environment
           run: bash ./install_android_devenv.sh
 
-        - name: Build Debug APKs
-          working-directory: ${{ github.workspace }}/android
-          run: gradle --info -PoptBuildDeps=ON assembleArmDebug assembleX86Debug
-
-        - name: Save ARM Debug APK
-          uses: actions/upload-artifact@v4
-          with:
-              name: sdrpp-iak-${{ inputs.version_full }}-android-arm-debug
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/arm/debug/sdrpp-iak-arm-debug.apk
-
-        - name: Save x86 Debug APK
-          uses: actions/upload-artifact@v4
-          with:
-              name: sdrpp-iak-${{ inputs.version_full }}-android-x86-debug
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/x86/debug/sdrpp-iak-x86-debug.apk
-
-        - name: Decode Keystore
+        # Release-only: decode the signing keystore if the secret is present.
+        # has_keystore controls whether the Release build / upload steps run
+        # — repos without the secret (forks, PRs) skip the release path
+        # cleanly while still producing the matching Debug APK.
+        - name: Decode keystore
           id: check_signing
+          if: matrix.build_type == 'release'
           run: |
             if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-              echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > ${{runner.workspace}}/release.keystore
+              echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > ${{ runner.workspace }}/release.keystore
               echo "has_keystore=true" >> $GITHUB_OUTPUT
             else
               echo "has_keystore=false" >> $GITHUB_OUTPUT
@@ -102,26 +119,19 @@ jobs:
           env:
             ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
-        - name: Build Signed Release APKs
-          if: steps.check_signing.outputs.has_keystore == 'true'
+        - name: Build ${{ matrix.flavor_caps }} ${{ matrix.build_type_caps }} APK
+          if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
+          working-directory: ${{ github.workspace }}/android
           env:
             ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
             ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
             ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
             ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
-          working-directory: ${{ github.workspace }}/android
-          run: gradle --info -PoptBuildDeps=ON assembleArmRelease assembleX86Release
+          run: gradle --info -PoptBuildDeps=ON assemble${{ matrix.flavor_caps }}${{ matrix.build_type_caps }}
 
-        - name: Save ARM Release APK
-          if: steps.check_signing.outputs.has_keystore == 'true'
+        - name: Save ${{ matrix.flavor_caps }} ${{ matrix.build_type_caps }} APK
+          if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-iak-${{ inputs.version_full }}-android-arm-release
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/arm/release/sdrpp-iak-arm-release.apk
-
-        - name: Save x86 Release APK
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          uses: actions/upload-artifact@v4
-          with:
-              name: sdrpp-iak-${{ inputs.version_full }}-android-x86-release
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/x86/release/sdrpp-iak-x86-release.apk
+              name: sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}/sdrpp-iak-${{ matrix.flavor }}-${{ matrix.build_type }}.apk
