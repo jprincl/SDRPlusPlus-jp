@@ -35,31 +35,67 @@ if (WIN32)
         set(_arch_dir x86)
     endif ()
 
+    # SDRplay's Windows API is shipped as an Inno Setup installer .exe. CMake
+    # can't unpack Inno's compressed data segment natively (7z peels only the
+    # outer PE wrapper and stops at the Inno container), so bootstrap the
+    # standard offline extractor — innoextract — from its GitHub release.
+    # Pinned by SHA256, cached in the deps build tree across reconfigures.
+    set(_innoextract_version 1.9)
+    set(_innoextract_zip innoextract-${_innoextract_version}-windows.zip)
+    set(_innoextract_url
+        https://github.com/dscharrer/innoextract/releases/download/${_innoextract_version}/${_innoextract_zip})
+    set(_innoextract_dir ${CMAKE_CURRENT_BINARY_DIR}/tools/innoextract-${_innoextract_version})
+    set(_innoextract_exe ${_innoextract_dir}/innoextract.exe)
+    if (NOT EXISTS "${_innoextract_exe}")
+        file(MAKE_DIRECTORY "${_innoextract_dir}")
+        message(STATUS "SDRplay: bootstrapping innoextract ${_innoextract_version} for installer extraction")
+        file(DOWNLOAD
+            "${_innoextract_url}"
+            "${_innoextract_dir}/${_innoextract_zip}"
+            EXPECTED_HASH SHA256=6989342c9b026a00a72a38f23b62a8e6a22cc5de69805cf47d68ac2fec993065
+            SHOW_PROGRESS
+            STATUS _innoextract_dl_status)
+        list(GET _innoextract_dl_status 0 _innoextract_dl_code)
+        if (NOT _innoextract_dl_code EQUAL 0)
+            message(FATAL_ERROR "SDRplay: failed to download innoextract from ${_innoextract_url}: ${_innoextract_dl_status}")
+        endif ()
+        file(ARCHIVE_EXTRACT
+            INPUT "${_innoextract_dir}/${_innoextract_zip}"
+            DESTINATION "${_innoextract_dir}")
+        if (NOT EXISTS "${_innoextract_exe}")
+            message(FATAL_ERROR "SDRplay: innoextract bootstrap finished but ${_innoextract_exe} is missing — release layout changed?")
+        endif ()
+    endif ()
+
+    # Naming convention on sdrplay.com is major.minor only for Windows
+    # (Linux/.run and macOS/.pkg carry a patch revision; Windows doesn't).
+    set(_sdrplay_pkg_version_win 3.15)
+    set(_sdrplay_pkg_basename_win SDRplay_RSP_API-Windows-${_sdrplay_pkg_version_win}.exe)
+    set(_sdrplay_pkg_url_win https://www.sdrplay.com/software/${_sdrplay_pkg_basename_win})
+
+    set(_sdrplay_scratch ${CMAKE_CURRENT_BINARY_DIR}/sources/sdrplay/extracted)
+
     ExternalProject_Add(dep_sdrplay
-        URL                 https://www.sdrpp.org/SDRplay.zip
-        URL_HASH            SHA256=ddb9810b4708b9f53dd7dad235a7c5ad6990d8d0a0c8a141548d01f80c8c92d0
+        URL                 ${_sdrplay_pkg_url_win}
+        URL_HASH            SHA256=8ad5c36f1ca26cf7a61010c3f3c80dae69d4468ef5e59f7a0d42fb135a1c7326
         DOWNLOAD_DIR        ${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}/sdrplay
+        DOWNLOAD_NO_EXTRACT TRUE
         SOURCE_DIR          ${CMAKE_CURRENT_BINARY_DIR}/sources/sdrplay
         BINARY_DIR          ${CMAKE_CURRENT_BINARY_DIR}/builds/sdrplay
         CONFIGURE_COMMAND   ""
         BUILD_COMMAND       ""
         INSTALL_COMMAND
-                ${CMAKE_COMMAND} -E make_directory ${_prefix}/include/SDRplay
+                ${CMAKE_COMMAND} -E rm -rf ${_sdrplay_scratch}
             COMMAND
-                ${CMAKE_COMMAND} -E copy_directory <SOURCE_DIR>/API/inc
-                                                   ${_prefix}/include/SDRplay
+                ${_innoextract_exe} --silent --exclude-temp
+                    --output-dir ${_sdrplay_scratch}
+                    ${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}/sdrplay/${_sdrplay_pkg_basename_win}
             COMMAND
-                ${CMAKE_COMMAND} -E make_directory ${_prefix}/lib
-            COMMAND
-                ${CMAKE_COMMAND} -E make_directory ${_prefix}/bin
-            COMMAND
-                ${CMAKE_COMMAND} -E copy_if_different
-                    <SOURCE_DIR>/API/${_arch_dir}/sdrplay_api.lib
-                    ${_prefix}/lib/sdrplay_api.lib
-            COMMAND
-                ${CMAKE_COMMAND} -E copy_if_different
-                    <SOURCE_DIR>/API/${_arch_dir}/sdrplay_api.dll
-                    ${_prefix}/bin/sdrplay_api.dll
+                ${CMAKE_COMMAND}
+                    -DSCRATCH=${_sdrplay_scratch}
+                    -DARCH=${_arch_dir}
+                    -DPREFIX=${_prefix}
+                    -P ${CMAKE_CURRENT_LIST_DIR}/install_windows.cmake
         USES_TERMINAL_INSTALL ${SDRPP_SERIALIZE_CMAKE_INVOCATIONS}
     )
 elseif (UNIX AND NOT APPLE)
