@@ -31,6 +31,16 @@ jobs:
             sudo apt update -y
             sudo apt install -y wget git p7zip-full openjdk-17-jdk build-essential cmake patchelf python3-mako
 
+        # Provision Gradle 9.4.1 (pinned to match android/build.gradle's AGP
+        # 9.2.1) ahead of install_android_devenv.sh so the script's gradle
+        # detect-and-skip block short-circuits, and so subsequent steps that
+        # invoke `gradle` find it on PATH. The action also caches Gradle's
+        # user home (~/.gradle/caches, daemon JVMs) across runs.
+        - name: Set up Gradle
+          uses: gradle/actions/setup-gradle@v6
+          with:
+              gradle-version: 9.4.1
+
         - name: Install Android development environment
           run: bash ./install_android_devenv.sh
 
