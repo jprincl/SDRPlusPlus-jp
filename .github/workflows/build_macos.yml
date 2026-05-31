@@ -37,6 +37,27 @@ jobs:
         - name: Install build tools
           run: brew install pkg-config autoconf automake libtool p7zip && pip3 install mako --break-system-packages
 
+        # Shared across every workflow in the repo — tarballs are byte-identical
+        # regardless of target platform, URL_HASH validates correctness at
+        # extraction. Key is recipe-content-derived so a URL bump invalidates
+        # for everyone consistently; restore-keys keeps tarballs accumulating
+        # across recipe edits.
+        - name: Cache deps download tarballs
+          uses: actions/cache@v4
+          with:
+              path: deps/.pkg_cache
+              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
+              restore-keys: |
+                  deps-pkgcache-
+
+        # Per-target install prefix cache (macOS, single config). Exact-key
+        # only — autobuild.cmake's recipe-hash marker is the safety net.
+        - name: Cache deps install prefix (macOS)
+          uses: actions/cache@v4
+          with:
+              path: deps/build-default-Release/destdir
+              key: deps-destdir-macos-${{ inputs.runner }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake') }}
+
         - name: Prepare CMake
           working-directory: ${{runner.workspace}}/build
           run: cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 $GITHUB_WORKSPACE -DOPT_BUILD_DEPS=ON -DOPT_BUILD_PLUTOSDR_SOURCE=ON -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_AUDIO_SINK=OFF -DOPT_BUILD_PORTAUDIO_SINK=ON -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=${{ inputs.m17_decoder }} -DOPT_BUILD_PERSEUS_SOURCE=${{ inputs.perseus_source }} -DOPT_BUILD_AUDIO_SOURCE=OFF -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON -DUSE_BUNDLE_DEFAULTS=ON -DCMAKE_BUILD_TYPE=Release

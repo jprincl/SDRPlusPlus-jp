@@ -33,7 +33,15 @@ git config --global --add safe.directory "${SRC_DIR}"
 # that exception while bundling the rest through deps/.
 # ---------------------------------------------------------------------------
 cd "${SRC_DIR}"
-rm -rf "${DEPS_BUILD_DIR}"
+# Don't wipe ${DEPS_BUILD_DIR} unconditionally: CI restores it from the
+# actions/cache step in .github/workflows/build_appimage.yml when the deps
+# recipe hash hasn't changed, and autobuild.cmake's recipe-hash marker
+# inside destdir/share/sdrpp-deps/ short-circuits the deps build on a
+# cache hit. A stale cache (marker mismatch after a recipe edit) is
+# detected by autobuild.cmake and triggers a fresh rebuild on top of the
+# restored tree — overwrite-not-replace install semantics make that safe.
+# The main build dir is per-run and not cached; wiping it preserves a
+# from-scratch app build for repeatability.
 rm -rf build
 mkdir build
 cd build

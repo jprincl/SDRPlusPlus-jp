@@ -41,6 +41,36 @@ jobs:
           with:
               gradle-version: 9.4.1
 
+        # Shared across every workflow in the repo — tarballs are byte-identical
+        # regardless of target platform, URL_HASH validates correctness at
+        # extraction. The same key in every workflow means Android, Linux,
+        # macOS, and Windows all hit the same cache entry: a curl tarball
+        # downloaded by one workflow is reused by the next instead of being
+        # re-fetched. Restore-keys keep tarballs accumulating across recipe
+        # edits — additions to .pkg_cache never conflict, URL_HASH guards
+        # against stale content.
+        - name: Cache deps download tarballs
+          uses: actions/cache@v4
+          with:
+              path: deps/.pkg_cache
+              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
+              restore-keys: |
+                  deps-pkgcache-
+
+        # Cache the deps install prefix per ABI/config. Exact-match only — a
+        # partial restore would leave stale artifacts that don't match the
+        # current recipe hash. The recipe-hash marker autobuild.cmake writes
+        # into destdir/share/sdrpp-deps/ also guards against bad restores
+        # (mismatched hash forces a rebuild). Path glob covers all
+        # build-android-<abi>-<config> dirs so one cache step covers the
+        # cross-product of ABIs and build types gradle drives in one run.
+        - name: Cache deps install prefixes (Android)
+          uses: actions/cache@v4
+          with:
+              path: |
+                  deps/build-android-*/destdir
+              key: deps-destdir-android-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'android/app/build.gradle') }}
+
         - name: Install Android development environment
           run: bash ./install_android_devenv.sh
 

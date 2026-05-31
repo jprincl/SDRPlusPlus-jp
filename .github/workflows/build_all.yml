@@ -127,6 +127,22 @@ jobs:
             & "$env:pythonLocation\python.exe" -m pip install --user mako
             & "$env:pythonLocation\python.exe" -c "import sys, mako; print('VOLK Python:', sys.executable); print('Mako:', mako.__version__)"
 
+        # Shared across every workflow in the repo — tarballs are byte-identical
+        # regardless of target platform.
+        - name: Cache deps download tarballs
+          uses: actions/cache@v4
+          with:
+              path: deps/.pkg_cache
+              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
+              restore-keys: |
+                  deps-pkgcache-
+
+        - name: Cache deps install prefix (Windows x64)
+          uses: actions/cache@v4
+          with:
+              path: deps/build-default-Release/destdir
+              key: deps-destdir-windows-x64-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake') }}
+
         - name: Configure
           working-directory: ${{ github.workspace }}
           shell: cmd
@@ -167,6 +183,20 @@ jobs:
           run: |
             & "$env:pythonLocation\python.exe" -m pip install --user mako
             & "$env:pythonLocation\python.exe" -c "import sys, mako; print('VOLK Python:', sys.executable); print('Mako:', mako.__version__)"
+
+        - name: Cache deps download tarballs
+          uses: actions/cache@v4
+          with:
+              path: deps/.pkg_cache
+              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
+              restore-keys: |
+                  deps-pkgcache-
+
+        - name: Cache deps install prefix (Windows ARM64)
+          uses: actions/cache@v4
+          with:
+              path: deps/build-default-arm64-Release/destdir
+              key: deps-destdir-windows-arm64-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake') }}
 
         - name: Configure
           working-directory: ${{ github.workspace }}

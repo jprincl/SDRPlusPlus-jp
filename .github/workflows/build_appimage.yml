@@ -26,6 +26,31 @@ jobs:
         steps:
         - uses: actions/checkout@v4
 
+        # Shared across every workflow in the repo — tarballs are byte-identical
+        # regardless of target platform. The .pkg_cache lives inside the
+        # source tree, which the docker run below bind-mounts into the
+        # container, so the container reads/writes through to the same path.
+        - name: Cache deps download tarballs
+          uses: actions/cache@v4
+          with:
+              path: deps/.pkg_cache
+              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
+              restore-keys: |
+                  deps-pkgcache-
+
+        # Per-arch install prefix cache. make_appimage.sh forces the deps
+        # build dir to deps/build-appimage/ (no -Release suffix — its
+        # DEPS_PRESET=appimage, DEPS_BUILD_DIR override skips the usual
+        # _config suffix autobuild.cmake adds), so that's the path we cache.
+        # Exact-key only — autobuild.cmake's recipe-hash marker in
+        # destdir/share/sdrpp-deps/recipe-hash is the safety net against
+        # a wrong destdir slipping through.
+        - name: Cache deps install prefix (AppImage)
+          uses: actions/cache@v4
+          with:
+              path: deps/build-appimage/destdir
+              key: deps-destdir-appimage-${{ inputs.arch }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake') }}
+
         - name: Build Docker Image
           run: docker build -f $GITHUB_WORKSPACE/docker_builds/appimage/Dockerfile $GITHUB_WORKSPACE/docker_builds/appimage --tag sdrpp_appimage_build
 
@@ -35,6 +60,19 @@ jobs:
               -v $GITHUB_WORKSPACE:/root/SDRPlusPlus \
               --env VERSION_FULL="${{ inputs.version_full }}" \
               sdrpp_appimage_build /root/make_appimage.sh
+
+        # The container writes into the bind-mounted source tree as root,
+        # so anything it produces (newly downloaded tarballs under
+        # deps/.pkg_cache/, freshly built artifacts under
+        # deps/build-appimage/destdir/) is owned by root on the runner
+        # host. The actions/cache post-step runs as the runner user and
+        # can't read root-owned files; restore ownership so the cache save
+        # at job end works for both cached paths.
+        - name: Restore deps cache file ownership
+          if: always()
+          run: |
+            sudo chown -R $(id -u):$(id -g) deps/.pkg_cache 2>/dev/null || true
+            sudo chown -R $(id -u):$(id -g) deps/build-appimage/destdir 2>/dev/null || true
 
         - name: Recover AppImage
           working-directory: ${{ runner.workspace }}

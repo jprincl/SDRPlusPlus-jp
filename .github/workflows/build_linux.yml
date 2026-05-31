@@ -35,6 +35,18 @@ jobs:
         steps:
         - uses: actions/checkout@v4
 
+        # Shared across every workflow in the repo — tarballs are byte-identical
+        # regardless of target platform. The .pkg_cache lives inside the
+        # source tree, which the docker run below bind-mounts into the
+        # container, so the container reads/writes through to the same path.
+        - name: Cache deps download tarballs
+          uses: actions/cache@v4
+          with:
+              path: deps/.pkg_cache
+              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
+              restore-keys: |
+                  deps-pkgcache-
+
         - name: Create Docker Image
           run: docker build --build-arg BASE_IMAGE=${{ inputs.base_image }} -f $GITHUB_WORKSPACE/docker_builds/Dockerfile $GITHUB_WORKSPACE/docker_builds --tag sdrpp_build
 
@@ -46,6 +58,15 @@ jobs:
               --env EXTRA_APT="${{ inputs.extra_apt }}" \
               --env CURL_SOURCE="${{ inputs.curl_source }}" \
               sdrpp_build /root/do_build.sh
+
+        # The container writes into the bind-mounted source tree as root,
+        # so the resulting files (including newly downloaded tarballs in
+        # deps/.pkg_cache/) are owned by root on the runner host. The
+        # actions/cache post-step runs as the runner user and can't read
+        # them; restore ownership so the cache save at job end works.
+        - name: Restore deps cache file ownership
+          if: always()
+          run: sudo chown -R $(id -u):$(id -g) deps/.pkg_cache 2>/dev/null || true
 
         - name: Recover Deb Archive
           working-directory: ${{ runner.workspace }}
