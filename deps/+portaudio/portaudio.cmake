@@ -11,7 +11,7 @@ endif ()
 
 add_cmake_project(portaudio
     URL https://github.com/PortAudio/portaudio/archive/refs/tags/v19.7.0.tar.gz
-    # URL_HASH SHA256=<TODO: pin after first verified build>
+    URL_HASH SHA256=5af29ba58bbdbb7bbcefaaecc77ec8fc413f0db6f4c4e286c40c3e1b83174fa0
     CMAKE_ARGS
         -DPA_BUILD_SHARED=${_portaudio_build_shared}
         -DPA_BUILD_STATIC=${_portaudio_build_static}

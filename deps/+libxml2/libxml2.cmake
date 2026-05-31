@@ -4,7 +4,7 @@
 #
 add_cmake_project(libxml2
     URL https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz
-    # URL_HASH SHA256=<TODO: pin after first verified build>
+    URL_HASH SHA256=60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee
     CMAKE_ARGS
         -DLIBXML2_WITH_LZMA=OFF
         -DLIBXML2_WITH_PYTHON=OFF

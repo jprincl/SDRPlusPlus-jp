@@ -3,8 +3,9 @@
 #
 add_cmake_project(libairspyhf
     GIT_REPOSITORY https://github.com/airspy/airspyhf
-    GIT_TAG        master
-    GIT_SHALLOW    ON
+    # master @ 2026-05-31; bump when intentional.
+    GIT_TAG        30e0422ab5eae0fecd429b29e89c6e8699bb5cd6
+    GIT_SHALLOW    OFF
     PATCH_COMMAND  ${CMAKE_COMMAND}
                        -DSRC=<SOURCE_DIR>
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_libairspyhf.cmake

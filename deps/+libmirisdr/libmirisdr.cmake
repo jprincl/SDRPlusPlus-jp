@@ -4,8 +4,9 @@
 #
 add_cmake_project(libmirisdr
     GIT_REPOSITORY https://github.com/ericek111/libmirisdr-5
-    GIT_TAG        master
-    GIT_SHALLOW    ON
+    # master @ 2026-05-31; bump when intentional.
+    GIT_TAG        b4e6ffaf81fac1b74646537cdfee29580817ef74
+    GIT_SHALLOW    OFF
     PATCH_COMMAND  ${CMAKE_COMMAND}
                        -DSRC=<SOURCE_DIR>
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_libmirisdr.cmake

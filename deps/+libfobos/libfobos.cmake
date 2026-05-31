@@ -3,8 +3,9 @@
 #
 add_cmake_project(libfobos
     GIT_REPOSITORY https://github.com/AlexandreRouma/libfobos
-    GIT_TAG        main
-    GIT_SHALLOW    ON
+    # main @ 2026-05-31; bump when intentional.
+    GIT_TAG        4cf1676c94860d24b231edb06743e3efbb26fd74
+    GIT_SHALLOW    OFF
     PATCH_COMMAND  ${CMAKE_COMMAND}
                        -DSRC=<SOURCE_DIR>
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_libfobos.cmake

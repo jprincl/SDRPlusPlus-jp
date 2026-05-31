@@ -11,7 +11,8 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_cmake_project(volk
     GIT_REPOSITORY      https://github.com/gnuradio/volk
-    GIT_TAG             main
+    # main @ 2026-05-31; bump when intentional.
+    GIT_TAG             e97e1fb4dadd138a5842a8bcffb38e57b067334d
     GIT_SUBMODULES_RECURSE ON
     CMAKE_ARGS
         -DENABLE_TESTING=OFF

@@ -182,9 +182,11 @@ endif ()
 
 add_cmake_project(codec2
     GIT_REPOSITORY https://github.com/drowe67/codec2
-    # TODO: pin to a specific tag once we confirm what's current upstream.
-    GIT_TAG        main
-    GIT_SHALLOW    ON
+    # Pinned to current main; bump in lockstep when a recipe / patch change
+    # demands it. Floating refs break deps-cache reproducibility and force a
+    # rebuild on every upstream push.
+    GIT_TAG        310777b1c6f1af0bc7c72f5b32f80f6fd9136962
+    GIT_SHALLOW    OFF
     PATCH_COMMAND  ${CMAKE_COMMAND}
                        -DSRC=<SOURCE_DIR>
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_codec2.cmake

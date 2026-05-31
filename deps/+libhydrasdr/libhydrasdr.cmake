@@ -3,8 +3,9 @@
 #
 add_cmake_project(libhydrasdr
     GIT_REPOSITORY https://github.com/hydrasdr/hydrasdr-host
-    GIT_TAG        main
-    GIT_SHALLOW    ON
+    # main @ 2026-05-31; bump when intentional.
+    GIT_TAG        6e4014fe8db88b31a7c0f22faf042b63b4295d89
+    GIT_SHALLOW    OFF
     PATCH_COMMAND  ${CMAKE_COMMAND}
                        -DSRC=<SOURCE_DIR>
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_libhydrasdr.cmake

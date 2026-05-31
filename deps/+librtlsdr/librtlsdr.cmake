@@ -5,8 +5,9 @@
 #
 add_cmake_project(librtlsdr
     GIT_REPOSITORY https://github.com/AlexandreRouma/rtl-sdr
-    GIT_TAG        master
-    GIT_SHALLOW    ON
+    # master @ 2026-05-31; bump when intentional.
+    GIT_TAG        ddd6811b71359c299cf31b4e3e75fbb1ed5c964d
+    GIT_SHALLOW    OFF
     INSTALL_COMMAND
         ${CMAKE_COMMAND} --build . --target install --config ${CMAKE_BUILD_TYPE}
         COMMAND ${CMAKE_COMMAND}

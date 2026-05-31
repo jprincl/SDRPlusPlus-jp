@@ -37,7 +37,7 @@ if (WIN32)
 
     ExternalProject_Add(dep_sdrplay
         URL                 https://www.sdrpp.org/SDRplay.zip
-        # URL_HASH SHA256=<TODO: pin after first verified build>
+        URL_HASH            SHA256=ddb9810b4708b9f53dd7dad235a7c5ad6990d8d0a0c8a141548d01f80c8c92d0
         DOWNLOAD_DIR        ${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}/sdrplay
         SOURCE_DIR          ${CMAKE_CURRENT_BINARY_DIR}/sources/sdrplay
         BINARY_DIR          ${CMAKE_CURRENT_BINARY_DIR}/builds/sdrplay
@@ -109,6 +109,7 @@ elseif (UNIX AND NOT APPLE)
 
     ExternalProject_Add(dep_sdrplay
         URL                 ${_sdrplay_run_url}
+        URL_HASH            SHA256=3a97ca764263bbe76fb0f2220e6408942357e8864c19e1408a6d6987af382fe3
         DOWNLOAD_DIR        ${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}/sdrplay
         DOWNLOAD_NO_EXTRACT TRUE
         SOURCE_DIR          ${CMAKE_CURRENT_BINARY_DIR}/sources/sdrplay
@@ -165,6 +166,7 @@ else ()
 
     ExternalProject_Add(dep_sdrplay
         URL                 ${_sdrplay_pkg_url}
+        URL_HASH            SHA256=823aad8da816b93ac06716eeca02ee79f08746301b67425c7fb66ae15a6f9a59
         DOWNLOAD_NO_EXTRACT TRUE
         DOWNLOAD_DIR        ${${PROJECT_NAME}_DEP_DOWNLOAD_DIR}/sdrplay
         SOURCE_DIR          ${CMAKE_CURRENT_BINARY_DIR}/sources/sdrplay

@@ -8,8 +8,9 @@
 #
 add_cmake_project(libperseus-sdr
     GIT_REPOSITORY https://github.com/bubnikv/libperseus-sdr
-    GIT_TAG        master
-    GIT_SHALLOW    ON
+    # master @ 2026-05-31 (= GCC 14 fixes + README commit); bump when intentional.
+    GIT_TAG        ffb471cea64d4f2b8403e67bbaecda3117c8a690
+    GIT_SHALLOW    OFF
     PATCH_COMMAND  ${CMAKE_COMMAND}
                        -DSRC=<SOURCE_DIR>
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_libperseus_sdr.cmake

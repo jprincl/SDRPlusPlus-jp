@@ -27,7 +27,7 @@ endif ()
 
 add_cmake_project(libad9361
     URL                 https://github.com/analogdevicesinc/libad9361-iio/archive/refs/tags/v0.2.tar.gz
-    # URL_HASH SHA256=<TODO: pin after first verified build>
+    URL_HASH            SHA256=f0d935eb7f70fde8596d98e9eb1f311b408b87662fc1fff45ae3ed455697b747
     PATCH_COMMAND       ${CMAKE_COMMAND}
                             -DSRC=<SOURCE_DIR>
                             -P ${CMAKE_CURRENT_LIST_DIR}/patch_libad9361.cmake

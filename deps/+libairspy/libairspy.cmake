@@ -3,8 +3,9 @@
 #
 add_cmake_project(libairspy
     GIT_REPOSITORY https://github.com/airspy/airspyone_host
-    GIT_TAG        master
-    GIT_SHALLOW    ON
+    # master @ 2026-05-31; bump when intentional.
+    GIT_TAG        c6721000f19601512e9ba6b0340e5d9ced22a900
+    GIT_SHALLOW    OFF
     PATCH_COMMAND  ${CMAKE_COMMAND}
                        -DSRC=<SOURCE_DIR>
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_libairspy.cmake

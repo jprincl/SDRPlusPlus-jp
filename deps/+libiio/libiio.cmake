@@ -14,7 +14,7 @@ endif ()
 
 add_cmake_project(libiio
     URL https://github.com/analogdevicesinc/libiio/archive/refs/tags/v0.24.tar.gz
-    # URL_HASH SHA256=<TODO: pin after first verified build>
+    URL_HASH SHA256=a2b5d848531ea64fd9f95327dfd5a588bd227d9577281ec375e822702c6a52d5
     PATCH_COMMAND  ${CMAKE_COMMAND}
                        -DSRC=<SOURCE_DIR>
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_libiio.cmake

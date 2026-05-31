@@ -12,8 +12,9 @@ endif ()
 
 add_cmake_project(libhackrf
     GIT_REPOSITORY https://github.com/AlexandreRouma/hackrf
-    GIT_TAG        master
-    GIT_SHALLOW    ON
+    # master @ 2026-05-31; bump when intentional.
+    GIT_TAG        b1275e9c240b64cd7a8fd9bac70d77a8dd957616
+    GIT_SHALLOW    OFF
     SOURCE_SUBDIR  host
     CMAKE_ARGS
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON

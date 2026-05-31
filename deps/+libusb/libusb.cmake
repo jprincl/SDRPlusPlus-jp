@@ -15,8 +15,9 @@
 
 add_cmake_project(libusb
     GIT_REPOSITORY          https://github.com/libusb/libusb-cmake
-    GIT_TAG                 main
-    GIT_SHALLOW             ON
+    # main @ 2026-05-31; bump when intentional.
+    GIT_TAG                 c8477c10ac2ac6b1718d4d498e102b9f18b776f5
+    GIT_SHALLOW             OFF
     # GIT_SUBMODULES_RECURSE was added in CMake 3.17; do the recursive submodule
     # init via a PATCH_COMMAND so this works on Ubuntu focal's CMake 3.16 too.
     PATCH_COMMAND           ${GIT_EXECUTABLE} submodule update --init --recursive

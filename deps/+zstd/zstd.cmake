@@ -22,7 +22,7 @@ endif ()
 
 add_cmake_project(zstd
     URL https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
-    # URL_HASH SHA256=<TODO: pin after first verified build>
+    URL_HASH SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
     SOURCE_SUBDIR build/cmake
     CMAKE_ARGS
         ${_zstd_cmake_args}
