@@ -1,6 +1,13 @@
 #
 # libhydrasdr — HydraSDR USB Lite driver. Needs pthreads-win32 on Windows.
 #
+# Upstream ignores BUILD_SHARED_LIBS and builds/installs BOTH library types by
+# default (ENABLE_SHARED_LIB / ENABLE_STATIC_LIB are independent options, both
+# ON). Build only the policy-resolved variant, otherwise the unused shared lib
+# lands in the destdir prefix and leaks into packaging (the .deb ships every
+# lib/*.so* from the deps prefix).
+sdrpp_dep_get_linkage_option_bools(libhydrasdr _libhydrasdr_enable_shared _libhydrasdr_enable_static)
+
 add_cmake_project(libhydrasdr
     GIT_REPOSITORY https://github.com/hydrasdr/hydrasdr-host
     # main @ 2026-05-31; bump when intentional.
@@ -11,6 +18,8 @@ add_cmake_project(libhydrasdr
                        -P ${CMAKE_CURRENT_LIST_DIR}/patch_libhydrasdr.cmake
     CMAKE_ARGS
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DENABLE_SHARED_LIB=${_libhydrasdr_enable_shared}
+        -DENABLE_STATIC_LIB=${_libhydrasdr_enable_static}
 )
 
 set(DEP_libhydrasdr_DEPENDS libusb)
