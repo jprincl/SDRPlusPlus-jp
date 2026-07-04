@@ -55,7 +55,7 @@ jobs:
                     build_type_caps: Release
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
 
         - name: Install build tools
           run: |
@@ -121,7 +121,7 @@ jobs:
 
         - name: Save ${{ matrix.flavor_caps }} ${{ matrix.build_type_caps }} APK
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v6
           with:
               name: sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}
               path: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}/sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}.apk

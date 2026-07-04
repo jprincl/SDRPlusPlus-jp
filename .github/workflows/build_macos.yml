@@ -24,7 +24,7 @@ jobs:
         runs-on: ${{ inputs.runner }}
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
 
         - name: Install build tools
           run: brew install pkg-config autoconf automake libtool p7zip && pip3 install mako --break-system-packages
@@ -51,7 +51,7 @@ jobs:
               zip -r ${{runner.workspace}}/${{ inputs.zip_name }} SDR++-iak.app
 
         - name: Save Archive
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v6
           with:
               name: ${{ inputs.artifact }}
               path: ${{runner.workspace}}/${{ inputs.zip_name }}

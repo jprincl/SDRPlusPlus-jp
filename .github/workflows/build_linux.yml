@@ -36,7 +36,7 @@ jobs:
         runs-on: ${{ inputs.runner }}
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
 
         # The .pkg_cache lives inside the source tree, which the docker run
         # below bind-mounts into the container, so the container reads/writes
@@ -74,7 +74,7 @@ jobs:
           run: docker cp build:/root/SDRPlusPlus/sdrpp_debian_pkg.deb ./${{ inputs.artifact }}.deb
 
         - name: Save Deb Archive
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v6
           with:
               name: ${{ inputs.artifact }}
               path: ${{ runner.workspace }}/${{ inputs.artifact }}.deb

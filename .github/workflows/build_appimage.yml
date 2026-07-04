@@ -24,7 +24,7 @@ jobs:
         runs-on: ${{ inputs.runner }}
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
 
         # make_appimage.sh forces the deps build dir to deps/build-appimage/
         # (no -Release suffix — its DEPS_PRESET=appimage, DEPS_BUILD_DIR
@@ -68,7 +68,7 @@ jobs:
           run: docker cp build:/root/sdrpp-iak-${{ inputs.version_full }}-${{ inputs.arch }}.AppImage ./sdrpp-iak-${{ inputs.version_full }}-linux-${{ inputs.arch }}.AppImage
 
         - name: Save AppImage
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v6
           with:
               name: ${{ inputs.artifact }}
               path: ${{ runner.workspace }}/sdrpp-iak-${{ inputs.version_full }}-linux-${{ inputs.arch }}.AppImage

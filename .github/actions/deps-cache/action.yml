@@ -36,7 +36,7 @@ runs:
         # bump invalidates for everyone consistently; restore-keys keeps
         # tarballs accumulating across recipe edits.
         - name: Cache deps download tarballs
-          uses: actions/cache@v4
+          uses: actions/cache@v5
           with:
               path: deps/.pkg_cache
               key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
@@ -48,7 +48,7 @@ runs:
         # slipping through.
         - name: Cache deps install prefix
           if: inputs.destdir-path != ''
-          uses: actions/cache@v4
+          uses: actions/cache@v5
           with:
               path: ${{ inputs.destdir-path }}
               key: deps-destdir-${{ inputs.key-suffix }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake', inputs.extra-hash-file) }}

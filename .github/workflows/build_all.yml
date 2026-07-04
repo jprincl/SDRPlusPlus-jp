@@ -29,7 +29,7 @@ jobs:
             version_full: ${{ steps.read.outputs.version_full }}
             appimage: ${{ steps.filter.outputs.appimage }}
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
           with:
             fetch-depth: 0
 
@@ -105,7 +105,7 @@ jobs:
         runs-on: windows-2025-vs2026
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
 
         - uses: actions/setup-python@v5
           with:
@@ -148,7 +148,7 @@ jobs:
           run: Move-Item sdrpp_windows_${{ matrix.arch }}.zip sdrpp-iak-${{ needs.prepare.outputs.version_full }}-windows-${{ matrix.arch }}.zip
 
         - name: Save Archive
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v6
           with:
               name: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-windows-${{ matrix.arch }}
               path: ${{runner.workspace}}/sdrpp-iak-${{ needs.prepare.outputs.version_full }}-windows-${{ matrix.arch }}.zip
@@ -326,7 +326,7 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
           with:
             fetch-depth: 0
 
@@ -347,7 +347,7 @@ jobs:
             VER: ${{ needs.prepare.outputs.version_full }}
           run: git archive --format=tar.gz --prefix=sdrpp-iak-${VER}/ HEAD -o sdrpp_all/sdrpp-iak-${VER}-source.tar.gz
 
-        - uses: actions/upload-artifact@v4
+        - uses: actions/upload-artifact@v6
           with:
             name: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-all
             path: sdrpp_all/
@@ -415,7 +415,7 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
 
         - name: Install codespell
           run: sudo apt update -y && sudo apt install -y codespell
@@ -432,7 +432,7 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
         
         - name: Run check_clang_format
           run: cd $GITHUB_WORKSPACE && chmod +x ./check_clang_format.sh && ./check_clang_format.sh
