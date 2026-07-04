@@ -4,7 +4,7 @@
 # libhydrasdr (hydrasdr/hydrasdr-host) embeds a hydrasdr-tools sub-project
 # whose internal FetchContent pthreads4w uses the static MSVC CRT while the
 # parent project uses the DLL CRT, causing unresolved __imp__beginthreadex etc.
-# at link time. SDR++ only needs the shared library, so skip the tools
+# at link time. SDR++ only needs the library target, so skip the tools
 # subdirectory entirely.
 #
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/patch_helpers.cmake)
@@ -13,9 +13,27 @@ set(_f "${SRC}/CMakeLists.txt")
 file(READ "${_f}" _content)
 patch_replace_or_fail(_content
     "add_subdirectory(hydrasdr-tools)"
-    "# add_subdirectory(hydrasdr-tools)  # disabled by SDR++ deps build (tools not needed)")
+    "# hydrasdr-tools subdirectory disabled by SDR++ deps build (tools not needed)")
 file(WRITE "${_f}" "${_content}")
 message(STATUS "Patched ${_f}")
+
+set(_lib_cmake "${SRC}/libhydrasdr/CMakeLists.txt")
+if (EXISTS "${_lib_cmake}")
+    file(READ "${_lib_cmake}" _lib_cmake_content)
+    patch_replace_or_fail(_lib_cmake_content
+[=[set_target_properties(hydrasdr PROPERTIES
+    VERSION ${HYDRASDR_VER_MAJOR}.${HYDRASDR_VER_MINOR}.${HYDRASDR_VER_REVISION}
+    SOVERSION ${HYDRASDR_VER_MAJOR}
+)]=]
+[=[if(TARGET hydrasdr)
+  set_target_properties(hydrasdr PROPERTIES
+    VERSION ${HYDRASDR_VER_MAJOR}.${HYDRASDR_VER_MINOR}.${HYDRASDR_VER_REVISION}
+    SOVERSION ${HYDRASDR_VER_MAJOR}
+  )
+endif()]=])
+    file(WRITE "${_lib_cmake}" "${_lib_cmake_content}")
+    message(STATUS "Patched ${_lib_cmake}")
+endif ()
 
 set(_h "${SRC}/libhydrasdr/src/hydrasdr.h")
 file(READ "${_h}" _header)
