@@ -2,8 +2,8 @@
 if (NOT SDRPP_CORE_ROOT)
     set(SDRPP_CORE_ROOT "@SDRPP_CORE_ROOT@")
 endif ()
-if (NOT SDRPP_MODULE_COMPILER_FLAGS)
-    set(SDRPP_MODULE_COMPILER_FLAGS @SDRPP_MODULE_COMPILER_FLAGS@)
+if (NOT DEFINED SDRPP_MODULE_COMPILE_OPTIONS)
+    set(SDRPP_MODULE_COMPILE_OPTIONS "@SDRPP_MODULE_COMPILE_OPTIONS@")
 endif ()
 if (NOT SDRPP_MODULE_RUNTIME_OUTPUT_DIRECTORY)
     set(SDRPP_MODULE_RUNTIME_OUTPUT_DIRECTORY "@SDRPP_MODULE_RUNTIME_OUTPUT_DIRECTORY@")
@@ -15,7 +15,9 @@ endif ()
 # Created shared lib and link to core
 add_library(${PROJECT_NAME} SHARED ${SRC})
 target_link_libraries(${PROJECT_NAME} PRIVATE sdrpp_core)
-target_include_directories(${PROJECT_NAME} PRIVATE "${SDRPP_CORE_ROOT}/src/")
+target_include_directories(${PROJECT_NAME} PRIVATE
+    "${SDRPP_CORE_ROOT}"
+    "${SDRPP_CORE_ROOT}/imgui")
 set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "")
 if (MSVC AND SDRPP_MODULE_RUNTIME_OUTPUT_DIRECTORY)
     set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -27,7 +29,8 @@ if (MSVC AND SDRPP_MODULE_RUNTIME_OUTPUT_DIRECTORY)
 endif ()
 
 # Set compile arguments
-target_compile_options(${PROJECT_NAME} PRIVATE ${SDRPP_MODULE_COMPILER_FLAGS})
+target_compile_options(${PROJECT_NAME} PRIVATE ${SDRPP_MODULE_COMPILE_OPTIONS})
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 
 # Install directives
 install(TARGETS ${PROJECT_NAME} DESTINATION lib/sdrpp-iak/plugins)

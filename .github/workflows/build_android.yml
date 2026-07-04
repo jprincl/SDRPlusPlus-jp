@@ -97,7 +97,7 @@ jobs:
           uses: actions/cache@v4
           with:
               path: deps/build-android-${{ matrix.flavor }}*-${{ matrix.build_type_caps }}/destdir
-              key: deps-destdir-android-${{ matrix.flavor }}-${{ matrix.build_type_caps }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'android/app/build.gradle') }}
+              key: deps-destdir-android-${{ matrix.flavor }}-${{ matrix.build_type_caps }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake', 'android/app/build.gradle') }}
 
         - name: Install Android development environment
           run: bash ./install_android_devenv.sh

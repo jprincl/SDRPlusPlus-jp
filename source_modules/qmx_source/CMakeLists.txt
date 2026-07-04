@@ -9,7 +9,7 @@ set(SRC
 include(${SDRPP_MODULE_CMAKE})
 
 if (MSVC)
-    add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+    target_compile_definitions(qmx_source PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif ()
 
 target_include_directories(qmx_source PRIVATE "../../decoder_modules/radio/src")

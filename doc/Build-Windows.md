@@ -5,13 +5,14 @@ Single-config build model: each build tree produces exactly one configuration
 development, switch presets — Visual Studio and VS Code both honor
 `CMakePresets.json` from a config dropdown, so this is one click.
 
-Why single-config: the MSVC C runtime comes in two incompatible flavors
-(`/MT` for Release, `/MTd` for Debug). `/MTd` enables `_ITERATOR_DEBUG_LEVEL=2`,
-which changes the layout of `std::vector`, `std::string`, `std::shared_ptr`,
-etc. A Debug app linked against `/MT` deps has different STL ABI on each side
-of every library boundary — `LNK4098`/`LNK4204` at link time, heap corruption
-and iterator-check crashes at runtime. The clean fix is to build each
-configuration end-to-end in its own tree with a matching CRT.
+Why single-config: even with the MSVC DLL CRT, Debug and Release builds use
+different runtime/standard-library modes (`/MDd` for Debug, `/MD` for
+Release). `/MDd` enables `_ITERATOR_DEBUG_LEVEL=2`, which changes the layout
+of `std::vector`, `std::string`, `std::shared_ptr`, etc. A Debug app linked
+against `/MD` deps has different STL ABI on each side of every library boundary
+— `LNK4098`/`LNK4204` at link time, heap corruption and iterator-check crashes
+at runtime. The clean fix is to build each configuration end-to-end in its own
+tree with a matching CRT.
 
 ## Prerequisites (one-time host setup)
 
@@ -35,9 +36,9 @@ configuration in its own build tree:
 
 | Preset                       | CRT   | Optimization     | Build tree                          | Deps tree                              |
 | ---------------------------- | ----- | ---------------- | ----------------------------------- | -------------------------------------- |
-| `msvc-x64-debug`             | `/MTd`| `/Od /Zi`        | `build-msvc-x64-debug/`             | `deps/build-default-Debug/`            |
-| `msvc-x64-relwithdebinfo`    | `/MT` | `/O2 /Zi`        | `build-msvc-x64-relwithdebinfo/`    | `deps/build-default-RelWithDebInfo/`   |
-| `msvc-x64-release`           | `/MT` | `/O2 /DNDEBUG`   | `build-msvc-x64-release/`           | `deps/build-default-Release/`          |
+| `msvc-x64-debug`             | `/MDd`| `/Od /Zi`        | `build-msvc-x64-debug/`             | `deps/build-default-Debug/`            |
+| `msvc-x64-relwithdebinfo`    | `/MD` | `/O2 /Zi`        | `build-msvc-x64-relwithdebinfo/`    | `deps/build-default-RelWithDebInfo/`   |
+| `msvc-x64-release`           | `/MD` | `/O2 /DNDEBUG`   | `build-msvc-x64-release/`           | `deps/build-default-Release/`          |
 
 All three share a single download cache at `deps/.pkg_cache/`, so tarballs are
 fetched once and reused across configurations.
@@ -57,10 +58,12 @@ What happens:
 1. The configure step sees `OPT_BUILD_DEPS=ON`, hands off to
    `deps/autobuild.cmake`, which configures `deps/` as a sub-project under
    `deps/build-default-Debug/` and builds every recipe in `Debug` mode
-   (`/MTd`, full debug info, `_DEBUG` defined, MSVC STL debug iterators
+   (`/MDd`, full debug info, `_DEBUG` defined, MSVC STL debug iterators
    active).
 2. Deps install into `deps/build-default-Debug/destdir/usr/local/`.
    `CMAKE_PREFIX_PATH` is auto-pointed there for the parent configure.
+   Reconfiguring keeps a single autobuild-managed prefix in that cache entry,
+   replacing it if the deps preset, build config, or build directory changes.
 3. The parent configure continues — every `find_package` and `sdrpp_link_dep`
    resolves into the per-config deps prefix.
 4. The build step compiles app + plugins, copies runtime DLLs next to the
@@ -114,7 +117,7 @@ cmake --build build-msvc-x64-debug
 ## Debugging into dependencies
 
 The whole point of the `msvc-x64-debug` preset: every dep is built with
-`/Od /Zi /MTd`, so stepping into `spdlog`, `libairspy`, `librtlsdr`, etc.
+`/Od /Zi /MDd`, so stepping into `spdlog`, `libairspy`, `librtlsdr`, etc.
 from the VS debugger shows real source, real variable values, no `<optimized
 out>`. PDBs land next to the DLLs in the deps `destdir/bin/` and are
 auto-copied alongside `sdrpp-iak.exe` by the same POST_BUILD step that
@@ -140,7 +143,7 @@ functions inlined). Use it for performance-realistic debugging; use
 ```powershell
 # from D:\src\SDRPlusPlus, in a VS Developer PowerShell:
 
-# Debug (step into deps, /MTd, MSVC STL debug iterators):
+# Debug (step into deps, /MDd, MSVC STL debug iterators):
 cmake --preset msvc-x64-debug
 cmake --build build-msvc-x64-debug
 

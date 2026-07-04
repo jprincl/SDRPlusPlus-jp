@@ -25,38 +25,95 @@
             }
         },
         {
-            "name": "vs2026-x64",
-            "displayName": "Visual Studio 2026, x64",
+            "name": "vs2026-x64-base",
+            "hidden": true,
             "inherits": "default",
             "generator": "Visual Studio 18 2026",
             "architecture": "x64",
-            "binaryDir": "${sourceDir}/build-vs2026-x64",
             "condition": {
                 "type": "equals",
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
             },
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "SDRPP_DEP_PROFILE": "portable"
             }
         },
         {
-            "name": "vs2026-arm64",
-            "displayName": "Visual Studio 2026, ARM64",
-            "inherits": "default",
-            "generator": "Visual Studio 18 2026",
-            "architecture": "ARM64",
-            "binaryDir": "${sourceDir}/build-vs2026-arm64",
-            "condition": {
-                "type": "equals",
-                "lhs": "${hostSystemName}",
-                "rhs": "Windows"
-            },
+            "name": "vs2026-x64-debug",
+            "displayName": "Visual Studio 2026, x64 Debug",
+            "inherits": "vs2026-x64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-x64-Debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_CONFIGURATION_TYPES": "Debug"
+            }
+        },
+        {
+            "name": "vs2026-x64-relwithdebinfo",
+            "displayName": "Visual Studio 2026, x64 RelWithDebInfo",
+            "inherits": "vs2026-x64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-x64-RelWithDebInfo",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-                "SDRPP_DEP_PROFILE": "portable"
+                "CMAKE_CONFIGURATION_TYPES": "RelWithDebInfo"
             }
+        },
+        {
+            "name": "vs2026-x64-release",
+            "displayName": "Visual Studio 2026, x64 Release",
+            "inherits": "vs2026-x64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-x64-Release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_CONFIGURATION_TYPES": "Release"
+            }
+        },
+        {
+            "name": "vs2026-x64",
+            "displayName": "Visual Studio 2026, x64 RelWithDebInfo",
+            "inherits": "vs2026-x64-relwithdebinfo"
+        },
+        {
+            "name": "vs2026-arm64-base",
+            "hidden": true,
+            "inherits": "vs2026-x64-base",
+            "architecture": "ARM64"
+        },
+        {
+            "name": "vs2026-arm64-debug",
+            "displayName": "Visual Studio 2026, ARM64 Debug",
+            "inherits": "vs2026-arm64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-arm64-Debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_CONFIGURATION_TYPES": "Debug"
+            }
+        },
+        {
+            "name": "vs2026-arm64-relwithdebinfo",
+            "displayName": "Visual Studio 2026, ARM64 RelWithDebInfo",
+            "inherits": "vs2026-arm64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-arm64-RelWithDebInfo",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_CONFIGURATION_TYPES": "RelWithDebInfo"
+            }
+        },
+        {
+            "name": "vs2026-arm64-release",
+            "displayName": "Visual Studio 2026, ARM64 Release",
+            "inherits": "vs2026-arm64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-arm64-Release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_CONFIGURATION_TYPES": "Release"
+            }
+        },
+        {
+            "name": "vs2026-arm64",
+            "displayName": "Visual Studio 2026, ARM64 RelWithDebInfo",
+            "inherits": "vs2026-arm64-relwithdebinfo"
         },
         {
             "name": "android-base",

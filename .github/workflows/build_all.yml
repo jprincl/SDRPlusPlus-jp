@@ -80,7 +80,7 @@ jobs:
             #   - core curl/HTTP wrappers and curl-using modules
             #   - the icon resource (referenced by the desktop file)
             if git diff --name-only "$BASE...HEAD" | \
-              grep -qE '^(docker_builds/appimage/|deps/|\.github/workflows/build_appimage\.yml|\.github/workflows/build_all\.yml|sdrpp-iak\.desktop|CMakeLists\.txt|core/CMakeLists\.txt|sdrpp_module\.cmake|cmake/sdrpp_collect_required_deps\.cmake|cmake/sdrpp_find_dep\.cmake|core/src/core\.cpp|core/src/command_args\.cpp|core/src/utils/curl_init\.(cpp|h)|core/src/utils/proto/curl_http\.(cpp|h)|misc_modules/spots/|root/res/icons/)'; then
+              grep -qE '^(docker_builds/appimage/|deps/|\.github/workflows/build_appimage\.yml|\.github/workflows/build_all\.yml|sdrpp-iak\.desktop|CMakeLists\.txt|core/CMakeLists\.txt|sdrpp_module\.cmake|cmake/sdrpp_collect_required_deps\.cmake|cmake/sdrpp_dep_list_helpers\.cmake|cmake/sdrpp_find_dep\.cmake|core/src/core\.cpp|core/src/command_args\.cpp|core/src/utils/curl_init\.(cpp|h)|core/src/utils/proto/curl_http\.(cpp|h)|misc_modules/spots/|root/res/icons/)'; then
               echo "appimage=true" >> $GITHUB_OUTPUT
             else
               echo "appimage=false" >> $GITHUB_OUTPUT
@@ -141,7 +141,7 @@ jobs:
           uses: actions/cache@v4
           with:
               path: deps/build-default-Release/destdir
-              key: deps-destdir-windows-x64-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake') }}
+              key: deps-destdir-windows-x64-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake') }}
 
         - name: Configure
           working-directory: ${{ github.workspace }}
@@ -196,7 +196,7 @@ jobs:
           uses: actions/cache@v4
           with:
               path: deps/build-default-arm64-Release/destdir
-              key: deps-destdir-windows-arm64-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake') }}
+              key: deps-destdir-windows-arm64-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake') }}
 
         - name: Configure
           working-directory: ${{ github.workspace }}

@@ -11,20 +11,14 @@
 # BUILD_SHARED_LIBS model when SDRPP_DEP_POLICY_STRICT=OFF.
 #
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/sdrpp_dep_list_helpers.cmake")
+
 if (COMMAND sdrpp_register_dep)
     return()
 endif ()
 
-function(_sdrpp_dep_normalize_list out_var raw_value)
-    set(_list "${raw_value}")
-    string(REPLACE "," ";" _list "${_list}")
-    string(REGEX REPLACE "[ \t\r\n]+" ";" _list "${_list}")
-    list(FILTER _list EXCLUDE REGEX "^$")
-    set(${out_var} ${_list} PARENT_SCOPE)
-endfunction()
-
 function(_sdrpp_dep_list_contains out_var dep_name raw_value)
-    _sdrpp_dep_normalize_list(_list "${raw_value}")
+    sdrpp_normalize_dep_list(_list "${raw_value}")
     if ("${dep_name}" IN_LIST _list)
         set(${out_var} TRUE PARENT_SCOPE)
     else ()

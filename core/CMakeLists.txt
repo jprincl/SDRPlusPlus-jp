@@ -3,30 +3,23 @@ project(sdrpp_core)
 
 if (USE_INTERNAL_LIBCORRECT)
     add_subdirectory("libcorrect/")
-endif (USE_INTERNAL_LIBCORRECT)
-
-if (USE_BUNDLE_DEFAULTS)
-add_definitions(-DIS_MACOS_BUNDLE)
-endif (USE_BUNDLE_DEFAULTS)
+endif ()
 
 # Main code
 file(GLOB_RECURSE SRC "src/*.cpp" "src/*.c")
 
-add_definitions(-DSDRPP_IS_CORE)
-add_definitions(-DFLOG_ANDROID_TAG="SDR++ iak")
 if (MSVC)
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
 endif ()
 
 # Configure backend sources
 if (OPT_BACKEND_GLFW)
     file(GLOB_RECURSE BACKEND_SRC "backends/glfw/*.cpp" "backends/glfw/*.c")
-endif (OPT_BACKEND_GLFW)
+endif ()
 if (OPT_BACKEND_ANDROID)
     file(GLOB_RECURSE BACKEND_SRC "backends/android/*.cpp" "backends/android/*.c")
     set(BACKEND_SRC ${BACKEND_SRC} ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
-endif (OPT_BACKEND_ANDROID)
+endif ()
 
 # Add code to dyn lib
 add_library(sdrpp_core SHARED ${SRC} ${BACKEND_SRC})
@@ -40,7 +33,17 @@ if (MSVC AND SDRPP_RUNTIME_OUTPUT_DIRECTORY)
 endif ()
 
 # Set compiler options
-target_compile_options(sdrpp_core PRIVATE ${SDRPP_COMPILER_FLAGS})
+target_compile_options(sdrpp_core PRIVATE ${SDRPP_COMPILE_OPTIONS})
+target_compile_features(sdrpp_core PUBLIC cxx_std_17)
+target_compile_definitions(sdrpp_core PRIVATE
+    SDRPP_IS_CORE
+    "FLOG_ANDROID_TAG=\"SDR++ iak\"")
+if (USE_BUNDLE_DEFAULTS)
+    target_compile_definitions(sdrpp_core PRIVATE IS_MACOS_BUNDLE)
+endif ()
+if (MSVC)
+    target_compile_definitions(sdrpp_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+endif ()
 
 # Set the install prefix
 target_compile_definitions(sdrpp_core PUBLIC INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}")
@@ -58,11 +61,11 @@ target_include_directories(sdrpp_core PUBLIC "src/imgui")
 if (OPT_BACKEND_GLFW)
     target_include_directories(sdrpp_core PUBLIC "backends/glfw")
     target_include_directories(sdrpp_core PUBLIC "backends/glfw/imgui")
-endif (OPT_BACKEND_GLFW)
+endif ()
 if (OPT_BACKEND_ANDROID)
     target_include_directories(sdrpp_core PUBLIC "backends/android")
     target_include_directories(sdrpp_core PUBLIC "backends/android/imgui")
-endif (OPT_BACKEND_ANDROID)
+endif ()
 
 # Link to libcorrect
 if (USE_INTERNAL_LIBCORRECT)
@@ -118,43 +121,31 @@ endif ()
 
 if (OPT_OVERRIDE_STD_FILESYSTEM)
     target_include_directories(sdrpp_core PUBLIC "std_replacement")
-endif (OPT_OVERRIDE_STD_FILESYSTEM)
+endif ()
+
+if (OPT_BACKEND_GLFW)
+    sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
+endif ()
+
+sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
+sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
+    TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
+    SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
+    STATIC_TARGETS zstd::libzstd_static)
+sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
 
 if (MSVC)
     # OpenGL
     find_package(OpenGL REQUIRED)
     target_link_libraries(sdrpp_core PUBLIC OpenGL::GL)
 
-    if (OPT_BACKEND_GLFW)
-        sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
-    endif ()
-
-    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
-
     # WinSock2
     target_link_libraries(sdrpp_core PUBLIC wsock32 ws2_32 iphlpapi)
-
-    sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
-        TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
-        SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
-        STATIC_TARGETS zstd::libzstd_static)
-
-    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
 elseif (ANDROID)
     target_include_directories(sdrpp_core PUBLIC
         ${ANDROID_NDK}/sources/android/native_app_glue
     )
 
-    if (OPT_BACKEND_GLFW)
-        sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
-    endif ()
-
-    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
-    sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
-        TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
-        SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
-        STATIC_TARGETS zstd::libzstd_static)
-    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
     target_link_libraries(sdrpp_core PUBLIC
         android
         EGL
@@ -164,15 +155,6 @@ elseif (ANDROID)
 else()
     find_package(OpenGL REQUIRED)
 
-    if (OPT_BACKEND_GLFW)
-        sdrpp_link_dep(sdrpp_core glfw3 PUBLIC PC_NAME glfw3 TARGETS glfw3::glfw glfw)
-    endif ()
-    sdrpp_link_dep(sdrpp_core FFTW3f PUBLIC PC_NAME fftw3f TARGETS FFTW3::fftw3f)
-    sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
-        TARGETS zstd::libzstd_shared zstd::libzstd zstd zstd::libzstd_static
-        SHARED_TARGETS zstd::libzstd_shared zstd::libzstd zstd
-        STATIC_TARGETS zstd::libzstd_static)
-    sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
     target_link_libraries(sdrpp_core PUBLIC
         ${OPENGL_LIBRARIES}
     )
@@ -190,10 +172,6 @@ else()
     endif ()
 
 endif ()
-
-set(CORE_FILES ${RUNTIME_OUTPUT_DIRECTORY} PARENT_SCOPE)
-
-# cmake .. "-DCMAKE_TOOLCHAIN_FILE=C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
 # Install directives
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux|FreeBSD")

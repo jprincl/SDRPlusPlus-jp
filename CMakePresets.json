@@ -2,19 +2,17 @@
     "version": 3,
     "configurePresets": [
         {
-            "name": "vs2026-x64",
-            "displayName": "Visual Studio 2026 x64 (uses pre-built deps)",
-            "description": "Configures SDR++ against deps already built via deps/build-vs2026-x64. Run 'cmake --preset vs2026-x64 -S deps -B deps/build-vs2026-x64 && cmake --build ...' first.",
+            "name": "vs2026-x64-base",
+            "hidden": true,
+            "description": "Common Visual Studio 2026 x64 settings. Concrete presets pin exactly one configuration so the app and deps prefixes cannot drift.",
             "generator": "Visual Studio 18 2026",
             "architecture": "x64",
-            "binaryDir": "${sourceDir}/build-vs2026-x64",
             "condition": {
                 "type": "equals",
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
             },
             "cacheVariables": {
-                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-x64/destdir/usr/local",
                 "COPY_MSVC_REDISTRIBUTABLES": "ON",
                 "OPT_BUILD_BLADERF_SOURCE":       "ON",
                 "OPT_BUILD_LIMESDR_SOURCE":       "ON",
@@ -28,44 +26,175 @@
             }
         },
         {
-            "name": "vs2026-x64-bootstrap",
-            "displayName": "Visual Studio 2026 x64 (build deps + app in one shot)",
-            "description": "First-time setup: configures deps as a sub-project (OPT_BUILD_DEPS=ON), builds them, then continues with the app configure.",
-            "inherits": "vs2026-x64",
-            "binaryDir": "${sourceDir}/build-vs2026-x64-bootstrap",
+            "name": "vs2026-x64-debug",
+            "displayName": "Visual Studio 2026 x64 Debug (uses pre-built deps)",
+            "description": "Configures SDR++ Debug against deps already built via deps/build-vs2026-x64-Debug.",
+            "inherits": "vs2026-x64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-x64-Debug",
             "cacheVariables": {
-                "OPT_BUILD_DEPS": "ON",
-                "SDRPP_DEPS_PRESET": "vs2026-x64"
+                "CMAKE_CONFIGURATION_TYPES": "Debug",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-x64-Debug/destdir/usr/local"
             }
         },
         {
-            "name": "vs2026-arm64",
-            "displayName": "Visual Studio 2026 ARM64 (uses pre-built deps)",
-            "inherits": "vs2026-x64",
-            "architecture": "ARM64",
-            "binaryDir": "${sourceDir}/build-vs2026-arm64",
+            "name": "vs2026-x64-relwithdebinfo",
+            "displayName": "Visual Studio 2026 x64 RelWithDebInfo (uses pre-built deps)",
+            "description": "Configures SDR++ RelWithDebInfo against deps already built via deps/build-vs2026-x64-RelWithDebInfo.",
+            "inherits": "vs2026-x64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-x64-RelWithDebInfo",
             "cacheVariables": {
-                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-arm64/destdir/usr/local",
+                "CMAKE_CONFIGURATION_TYPES": "RelWithDebInfo",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-x64-RelWithDebInfo/destdir/usr/local"
+            }
+        },
+        {
+            "name": "vs2026-x64-release",
+            "displayName": "Visual Studio 2026 x64 Release (uses pre-built deps)",
+            "description": "Configures SDR++ Release against deps already built via deps/build-vs2026-x64-Release.",
+            "inherits": "vs2026-x64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-x64-Release",
+            "cacheVariables": {
+                "CMAKE_CONFIGURATION_TYPES": "Release",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-x64-Release/destdir/usr/local"
+            }
+        },
+        {
+            "name": "vs2026-x64",
+            "displayName": "Visual Studio 2026 x64 RelWithDebInfo (uses pre-built deps)",
+            "description": "Compatibility preset for the default Visual Studio x64 configuration. Uses deps/build-vs2026-x64-RelWithDebInfo.",
+            "inherits": "vs2026-x64-relwithdebinfo"
+        },
+        {
+            "name": "vs2026-arm64-base",
+            "hidden": true,
+            "inherits": "vs2026-x64-base",
+            "architecture": "ARM64",
+            "cacheVariables": {
                 "OPT_BUILD_SDRPLAY_SOURCE":        "OFF",
                 "OPT_BUILD_HYDRASDR_RFONE_SOURCE": "OFF"
             }
         },
         {
+            "name": "vs2026-arm64-debug",
+            "displayName": "Visual Studio 2026 ARM64 Debug (uses pre-built deps)",
+            "description": "Configures SDR++ ARM64 Debug against deps already built via deps/build-vs2026-arm64-Debug.",
+            "inherits": "vs2026-arm64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-arm64-Debug",
+            "cacheVariables": {
+                "CMAKE_CONFIGURATION_TYPES": "Debug",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-arm64-Debug/destdir/usr/local"
+            }
+        },
+        {
+            "name": "vs2026-arm64-relwithdebinfo",
+            "displayName": "Visual Studio 2026 ARM64 RelWithDebInfo (uses pre-built deps)",
+            "description": "Configures SDR++ ARM64 RelWithDebInfo against deps already built via deps/build-vs2026-arm64-RelWithDebInfo.",
+            "inherits": "vs2026-arm64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-arm64-RelWithDebInfo",
+            "cacheVariables": {
+                "CMAKE_CONFIGURATION_TYPES": "RelWithDebInfo",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-arm64-RelWithDebInfo/destdir/usr/local"
+            }
+        },
+        {
+            "name": "vs2026-arm64-release",
+            "displayName": "Visual Studio 2026 ARM64 Release (uses pre-built deps)",
+            "description": "Configures SDR++ ARM64 Release against deps already built via deps/build-vs2026-arm64-Release.",
+            "inherits": "vs2026-arm64-base",
+            "binaryDir": "${sourceDir}/build-vs2026-arm64-Release",
+            "cacheVariables": {
+                "CMAKE_CONFIGURATION_TYPES": "Release",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/deps/build-vs2026-arm64-Release/destdir/usr/local"
+            }
+        },
+        {
+            "name": "vs2026-arm64",
+            "displayName": "Visual Studio 2026 ARM64 RelWithDebInfo (uses pre-built deps)",
+            "description": "Compatibility preset for the default Visual Studio ARM64 configuration. Uses deps/build-vs2026-arm64-RelWithDebInfo.",
+            "inherits": "vs2026-arm64-relwithdebinfo"
+        },
+        {
+            "name": "msvc-vs-x64-debug",
+            "displayName": "MSVC x64 Debug (Visual Studio)",
+            "description": "CI-friendly Visual Studio Debug build that bootstraps matching Debug deps without requiring a pre-configured developer shell.",
+            "inherits": "vs2026-x64-debug",
+            "binaryDir": "${sourceDir}/build-msvc-vs-x64-Debug",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": null,
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "vs2026-x64-debug",
+                "SDRPP_DEPS_BUILD_CONFIG": "Debug",
+                "SDRPP_DEPS_BUILD_DIR": "${sourceDir}/deps/build-vs2026-x64-Debug"
+            }
+        },
+        {
+            "name": "msvc-vs-x64-relwithdebinfo",
+            "displayName": "MSVC x64 RelWithDebInfo (Visual Studio)",
+            "description": "CI-friendly Visual Studio RelWithDebInfo build that bootstraps matching RelWithDebInfo deps without requiring a pre-configured developer shell.",
+            "inherits": "vs2026-x64-relwithdebinfo",
+            "binaryDir": "${sourceDir}/build-msvc-vs-x64-RelWithDebInfo",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": null,
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "vs2026-x64-relwithdebinfo",
+                "SDRPP_DEPS_BUILD_CONFIG": "RelWithDebInfo",
+                "SDRPP_DEPS_BUILD_DIR": "${sourceDir}/deps/build-vs2026-x64-RelWithDebInfo"
+            }
+        },
+        {
             "name": "msvc-vs-x64-release",
             "displayName": "MSVC x64 Release (Visual Studio)",
-            "description": "CI-friendly Visual Studio Release build that bootstraps deps without requiring a pre-configured developer shell.",
-            "inherits": "vs2026-x64-bootstrap",
-            "binaryDir": "${sourceDir}/build-msvc-vs-x64-release"
+            "description": "CI-friendly Visual Studio Release build that bootstraps matching Release deps without requiring a pre-configured developer shell.",
+            "inherits": "vs2026-x64-release",
+            "binaryDir": "${sourceDir}/build-msvc-vs-x64-Release",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": null,
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "vs2026-x64-release",
+                "SDRPP_DEPS_BUILD_CONFIG": "Release",
+                "SDRPP_DEPS_BUILD_DIR": "${sourceDir}/deps/build-vs2026-x64-Release"
+            }
+        },
+        {
+            "name": "msvc-vs-arm64-debug",
+            "displayName": "MSVC ARM64 Debug (Visual Studio)",
+            "description": "CI-friendly Visual Studio ARM64 Debug build that bootstraps matching Debug deps without requiring a pre-configured developer shell.",
+            "inherits": "vs2026-arm64-debug",
+            "binaryDir": "${sourceDir}/build-msvc-vs-arm64-Debug",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": null,
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "vs2026-arm64-debug",
+                "SDRPP_DEPS_BUILD_CONFIG": "Debug",
+                "SDRPP_DEPS_BUILD_DIR": "${sourceDir}/deps/build-vs2026-arm64-Debug"
+            }
+        },
+        {
+            "name": "msvc-vs-arm64-relwithdebinfo",
+            "displayName": "MSVC ARM64 RelWithDebInfo (Visual Studio)",
+            "description": "CI-friendly Visual Studio ARM64 RelWithDebInfo build that bootstraps matching RelWithDebInfo deps without requiring a pre-configured developer shell.",
+            "inherits": "vs2026-arm64-relwithdebinfo",
+            "binaryDir": "${sourceDir}/build-msvc-vs-arm64-RelWithDebInfo",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": null,
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "vs2026-arm64-relwithdebinfo",
+                "SDRPP_DEPS_BUILD_CONFIG": "RelWithDebInfo",
+                "SDRPP_DEPS_BUILD_DIR": "${sourceDir}/deps/build-vs2026-arm64-RelWithDebInfo"
+            }
         },
         {
             "name": "msvc-vs-arm64-release",
             "displayName": "MSVC ARM64 Release (Visual Studio)",
-            "description": "CI-friendly Visual Studio ARM64 Release build that bootstraps deps without requiring a pre-configured developer shell.",
-            "inherits": "vs2026-arm64",
-            "binaryDir": "${sourceDir}/build-msvc-vs-arm64-release",
+            "description": "CI-friendly Visual Studio ARM64 Release build that bootstraps matching Release deps without requiring a pre-configured developer shell.",
+            "inherits": "vs2026-arm64-release",
+            "binaryDir": "${sourceDir}/build-msvc-vs-arm64-Release",
             "cacheVariables": {
+                "CMAKE_PREFIX_PATH": null,
                 "OPT_BUILD_DEPS": "ON",
-                "SDRPP_DEPS_PRESET": "vs2026-arm64"
+                "SDRPP_DEPS_PRESET": "vs2026-arm64-release",
+                "SDRPP_DEPS_BUILD_CONFIG": "Release",
+                "SDRPP_DEPS_BUILD_DIR": "${sourceDir}/deps/build-vs2026-arm64-Release"
             }
         },
         {
@@ -95,8 +224,8 @@
         },
         {
             "name": "msvc-x64-debug",
-            "displayName": "MSVC x64 Debug (Ninja, /MTd)",
-            "description": "Single-config Debug build: /MTd everywhere, MSVC STL debug iterators active, full debuggability into app and deps. Builds its own deps tree under deps/build-default-Debug.",
+            "displayName": "MSVC x64 Debug (Ninja, /MDd)",
+            "description": "Single-config Debug build: /MDd everywhere, MSVC STL debug iterators active, full debuggability into app and deps. Builds its own deps tree under deps/build-default-Debug.",
             "inherits": "ninja-msvc-base",
             "binaryDir": "${sourceDir}/build-msvc-x64-debug",
             "cacheVariables": {
@@ -105,8 +234,8 @@
         },
         {
             "name": "msvc-x64-relwithdebinfo",
-            "displayName": "MSVC x64 RelWithDebInfo (Ninja, /MT)",
-            "description": "Single-config RelWithDebInfo build: /MT, optimized with PDBs. Builds its own deps tree under deps/build-default-RelWithDebInfo.",
+            "displayName": "MSVC x64 RelWithDebInfo (Ninja, /MD)",
+            "description": "Single-config RelWithDebInfo build: /MD, optimized with PDBs. Builds its own deps tree under deps/build-default-RelWithDebInfo.",
             "inherits": "ninja-msvc-base",
             "binaryDir": "${sourceDir}/build-msvc-x64-relwithdebinfo",
             "cacheVariables": {
@@ -115,8 +244,8 @@
         },
         {
             "name": "msvc-x64-release",
-            "displayName": "MSVC x64 Release (Ninja, /MT)",
-            "description": "Single-config Release build: /MT, fully optimized, no debug info. Builds its own deps tree under deps/build-default-Release.",
+            "displayName": "MSVC x64 Release (Ninja, /MD)",
+            "description": "Single-config Release build: /MD, fully optimized, no debug info. Builds its own deps tree under deps/build-default-Release.",
             "inherits": "ninja-msvc-base",
             "binaryDir": "${sourceDir}/build-msvc-x64-release",
             "cacheVariables": {
@@ -125,8 +254,8 @@
         },
         {
             "name": "msvc-arm64-release",
-            "displayName": "MSVC ARM64 Release (Ninja, /MT)",
-            "description": "Single-config ARM64 Release build: /MT, fully optimized, no debug info. Requires an ARM64-targeted MSVC developer shell. Uses a dedicated deps preset (default-arm64) so the deps tree does not collide with the x64 Ninja builds.",
+            "displayName": "MSVC ARM64 Release (Ninja, /MD)",
+            "description": "Single-config ARM64 Release build: /MD, fully optimized, no debug info. Requires an ARM64-targeted MSVC developer shell. Uses a dedicated deps preset (default-arm64) so the deps tree does not collide with the x64 Ninja builds.",
             "inherits": "ninja-msvc-base",
             "binaryDir": "${sourceDir}/build-msvc-arm64-release",
             "cacheVariables": {

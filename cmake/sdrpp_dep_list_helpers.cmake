@@ -1,0 +1,12 @@
+if (COMMAND sdrpp_normalize_dep_list)
+    return()
+endif ()
+
+function(sdrpp_normalize_dep_list out_var raw_value)
+    set(_list "${raw_value}")
+    string(REPLACE "," ";" _list "${_list}")
+    string(REGEX REPLACE "[ \t\r\n]+" ";" _list "${_list}")
+    list(FILTER _list EXCLUDE REGEX "^$")
+    list(REMOVE_DUPLICATES _list)
+    set(${out_var} ${_list} PARENT_SCOPE)
+endfunction()

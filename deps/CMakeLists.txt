@@ -6,15 +6,15 @@
 # recipe. Adding a new dependency = drop in a new folder.
 #
 # Typical use:
-#   cmake --preset vs2026-x64 -S deps -B deps/build-vs2026-x64
-#   cmake --build deps/build-vs2026-x64 --config Release
+#   cmake -S deps --preset vs2026-x64-release
+#   cmake --build deps/build-vs2026-x64-Release --config Release
 #
 # Outputs land in <buildDir>/destdir/usr/local. Bundled deps are consumed via
 # CMake config packages; pkg-config metadata is pruned from the prefix.
 # Validation manifests, generated probe projects, and compatibility shims stay
 # in <buildDir>/. Point the SDR++ build at the install prefix:
 #   cmake -S . -B build -G "Visual Studio 18 2026" -A x64 \
-#         -DCMAKE_PREFIX_PATH=<absolute>/deps/build-vs2026-x64/destdir/usr/local
+#         -DCMAKE_PREFIX_PATH=<absolute>/deps/build-vs2026-x64-Release/destdir/usr/local
 #
 # This is a single-config build system: each build tree produces exactly one
 # configuration, determined by CMAKE_BUILD_TYPE. Debug builds link against the
@@ -34,6 +34,7 @@ if (MSVC)
 endif ()
 
 include(${PROJECT_SOURCE_DIR}/../cmake/sdrpp_trace_helpers.cmake)
+include(${PROJECT_SOURCE_DIR}/../cmake/sdrpp_dep_list_helpers.cmake)
 sdrpp_init_cmake_trace_defaults("${CMAKE_CURRENT_BINARY_DIR}")
 
 if (ANDROID)
@@ -46,10 +47,10 @@ endif ()
 
 set(SDRPP_DEP_PROFILE "${_sdrpp_dep_profile_default}" CACHE STRING "Dependency policy profile (portable|distro|android)")
 set_property(CACHE SDRPP_DEP_PROFILE PROPERTY STRINGS portable distro android)
-set(SDRPP_DEP_FORCE_BUNDLED "" CACHE STRING "Semicolon-separated dependency names to force bundled")
-set(SDRPP_DEP_FORCE_SYSTEM "" CACHE STRING "Semicolon-separated dependency names to force system-provided")
-set(SDRPP_DEP_FORCE_SHARED "" CACHE STRING "Semicolon-separated dependency names to force shared linkage")
-set(SDRPP_DEP_FORCE_STATIC "" CACHE STRING "Semicolon-separated dependency names to force static linkage")
+set(SDRPP_DEP_FORCE_BUNDLED "" CACHE STRING "Comma/space/semicolon-separated dependency names to force bundled")
+set(SDRPP_DEP_FORCE_SYSTEM "" CACHE STRING "Comma/space/semicolon-separated dependency names to force system-provided")
+set(SDRPP_DEP_FORCE_SHARED "" CACHE STRING "Comma/space/semicolon-separated dependency names to force shared linkage")
+set(SDRPP_DEP_FORCE_STATIC "" CACHE STRING "Comma/space/semicolon-separated dependency names to force static linkage")
 set(SDRPP_DEP_ROOT_PACKAGES "" CACHE STRING "Comma/space/semicolon-separated top-level dependency recipes required by the parent SDR++ build")
 set(SDRPP_TRACE_DEP_ARTIFACTS "OFF" CACHE STRING "Print validated dependency artifacts to the console (ON/all, or comma/semicolon-separated dependency names)")
 option(SDRPP_DEP_POLICY_STRICT "Require explicit policy metadata for every dependency" OFF)
@@ -80,19 +81,12 @@ macro(list_projects result curdir)
     set(${result} ${_dirlist})
 endmacro()
 
-function(dep_message mode msg)
+# Print first-configure-only status chatter. Warnings and fatal errors must use
+# message() directly so DEP_MESSAGES_WRITTEN can never suppress error diagnostics.
+function(dep_status msg)
     if (NOT DEP_MESSAGES_WRITTEN)
-        message(${mode} "${msg}")
+        message(STATUS "${msg}")
     endif ()
-endfunction()
-
-function(sdrpp_normalize_dep_list out_var raw_value)
-    set(_list "${raw_value}")
-    string(REPLACE "," ";" _list "${_list}")
-    string(REGEX REPLACE "[ \t\r\n]+" ";" _list "${_list}")
-    list(FILTER _list EXCLUDE REGEX "^$")
-    list(REMOVE_DUPLICATES _list)
-    set(${out_var} ${_list} PARENT_SCOPE)
 endfunction()
 
 function(sdrpp_dep_is_excluded pkg out_var)
@@ -107,7 +101,7 @@ endfunction()
 
 macro(sdrpp_include_dep_recipe pkg)
     if (NOT ${pkg} IN_LIST FOUND_PACKAGES)
-        dep_message(FATAL_ERROR "Requested dependency '${pkg}' does not exist under deps/.")
+        message(FATAL_ERROR "Requested dependency '${pkg}' does not exist under deps/.")
     endif ()
     if (NOT ${pkg} IN_LIST SUPPORTED_PACKAGES)
         include(+${pkg}/${pkg}.cmake)
@@ -118,11 +112,11 @@ endmacro()
 # Architecture sniff (Windows MSVC).
 if (MSVC)
     if ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "8")
-        dep_message(STATUS "Detected 64-bit MSVC compiler")
+        dep_status("Detected 64-bit MSVC compiler")
     elseif ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "4")
-        dep_message(STATUS "Detected 32-bit MSVC compiler")
+        dep_status("Detected 32-bit MSVC compiler")
     else ()
-        dep_message(FATAL_ERROR "Unable to detect target architecture")
+        message(FATAL_ERROR "Unable to detect target architecture")
     endif ()
 else ()
     set(DEP_CMAKE_OPTS "-DCMAKE_POSITION_INDEPENDENT_CODE=ON")
@@ -285,11 +279,11 @@ list(APPEND DEP_CMAKE_OPTS
 )
 
 list_projects(FOUND_PACKAGES ${CMAKE_CURRENT_LIST_DIR})
-dep_message(STATUS "Found dependency recipes: ${FOUND_PACKAGES}")
-dep_message(STATUS "Dependency policy profile: ${SDRPP_DEP_PROFILE}")
+dep_status("Found dependency recipes: ${FOUND_PACKAGES}")
+dep_status("Dependency policy profile: ${SDRPP_DEP_PROFILE}")
 sdrpp_normalize_dep_list(_requested_root_packages "${SDRPP_DEP_ROOT_PACKAGES}")
 if (_requested_root_packages)
-    dep_message(STATUS "Requested dependency roots: ${_requested_root_packages}")
+    dep_status("Requested dependency roots: ${_requested_root_packages}")
 endif ()
 
 # Packages provided by the host platform (skip building, find via find_package).
@@ -314,7 +308,7 @@ function(check_system_package pkg checked_list)
     if (NOT ${pkg} IN_LIST ${checked_list})
         find_package(${pkg})
         if (NOT ${pkg}_FOUND)
-            dep_message(WARNING "No ${pkg} found in system although marked as system-provided.")
+            message(WARNING "No ${pkg} found in system although marked as system-provided.")
         endif ()
         list(APPEND ${checked_list} ${pkg})
         set(${checked_list} ${${checked_list}} PARENT_SCOPE)
@@ -332,7 +326,7 @@ foreach (pkg ${FOUND_PACKAGES})
     if (_requested_root_packages)
         if (${pkg} IN_LIST _requested_root_packages)
             if (_excluded)
-                dep_message(FATAL_ERROR "Requested dependency root '${pkg}' is excluded by ${PROJECT_NAME}_PACKAGE_EXCLUDES.")
+                message(FATAL_ERROR "Requested dependency root '${pkg}' is excluded by ${PROJECT_NAME}_PACKAGE_EXCLUDES.")
             endif ()
             list(APPEND _selected_root_packages ${pkg})
         endif ()
@@ -345,7 +339,7 @@ if (_requested_root_packages)
     set(_missing_requested_roots ${_requested_root_packages})
     list(REMOVE_ITEM _missing_requested_roots ${_selected_root_packages})
     if (_missing_requested_roots)
-        dep_message(FATAL_ERROR "Requested dependency roots were not found or were filtered out: ${_missing_requested_roots}")
+        message(FATAL_ERROR "Requested dependency roots were not found or were filtered out: ${_missing_requested_roots}")
     endif ()
 endif ()
 
@@ -358,7 +352,7 @@ while (_pending_packages)
 
     sdrpp_dep_is_excluded(${pkg} _excluded)
     if (_excluded)
-        dep_message(FATAL_ERROR "Dependency '${pkg}' is required but excluded by ${PROJECT_NAME}_PACKAGE_EXCLUDES.")
+        message(FATAL_ERROR "Dependency '${pkg}' is required but excluded by ${PROJECT_NAME}_PACKAGE_EXCLUDES.")
     endif ()
 
     sdrpp_include_dep_recipe(${pkg})
@@ -371,7 +365,7 @@ endwhile ()
 
 foreach (pkg ${SUPPORTED_PACKAGES})
     sdrpp_resolve_dep_policy(${pkg} _policy)
-    dep_message(STATUS "  policy ${pkg}: source=${_policy_SOURCE}, linkage=${_policy_LINKAGE}, usage=${_policy_USAGE}")
+    dep_status("  policy ${pkg}: source=${_policy_SOURCE}, linkage=${_policy_LINKAGE}, usage=${_policy_USAGE}")
 
     if (_policy_IS_SYSTEM)
         check_system_package(${pkg} _checked_list)
@@ -394,7 +388,7 @@ foreach (pkg ${SUPPORTED_PACKAGES})
         if (_dep_is_system)
             check_system_package(${deppkg} _checked_list)
         elseif (TARGET dep_${deppkg})
-            dep_message(STATUS "  ${pkg} depends on ${deppkg}")
+            dep_status("  ${pkg} depends on ${deppkg}")
             add_dependencies(dep_${pkg} dep_${deppkg})
             list(APPEND _build_list dep_${deppkg})
         endif ()
@@ -402,7 +396,7 @@ foreach (pkg ${SUPPORTED_PACKAGES})
 endforeach ()
 
 list(REMOVE_DUPLICATES _build_list)
-dep_message(STATUS "Building dep targets (${CMAKE_BUILD_TYPE}): ${_build_list}")
+dep_status("Building dep targets (${CMAKE_BUILD_TYPE}): ${_build_list}")
 add_custom_target(deps ALL DEPENDS ${_build_list_toplevel})
 
 set(DEP_MESSAGES_WRITTEN ON CACHE BOOL "")

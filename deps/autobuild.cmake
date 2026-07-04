@@ -67,26 +67,35 @@ list(APPEND _build_args
     "-DSDRPP_CMAKE_TRACE_LOG=${SDRPP_CMAKE_TRACE_LOG}"
     "-DSDRPP_TRACE_DEP_ARTIFACTS=${_trace_dep_artifacts_arg}")
 
-# Single-config build model: each build tree produces exactly one configuration.
-# Pick that configuration from the parent's CMAKE_BUILD_TYPE (single-config
-# generators) or its active CMAKE_CONFIGURATION_TYPES (multi-config), with an
-# explicit SDRPP_DEPS_BUILD_CONFIG override for the rare case the deps and the
-# app want to differ.
+get_property(_sdrpp_parent_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
+# Single-config deps model: each deps prefix produces exactly one configuration.
+# Single-config generators get that from CMAKE_BUILD_TYPE. Multi-config parents
+# must either expose exactly one CMAKE_CONFIGURATION_TYPES entry or set
+# SDRPP_DEPS_BUILD_CONFIG explicitly.
 if (SDRPP_DEPS_BUILD_CONFIG)
     set(_deps_build_config "${SDRPP_DEPS_BUILD_CONFIG}")
+elseif (_sdrpp_parent_is_multi_config)
+    list(LENGTH CMAKE_CONFIGURATION_TYPES _sdrpp_parent_config_count)
+    if (_sdrpp_parent_config_count EQUAL 1)
+        list(GET CMAKE_CONFIGURATION_TYPES 0 _deps_build_config)
+    else ()
+        message(FATAL_ERROR
+            "OPT_BUILD_DEPS with a multi-config generator needs a single "
+            "CMAKE_CONFIGURATION_TYPES entry or an explicit "
+            "SDRPP_DEPS_BUILD_CONFIG. Use a config-specific Visual Studio "
+            "preset such as vs2026-x64-release.")
+    endif ()
 elseif (CMAKE_BUILD_TYPE)
     set(_deps_build_config "${CMAKE_BUILD_TYPE}")
-elseif (CMAKE_CONFIGURATION_TYPES)
-    if (MSVC)
-        set(_deps_build_config "RelWithDebInfo")
-    else ()
-        list(GET CMAKE_CONFIGURATION_TYPES 0 _deps_build_config)
-    endif ()
 else ()
     set(_deps_build_config "Release")
 endif ()
 
 list(APPEND _build_args "-DCMAKE_BUILD_TYPE=${_deps_build_config}")
+if (_sdrpp_parent_is_multi_config)
+    list(APPEND _build_args "-DCMAKE_CONFIGURATION_TYPES=${_deps_build_config}")
+endif ()
 
 set(_deps_src_dir "${CMAKE_CURRENT_LIST_DIR}")
 set(_build_dir "${_deps_src_dir}/build-${SDRPP_DEPS_PRESET}-${_deps_build_config}")
@@ -114,10 +123,11 @@ set(_deps_install_prefix "${_build_dir}/destdir/usr/local")
 # Hash inputs are every file the deps sub-build's configure or compile
 # pipeline can read: each recipe (deps/+<name>/*.cmake), each patch
 # (deps/+<name>/patches/*), the shared cmake helpers (deps/cmake/*.cmake),
-# the deps CMakeLists.txt / CMakePresets.json, and the consumer-side
-# collector (cmake/sdrpp_collect_required_deps.cmake) that picks the dep
-# root set. Anything that changes one of those should invalidate the
-# install prefix because it could change what gets built or how.
+# the deps CMakeLists.txt / CMakePresets.json, the consumer-side collector
+# (cmake/sdrpp_collect_required_deps.cmake) that picks the dep root set, and
+# the shared list helpers (cmake/sdrpp_dep_list_helpers.cmake) both sides
+# include. Anything that changes one of those should invalidate the install
+# prefix because it could change what gets built or how.
 # ---------------------------------------------------------------------------
 set(_deps_marker "${_deps_install_prefix}/share/sdrpp-deps/recipe-hash")
 
@@ -129,7 +139,8 @@ file(GLOB_RECURSE _recipe_hash_inputs
 list(APPEND _recipe_hash_inputs
     "${_deps_src_dir}/CMakeLists.txt"
     "${_deps_src_dir}/CMakePresets.json"
-    "${CMAKE_CURRENT_LIST_DIR}/../cmake/sdrpp_collect_required_deps.cmake")
+    "${CMAKE_CURRENT_LIST_DIR}/../cmake/sdrpp_collect_required_deps.cmake"
+    "${CMAKE_CURRENT_LIST_DIR}/../cmake/sdrpp_dep_list_helpers.cmake")
 list(SORT _recipe_hash_inputs)
 
 set(_recipe_hash_concat "")
@@ -216,7 +227,17 @@ if (NOT _skip_deps_build)
     file(WRITE "${_deps_marker}" "${_recipe_hash}\n")
 endif ()
 
-list(APPEND CMAKE_PREFIX_PATH "${_deps_install_prefix}")
+# CMAKE_PREFIX_PATH is cached by the parent build. Drop the prior autobuild-owned
+# prefix so reconfigure does not accumulate stale entries, then make this deps
+# prefix authoritative for the parent configure.
+if (SDRPP_DEPS_AUTOBUILD_PREFIX)
+    list(REMOVE_ITEM CMAKE_PREFIX_PATH "${SDRPP_DEPS_AUTOBUILD_PREFIX}")
+endif ()
+
+list(REMOVE_ITEM CMAKE_PREFIX_PATH "${_deps_install_prefix}")
+list(PREPEND CMAKE_PREFIX_PATH "${_deps_install_prefix}")
+
+set(SDRPP_DEPS_AUTOBUILD_PREFIX "${_deps_install_prefix}" CACHE INTERNAL "")
 set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" CACHE STRING "" FORCE)
 
 message(STATUS "Dependencies installed at ${_deps_install_prefix}")

@@ -56,7 +56,7 @@ jobs:
           uses: actions/cache@v4
           with:
               path: deps/build-default-Release/destdir
-              key: deps-destdir-macos-${{ inputs.runner }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake') }}
+              key: deps-destdir-macos-${{ inputs.runner }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake') }}
 
         - name: Prepare CMake
           working-directory: ${{runner.workspace}}/build

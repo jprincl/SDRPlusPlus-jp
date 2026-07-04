@@ -16,7 +16,7 @@ option(OPT_BACKEND_ANDROID "Use the Android backend" OFF)
 # When OPT_BUILD_DEPS=ON, deps/ is configured and built as a sub-project before
 # the main configure continues, and its install prefix is added to
 # CMAKE_PREFIX_PATH. Default OFF — normal flow is to build deps once
-# (cmake --preset vs2026-x64 -S deps -B deps/build-vs2026-x64 && cmake --build ...)
+# (cmake -S deps --preset vs2026-x64-release && cmake --build deps/build-vs2026-x64-Release --config Release)
 # and point the app build at the install prefix via CMAKE_PREFIX_PATH.
 option(OPT_BUILD_DEPS "Build third-party dependencies before configuring SDR++" OFF)
 option(SDRPP_DEPS_OUTPUT_QUIET "Suppress output of the dependency build" OFF)
@@ -53,6 +53,7 @@ option(OPT_BUILD_RFNM_SOURCE "Build RFNM Source Module (Dependencies: librfnm)" 
 option(OPT_BUILD_RFSPACE_SOURCE "Build RFspace Source Module (no dependencies required)" ON)
 option(OPT_BUILD_RTL_SDR_SOURCE "Build RTL-SDR Source Module (Dependencies: librtlsdr)" ON)
 option(OPT_BUILD_RTL_TCP_SOURCE "Build RTL-TCP Source Module (no dependencies required)" ON)
+option(OPT_BUILD_SDDC_SOURCE "Build SDDC Source Module (Dependencies: libusb)" OFF)
 option(OPT_BUILD_SDRPP_SERVER_SOURCE "Build SDR++ Server Source Module (no dependencies required)" ON)
 option(OPT_BUILD_SDRPLAY_SOURCE "Build SDRplay Source Module (Dependencies: libsdrplay)" OFF)
 option(OPT_BUILD_SOAPY_SOURCE "Build SoapySDR Source Module (Dependencies: soapysdr)" OFF)
@@ -64,7 +65,7 @@ option(OPT_BUILD_USRP_SOURCE "Build USRP Source Module (libuhd)" OFF)
 # Sinks
 option(OPT_BUILD_ANDROID_AUDIO_SINK "Build Android Audio Sink Module (Dependencies: AAudio, only for android)" OFF)
 option(OPT_BUILD_AUDIO_SINK "Build Audio Sink Module (Dependencies: rtaudio)" ON)
-option(OPT_BUILD_NETWORK_SINK "Build Audio Sink Module (no dependencies required)" ON)
+option(OPT_BUILD_NETWORK_SINK "Build Audio Network Sink Module (no dependencies required)" ON)
 option(OPT_BUILD_NEW_PORTAUDIO_SINK "Build the new PortAudio Sink Module (Dependencies: portaudio)" OFF)
 option(OPT_BUILD_PORTAUDIO_SINK "Build PortAudio Sink Module (Dependencies: portaudio)" OFF)
 
@@ -128,7 +129,7 @@ endif ()
 include(${CMAKE_SOURCE_DIR}/cmake/sdrpp_collect_required_deps.cmake)
 sdrpp_collect_required_dep_roots(_sdrpp_dep_root_packages_auto)
 if (SDRPP_DEP_ROOT_PACKAGES)
-    _sdrpp_normalize_dep_list(_sdrpp_dep_root_packages_effective "${SDRPP_DEP_ROOT_PACKAGES}")
+    sdrpp_normalize_dep_list(_sdrpp_dep_root_packages_effective "${SDRPP_DEP_ROOT_PACKAGES}")
     message(STATUS "Effective dependency roots (override): ${_sdrpp_dep_root_packages_effective}")
 else ()
     set(_sdrpp_dep_root_packages_effective ${_sdrpp_dep_root_packages_auto})
@@ -152,33 +153,15 @@ endif ()
 # Root source folder
 set(SDRPP_CORE_ROOT "${CMAKE_SOURCE_DIR}/core/src/")
 
-# Compiler flags
-if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
-    # Debug Flags
-    if (MSVC)
-        set(SDRPP_COMPILER_FLAGS /std:c++17 /EHsc)
-    elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        set(SDRPP_COMPILER_FLAGS -g -Og -std=c++17 -Wno-unused-command-line-argument -undefined dynamic_lookup)
-    else ()
-        set(SDRPP_COMPILER_FLAGS -g -Og -std=c++17)
-    endif ()
-else()
-    # Normal Flags
-    if (MSVC)
-        set(SDRPP_COMPILER_FLAGS
-            /std:c++17
-            /EHsc
-            $<$<CONFIG:Release>:/O2 /Ob2>
-            $<$<CONFIG:RelWithDebInfo>:/O2 /Ob2>
-            $<$<CONFIG:Debug>:/Od>
-        )
-    elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(SDRPP_COMPILER_FLAGS -O3 -std=c++17 -Wno-unused-command-line-argument -undefined dynamic_lookup)
-    else ()
-        set(SDRPP_COMPILER_FLAGS -O3 -std=c++17)
-    endif ()
-endif()
-set(SDRPP_MODULE_COMPILER_FLAGS ${SDRPP_COMPILER_FLAGS})
+# Language standards
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Project-specific compile options. Keep CMake's generator/compiler defaults
+# responsible for optimization, debug info, exception handling, and standards.
+set(SDRPP_COMPILE_OPTIONS "")
+set(SDRPP_MODULE_COMPILE_OPTIONS "${SDRPP_COMPILE_OPTIONS}")
 
 # Set a default install prefix
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -195,9 +178,8 @@ if (ANDROID)
         "${CMAKE_SHARED_LINKER_FLAGS} -u ANativeActivity_onCreate"
     )
     set(CMAKE_C_STANDARD 11)
-    set(CMAKE_CXX_STANDARD 14)
-    set(CMAKE_CXX14_EXTENSION_COMPILE_OPTION "-std=c++17")
-endif (ANDROID)
+    set(CMAKE_C_STANDARD_REQUIRED ON)
+endif ()
 
 # Provide sdrpp_link_dep() helper to all module subdirectories. Try Config.cmake
 # first, fall back to pkg-config — keeps Linux apt/dpkg flow working while
@@ -207,244 +189,95 @@ include(${CMAKE_SOURCE_DIR}/cmake/sdrpp_find_dep.cmake)
 # Core of SDR++
 add_subdirectory("core")
 
+function(sdrpp_add_optional_modules)
+    foreach (_entry IN LISTS ARGN)
+        string(REPLACE ":" ";" _parts "${_entry}")
+        list(LENGTH _parts _parts_len)
+        if (NOT _parts_len EQUAL 2)
+            message(FATAL_ERROR "Invalid module entry '${_entry}', expected NAME:relative/path")
+        endif ()
+
+        list(GET _parts 0 _opt)
+        list(GET _parts 1 _dir)
+        if (OPT_BUILD_${_opt})
+            add_subdirectory("${_dir}")
+        endif ()
+    endforeach ()
+endfunction()
+
 # Source modules
-if (OPT_BUILD_AIRSPY_SOURCE)
-add_subdirectory("source_modules/airspy_source")
-endif (OPT_BUILD_AIRSPY_SOURCE)
-
-if (OPT_BUILD_AIRSPYHF_SOURCE)
-add_subdirectory("source_modules/airspyhf_source")
-endif (OPT_BUILD_AIRSPYHF_SOURCE)
-
-if (OPT_BUILD_AUDIO_SOURCE)
-add_subdirectory("source_modules/audio_source")
-endif (OPT_BUILD_AUDIO_SOURCE)
-
-if (OPT_BUILD_BADGESDR_SOURCE)
-add_subdirectory("source_modules/badgesdr_source")
-endif (OPT_BUILD_BADGESDR_SOURCE)
-
-if (OPT_BUILD_BLADERF_SOURCE)
-add_subdirectory("source_modules/bladerf_source")
-endif (OPT_BUILD_BLADERF_SOURCE)
-
-if (OPT_BUILD_FILE_SOURCE)
-add_subdirectory("source_modules/file_source")
-endif (OPT_BUILD_FILE_SOURCE)
-
-if (OPT_BUILD_FOBOSSDR_SOURCE)
-add_subdirectory("source_modules/fobossdr_source")
-endif (OPT_BUILD_FOBOSSDR_SOURCE)
-
-if (OPT_BUILD_HACKRF_SOURCE)
-add_subdirectory("source_modules/hackrf_source")
-endif (OPT_BUILD_HACKRF_SOURCE)
-
-if (OPT_BUILD_HAROGIC_SOURCE)
-add_subdirectory("source_modules/harogic_source")
-endif (OPT_BUILD_HAROGIC_SOURCE)
-
-if (OPT_BUILD_HERMES_SOURCE)
-add_subdirectory("source_modules/hermes_source")
-endif (OPT_BUILD_HERMES_SOURCE)
-
-if (OPT_BUILD_HYDRASDR_RFONE_SOURCE)
-add_subdirectory("source_modules/hydrasdr_source")
-endif (OPT_BUILD_HYDRASDR_RFONE_SOURCE)
-
-if (OPT_BUILD_KCSDR_SOURCE)
-add_subdirectory("source_modules/kcsdr_source")
-endif (OPT_BUILD_KCSDR_SOURCE)
-
-if (OPT_BUILD_KIWISDR_SOURCE)
-add_subdirectory("source_modules/kiwisdr_source")
-endif (OPT_BUILD_KIWISDR_SOURCE)
-
-if (OPT_BUILD_LIMESDR_SOURCE)
-add_subdirectory("source_modules/limesdr_source")
-endif (OPT_BUILD_LIMESDR_SOURCE)
-
-if (OPT_BUILD_NETWORK_SOURCE)
-add_subdirectory("source_modules/network_source")
-endif (OPT_BUILD_NETWORK_SOURCE)
-
-if (OPT_BUILD_PERSEUS_SOURCE)
-add_subdirectory("source_modules/perseus_source")
-endif (OPT_BUILD_PERSEUS_SOURCE)
-
-if (OPT_BUILD_PLUTOSDR_SOURCE)
-add_subdirectory("source_modules/plutosdr_source")
-endif (OPT_BUILD_PLUTOSDR_SOURCE)
-
-if (OPT_BUILD_QMX_SOURCE)
-add_subdirectory("source_modules/qmx_source")
-endif (OPT_BUILD_QMX_SOURCE)
-
-if (OPT_BUILD_QMXSERVER_SOURCE)
-add_subdirectory("source_modules/qmxserver_source")
-endif (OPT_BUILD_QMXSERVER_SOURCE)
-
-if (OPT_BUILD_RFNM_SOURCE)
-add_subdirectory("source_modules/rfnm_source")
-endif (OPT_BUILD_RFNM_SOURCE)
-
-if (OPT_BUILD_RFSPACE_SOURCE)
-add_subdirectory("source_modules/rfspace_source")
-endif (OPT_BUILD_RFSPACE_SOURCE)
-
-if (OPT_BUILD_RTL_SDR_SOURCE)
-add_subdirectory("source_modules/rtl_sdr_source")
-endif (OPT_BUILD_RTL_SDR_SOURCE)
-
-if (OPT_BUILD_RTL_TCP_SOURCE)
-add_subdirectory("source_modules/rtl_tcp_source")
-endif (OPT_BUILD_RTL_TCP_SOURCE)
-
-if (OPT_BUILD_SDDC_SOURCE)
-add_subdirectory("source_modules/sddc_source")
-endif (OPT_BUILD_SDDC_SOURCE)
-
-if (OPT_BUILD_SDRPP_SERVER_SOURCE)
-add_subdirectory("source_modules/sdrpp_server_source")
-endif (OPT_BUILD_SDRPP_SERVER_SOURCE)
-
-if (OPT_BUILD_SDRPLAY_SOURCE)
-add_subdirectory("source_modules/sdrplay_source")
-endif (OPT_BUILD_SDRPLAY_SOURCE)
-
-if (OPT_BUILD_SOAPY_SOURCE)
-add_subdirectory("source_modules/soapy_source")
-endif (OPT_BUILD_SOAPY_SOURCE)
-
-if (OPT_BUILD_SPECTRAN_SOURCE)
-add_subdirectory("source_modules/spectran_source")
-endif (OPT_BUILD_SPECTRAN_SOURCE)
-
-if (OPT_BUILD_SPECTRAN_HTTP_SOURCE)
-add_subdirectory("source_modules/spectran_http_source")
-endif (OPT_BUILD_SPECTRAN_HTTP_SOURCE)
-
-if (OPT_BUILD_SPYSERVER_SOURCE)
-add_subdirectory("source_modules/spyserver_source")
-endif (OPT_BUILD_SPYSERVER_SOURCE)
-
-if (OPT_BUILD_USRP_SOURCE)
-add_subdirectory("source_modules/usrp_source")
-endif (OPT_BUILD_USRP_SOURCE)
-
+sdrpp_add_optional_modules(
+    AIRSPY_SOURCE:source_modules/airspy_source
+    AIRSPYHF_SOURCE:source_modules/airspyhf_source
+    AUDIO_SOURCE:source_modules/audio_source
+    BADGESDR_SOURCE:source_modules/badgesdr_source
+    BLADERF_SOURCE:source_modules/bladerf_source
+    FILE_SOURCE:source_modules/file_source
+    FOBOSSDR_SOURCE:source_modules/fobossdr_source
+    HACKRF_SOURCE:source_modules/hackrf_source
+    HAROGIC_SOURCE:source_modules/harogic_source
+    HERMES_SOURCE:source_modules/hermes_source
+    HYDRASDR_RFONE_SOURCE:source_modules/hydrasdr_source
+    KCSDR_SOURCE:source_modules/kcsdr_source
+    KIWISDR_SOURCE:source_modules/kiwisdr_source
+    LIMESDR_SOURCE:source_modules/limesdr_source
+    NETWORK_SOURCE:source_modules/network_source
+    PERSEUS_SOURCE:source_modules/perseus_source
+    PLUTOSDR_SOURCE:source_modules/plutosdr_source
+    QMX_SOURCE:source_modules/qmx_source
+    QMXSERVER_SOURCE:source_modules/qmxserver_source
+    RFNM_SOURCE:source_modules/rfnm_source
+    RFSPACE_SOURCE:source_modules/rfspace_source
+    RTL_SDR_SOURCE:source_modules/rtl_sdr_source
+    RTL_TCP_SOURCE:source_modules/rtl_tcp_source
+    SDDC_SOURCE:source_modules/sddc_source
+    SDRPP_SERVER_SOURCE:source_modules/sdrpp_server_source
+    SDRPLAY_SOURCE:source_modules/sdrplay_source
+    SOAPY_SOURCE:source_modules/soapy_source
+    SPECTRAN_SOURCE:source_modules/spectran_source
+    SPECTRAN_HTTP_SOURCE:source_modules/spectran_http_source
+    SPYSERVER_SOURCE:source_modules/spyserver_source
+    USRP_SOURCE:source_modules/usrp_source
+)
 
 # Sink modules
-if (OPT_BUILD_ANDROID_AUDIO_SINK)
-add_subdirectory("sink_modules/android_audio_sink")
-endif (OPT_BUILD_ANDROID_AUDIO_SINK)
-
-if (OPT_BUILD_AUDIO_SINK)
-add_subdirectory("sink_modules/audio_sink")
-endif (OPT_BUILD_AUDIO_SINK)
-
-if (OPT_BUILD_PORTAUDIO_SINK)
-add_subdirectory("sink_modules/portaudio_sink")
-endif (OPT_BUILD_PORTAUDIO_SINK)
-
-if (OPT_BUILD_NETWORK_SINK)
-add_subdirectory("sink_modules/network_sink")
-endif (OPT_BUILD_NETWORK_SINK)
-
-if (OPT_BUILD_NEW_PORTAUDIO_SINK)
-add_subdirectory("sink_modules/new_portaudio_sink")
-endif (OPT_BUILD_NEW_PORTAUDIO_SINK)
-
+sdrpp_add_optional_modules(
+    ANDROID_AUDIO_SINK:sink_modules/android_audio_sink
+    AUDIO_SINK:sink_modules/audio_sink
+    PORTAUDIO_SINK:sink_modules/portaudio_sink
+    NETWORK_SINK:sink_modules/network_sink
+    NEW_PORTAUDIO_SINK:sink_modules/new_portaudio_sink
+)
 
 # Decoders
-if (OPT_BUILD_ATV_DECODER)
-add_subdirectory("decoder_modules/atv_decoder")
-endif (OPT_BUILD_ATV_DECODER)
-
-if (OPT_BUILD_DAB_DECODER)
-add_subdirectory("decoder_modules/dab_decoder")
-endif (OPT_BUILD_DAB_DECODER)
-
-if (OPT_BUILD_FALCON9_DECODER)
-add_subdirectory("decoder_modules/falcon9_decoder")
-endif (OPT_BUILD_FALCON9_DECODER)
-
-if (OPT_BUILD_KG_SSTV_DECODER)
-add_subdirectory("decoder_modules/kg_sstv_decoder")
-endif (OPT_BUILD_KG_SSTV_DECODER)
-
-if (OPT_BUILD_M17_DECODER)
-add_subdirectory("decoder_modules/m17_decoder")
-endif (OPT_BUILD_M17_DECODER)
-
-if (OPT_BUILD_METEOR_DEMODULATOR)
-add_subdirectory("decoder_modules/meteor_demodulator")
-endif (OPT_BUILD_METEOR_DEMODULATOR)
-
-if (OPT_BUILD_PAGER_DECODER)
-add_subdirectory("decoder_modules/pager_decoder")
-endif (OPT_BUILD_PAGER_DECODER)
-
-if (OPT_BUILD_RADIO)
-add_subdirectory("decoder_modules/radio")
-endif (OPT_BUILD_RADIO)
-
-if (OPT_BUILD_RADIOSONDE_DECODER)
-add_subdirectory("decoder_modules/radiosonde_decoder")
-endif (OPT_BUILD_RADIOSONDE_DECODER)
-
-if (OPT_BUILD_RYFI_DECODER)
-add_subdirectory("decoder_modules/ryfi_decoder")
-endif (OPT_BUILD_RYFI_DECODER)
-
-if (OPT_BUILD_VOR_RECEIVER)
-add_subdirectory("decoder_modules/vor_receiver")
-endif (OPT_BUILD_VOR_RECEIVER)
-
-if (OPT_BUILD_WEATHER_SAT_DECODER)
-add_subdirectory("decoder_modules/weather_sat_decoder")
-endif (OPT_BUILD_WEATHER_SAT_DECODER)
-
+sdrpp_add_optional_modules(
+    ATV_DECODER:decoder_modules/atv_decoder
+    DAB_DECODER:decoder_modules/dab_decoder
+    FALCON9_DECODER:decoder_modules/falcon9_decoder
+    KG_SSTV_DECODER:decoder_modules/kg_sstv_decoder
+    M17_DECODER:decoder_modules/m17_decoder
+    METEOR_DEMODULATOR:decoder_modules/meteor_demodulator
+    PAGER_DECODER:decoder_modules/pager_decoder
+    RADIO:decoder_modules/radio
+    RADIOSONDE_DECODER:decoder_modules/radiosonde_decoder
+    RYFI_DECODER:decoder_modules/ryfi_decoder
+    VOR_RECEIVER:decoder_modules/vor_receiver
+    WEATHER_SAT_DECODER:decoder_modules/weather_sat_decoder
+)
 
 # Misc
-if (OPT_BUILD_DISCORD_PRESENCE)
-add_subdirectory("misc_modules/discord_integration")
-endif (OPT_BUILD_DISCORD_PRESENCE)
-
-if (OPT_BUILD_FREQUENCY_MANAGER)
-add_subdirectory("misc_modules/frequency_manager")
-endif (OPT_BUILD_FREQUENCY_MANAGER)
-
-if (OPT_BUILD_IQ_EXPORTER)
-add_subdirectory("misc_modules/iq_exporter")
-endif (OPT_BUILD_IQ_EXPORTER)
-
-if (OPT_BUILD_RECORDER)
-add_subdirectory("misc_modules/recorder")
-endif (OPT_BUILD_RECORDER)
-
-if (OPT_BUILD_RIGCTL_CLIENT)
-add_subdirectory("misc_modules/rigctl_client")
-endif (OPT_BUILD_RIGCTL_CLIENT)
-
-if (OPT_BUILD_RIGCTL_SERVER)
-add_subdirectory("misc_modules/rigctl_server")
-endif (OPT_BUILD_RIGCTL_SERVER)
-
-if (OPT_BUILD_SCANNER)
-add_subdirectory("misc_modules/scanner")
-endif (OPT_BUILD_SCANNER)
-
-if (OPT_BUILD_SCHEDULER)
-add_subdirectory("misc_modules/scheduler")
-endif (OPT_BUILD_SCHEDULER)
-
-if (OPT_BUILD_SPOTS)
-add_subdirectory("misc_modules/spots")
-endif (OPT_BUILD_SPOTS)
-
-if (OPT_BUILD_WEBSDR_VIEW)
-add_subdirectory("misc_modules/websdr_view")
-endif (OPT_BUILD_WEBSDR_VIEW)
+sdrpp_add_optional_modules(
+    DISCORD_PRESENCE:misc_modules/discord_integration
+    FREQUENCY_MANAGER:misc_modules/frequency_manager
+    IQ_EXPORTER:misc_modules/iq_exporter
+    RECORDER:misc_modules/recorder
+    RIGCTL_CLIENT:misc_modules/rigctl_client
+    RIGCTL_SERVER:misc_modules/rigctl_server
+    SCANNER:misc_modules/scanner
+    SCHEDULER:misc_modules/scheduler
+    SPOTS:misc_modules/spots
+    WEBSDR_VIEW:misc_modules/websdr_view
+)
 
 if (MSVC)
     add_executable(sdrpp "src/main.cpp" "win32/resources.rc")
@@ -458,13 +291,14 @@ if (MSVC)
 endif ()
 
 target_link_libraries(sdrpp PRIVATE sdrpp_core)
+target_compile_features(sdrpp PRIVATE cxx_std_17)
 
 # libcurl is resolved by deps/+libcurl (bundled profiles) or via the distro
 # package (Linux). Static deps builds absorb it into sdrpp_core; system mode
 # picks up the distro libcurl through the dynamic linker's default search.
 
 # Compiler arguments
-target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILER_FLAGS})
+target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILE_OPTIONS})
 
 # Copy dynamic libs over
 if (MSVC)
@@ -534,25 +368,19 @@ if (MSVC)
     endif ()
 endif ()
 
-
-if (${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD")
-    add_custom_target(do_always ALL cp \"$<TARGET_FILE_DIR:sdrpp_core>/libsdrpp_core.so\" \"$<TARGET_FILE_DIR:sdrpp>\")
-endif ()
-
-if (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
     target_link_libraries(sdrpp PUBLIC pthread)
-    add_custom_target(do_always ALL cp \"$<TARGET_FILE:sdrpp_core>\" \"$<TARGET_FILE_DIR:sdrpp>\")
 endif ()
 
-if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    add_custom_target(do_always ALL cp \"$<TARGET_FILE:sdrpp_core>\" \"$<TARGET_FILE_DIR:sdrpp>\")
+if (CMAKE_SYSTEM_NAME MATCHES "OpenBSD|FreeBSD|Linux|Darwin")
+    add_custom_target(do_always ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:sdrpp_core>"
+            "$<TARGET_FILE_DIR:sdrpp>/$<TARGET_FILE_NAME:sdrpp_core>"
+        COMMENT "Copying SDR++ core runtime library"
+        VERBATIM)
+    add_dependencies(do_always sdrpp sdrpp_core)
 endif ()
-
-if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-    add_custom_target(do_always ALL cp \"$<TARGET_FILE_DIR:sdrpp_core>/libsdrpp_core.dylib\" \"$<TARGET_FILE_DIR:sdrpp>\")
-endif ()
-
-# cmake .. "-DCMAKE_TOOLCHAIN_FILE=C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake" -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_SCANNER=ON -DOPT_BUILD_SCHEDULER=ON -DOPT_BUILD_USRP_SOURCE=ON -DOPT_BUILD_PAGER_DECODER=ON
 
 # Create module cmake file
 configure_file(${CMAKE_SOURCE_DIR}/sdrpp_module.cmake ${CMAKE_CURRENT_BINARY_DIR}/sdrpp_module.cmake @ONLY)
@@ -629,5 +457,3 @@ endif ()
 # Create uninstall target
 configure_file(${CMAKE_SOURCE_DIR}/cmake_uninstall.cmake ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake @ONLY)
 add_custom_target(uninstall ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
-
-# Create headers target
