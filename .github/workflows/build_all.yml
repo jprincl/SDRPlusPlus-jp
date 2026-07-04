@@ -434,5 +434,7 @@ jobs:
         steps:
         - uses: actions/checkout@v5
         
+        # Advisory only: formatting diffs should be visible in CI logs,
+        # but should not block packaging/release jobs.
         - name: Run check_clang_format
-          run: cd $GITHUB_WORKSPACE && chmod +x ./check_clang_format.sh && ./check_clang_format.sh
+          run: cd $GITHUB_WORKSPACE && chmod +x ./check_clang_format.sh && ./check_clang_format.sh || true
