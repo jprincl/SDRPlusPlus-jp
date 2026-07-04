@@ -442,10 +442,10 @@ configure_file(${CMAKE_SOURCE_DIR}/cmake_uninstall.cmake ${CMAKE_CURRENT_BINARY_
 add_custom_target(uninstall ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
 
 # .deb packaging (replaces the old make_debian_package.sh). VERSION_FULL, if
-# set in the environment, comes from CI (build_all.yml's get_version job,
-# passed through the build container); otherwise fall back to deriving it
-# locally via the same scripts/get_version.sh CI uses, so there is exactly
-# one place that computes the git-describe-based build info.
+# set in the environment, comes from CI (build_all.yml's prepare job, passed
+# through the build container); otherwise fall back to deriving it locally
+# via the same scripts/get_version.sh CI uses, so there is exactly one place
+# that computes the git-describe-based build info.
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     if (DEFINED ENV{VERSION_FULL} AND NOT "$ENV{VERSION_FULL}" STREQUAL "")
         set(_sdrpp_version_full "$ENV{VERSION_FULL}")
@@ -453,21 +453,13 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
         execute_process(
             COMMAND sh "${CMAKE_SOURCE_DIR}/scripts/get_version.sh" "${CMAKE_SOURCE_DIR}"
             OUTPUT_VARIABLE _sdrpp_get_version_out
+            RESULT_VARIABLE _sdrpp_get_version_res
             OUTPUT_STRIP_TRAILING_WHITESPACE
         )
-        string(REGEX MATCH "VERSION=([^\n]+)" _ "${_sdrpp_get_version_out}")
-        set(_sdrpp_app_version "${CMAKE_MATCH_1}")
-        string(REGEX MATCH "BUILD_COUNT=([^\n]+)" _ "${_sdrpp_get_version_out}")
-        set(_sdrpp_build_count "${CMAKE_MATCH_1}")
-        string(REGEX MATCH "BUILD_INFO=([^\n]+)" _ "${_sdrpp_get_version_out}")
-        set(_sdrpp_build_info "${CMAKE_MATCH_1}")
-        if (_sdrpp_build_count STREQUAL "0")
-            set(_sdrpp_build_info "")
-        endif ()
-        if (_sdrpp_build_info)
-            set(_sdrpp_version_full "${_sdrpp_app_version}+${_sdrpp_build_info}")
-        else ()
-            set(_sdrpp_version_full "${_sdrpp_app_version}")
+        string(REGEX MATCH "VERSION_FULL=([^\n]+)" _ "${_sdrpp_get_version_out}")
+        set(_sdrpp_version_full "${CMAKE_MATCH_1}")
+        if (NOT _sdrpp_get_version_res EQUAL 0 OR _sdrpp_version_full STREQUAL "")
+            message(FATAL_ERROR "scripts/get_version.sh failed (exit ${_sdrpp_get_version_res}); cannot derive the .deb package version")
         endif ()
     endif ()
 

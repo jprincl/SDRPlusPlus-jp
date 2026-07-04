@@ -70,6 +70,12 @@ $stage_dir = Get-WindowsStageDir $BuildDir $BuildConfig
 $stage_leaf = Split-Path $stage_dir -Leaf
 $renamed_dir = Join-Path (Split-Path $stage_dir -Parent) $package_dir
 
+# A previous run that crashed between the renames below leaves the renamed
+# directory behind; drop it so this run's rename can't collide with it.
+if (Test-Path $renamed_dir) {
+	Remove-Item -Recurse -Force $renamed_dir
+}
+
 Rename-Item -Path $stage_dir -NewName $package_dir
 try {
 	Compress-Archive -Path $renamed_dir -DestinationPath $zip_path -Force

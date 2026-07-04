@@ -9,9 +9,11 @@ SRC_DIR="${SRC_DIR:-/root/SDRPlusPlus}"
 ARCH="$(uname -m)"
 APP_NAME="sdrpp-iak"
 APPDIR="/AppDir"
-DEPS_PRESET="${DEPS_PRESET:-appimage}"
-DEPS_BUILD_DIR="${DEPS_BUILD_DIR:-${SRC_DIR}/deps/build-${DEPS_PRESET}}"
-DEPS_PREFIX="${DEPS_PREFIX:-${DEPS_BUILD_DIR}/destdir/usr/local}"
+# The ci-appimage preset is authoritative for the deps setup: it pins
+# SDRPP_DEPS_PRESET=appimage and SDRPP_DEPS_BUILD_DIR=deps/build-appimage
+# (which the actions/cache step in build_appimage.yml relies on). This is
+# just where that preset's install prefix ends up.
+DEPS_PREFIX="${SRC_DIR}/deps/build-appimage/destdir/usr/local"
 # VERSION_FULL is set by CI (matches the version in core/src/version.h plus
 # git build info, e.g. 1.2.3+45-gabc1234). Required — the filename should
 # always identify the build.
@@ -20,7 +22,6 @@ OUT="/root/${APP_NAME}-${VERSION_FULL}-${ARCH}.AppImage"
 
 echo "=== Building AppImage for ${APP_NAME} ${VERSION_FULL} (${ARCH}) ==="
 echo "Source: ${SRC_DIR}"
-echo "Deps preset: ${DEPS_PRESET}"
 
 # Allow git operations on the bind-mounted tree.
 git config --global --add safe.directory "${SRC_DIR}"
@@ -33,7 +34,7 @@ git config --global --add safe.directory "${SRC_DIR}"
 # that exception while bundling the rest through deps/.
 # ---------------------------------------------------------------------------
 cd "${SRC_DIR}"
-# Don't wipe ${DEPS_BUILD_DIR} unconditionally: CI restores it from the
+# Don't wipe deps/build-appimage unconditionally: CI restores it from the
 # actions/cache step in .github/workflows/build_appimage.yml when the deps
 # recipe hash hasn't changed, and autobuild.cmake's recipe-hash marker
 # inside destdir/share/sdrpp-deps/ short-circuits the deps build on a
@@ -44,9 +45,7 @@ cd "${SRC_DIR}"
 # from-scratch app build for repeatability.
 rm -rf build
 
-cmake --preset ci-appimage \
-    -DSDRPP_DEPS_PRESET="${DEPS_PRESET}" \
-    -DSDRPP_DEPS_BUILD_DIR="${DEPS_BUILD_DIR}"
+cmake --preset ci-appimage
 cd build
 
 make -j"$(nproc)"

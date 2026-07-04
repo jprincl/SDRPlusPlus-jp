@@ -1,16 +1,16 @@
 #!/bin/sh
 # Single source of truth for reading the app version from core/src/version.h
 # and deriving the git-based build-info suffix (commits since the matching
-# vX.Y.Z tag, plus short hash). Used by both the CI get_version job
-# (.github/workflows/build_all.yml) and the .deb packaging block in
-# CMakeLists.txt so the two never compute a mismatched count/hash for the
-# same commit.
+# vX.Y.Z tag, plus short hash). Used by the CI prepare job
+# (.github/workflows/build_all.yml), the .deb packaging block in
+# CMakeLists.txt, and macos/stage_macos_bundle.sh so they never compute a
+# mismatched version for the same commit.
 #
 # Usage: get_version.sh [repo_root]
 # Prints shell-assignment lines on stdout, meant to be eval'd:
 #   VERSION=1.2.3[-alpha|beta|rc[N]]
-#   BUILD_COUNT=<commits since the matching tag, or since repo root>
-#   BUILD_INFO=<count>-g<shorthash>
+#   VERSION_FULL=<VERSION, plus "+<count>-g<shorthash>" when HEAD is not
+#                 exactly the matching release tag>
 set -e
 
 REPO_ROOT="${1:-$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)}"
@@ -33,6 +33,11 @@ else
     BUILD_INFO="${BUILD_COUNT}-g${HASH}"
 fi
 
+if [ "$BUILD_COUNT" = "0" ]; then
+    VERSION_FULL="$VERSION"
+else
+    VERSION_FULL="${VERSION}+${BUILD_INFO}"
+fi
+
 echo "VERSION=$VERSION"
-echo "BUILD_COUNT=$BUILD_COUNT"
-echo "BUILD_INFO=$BUILD_INFO"
+echo "VERSION_FULL=$VERSION_FULL"

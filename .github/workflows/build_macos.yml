@@ -9,9 +9,6 @@ on:
             artifact:
                 required: true
                 type: string
-            zip_name:
-                required: true
-                type: string
             preset:
                 required: true
                 type: string
@@ -43,15 +40,18 @@ jobs:
           working-directory: ${{ github.workspace }}
           run: cmake --build build --verbose -j3
 
+        # The zip is named after the artifact so the file inside already has
+        # its final published name and create_full_archive can merge every
+        # build's output by pattern, without a per-artifact rename table.
         - name: Create Archive
           working-directory: ${{ github.workspace }}
           run: |
               cmake --build build --target stage_macos_bundle
               cd build/stage/macos-bundle/Release
-              zip -r ${{runner.workspace}}/${{ inputs.zip_name }} SDR++-iak.app
+              zip -r "${{ runner.workspace }}/${{ inputs.artifact }}.zip" SDR++-iak.app
 
         - name: Save Archive
           uses: actions/upload-artifact@v6
           with:
               name: ${{ inputs.artifact }}
-              path: ${{runner.workspace}}/${{ inputs.zip_name }}
+              path: ${{ runner.workspace }}/${{ inputs.artifact }}.zip
