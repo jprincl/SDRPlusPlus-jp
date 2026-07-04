@@ -38,7 +38,7 @@ jobs:
 
         - name: Build
           working-directory: ${{ github.workspace }}
-          run: cmake --build build --verbose -j3
+          run: cmake --build build --verbose -j"$(sysctl -n hw.ncpu)"
 
         # The zip is named after the artifact so the file inside already has
         # its final published name and create_full_archive can merge every

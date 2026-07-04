@@ -11,8 +11,12 @@ on:
         - nightly
     workflow_dispatch:
 
+# Least privilege at the workflow level: the 20+ build jobs (which run
+# third-party code through Docker/Gradle) only need read. contents: write is
+# granted per-job on update_nightly_release/create_release, the only jobs that
+# publish releases.
 permissions:
-  contents: write    # Required for creating releases and uploading files
+  contents: read
   actions: read      # Standard workflow permission
 
 env:
@@ -318,9 +322,9 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
+        # A default depth-1 checkout is enough: this job only runs `git archive
+        # HEAD`, which needs the working tree, not full history.
         - uses: actions/checkout@v5
-          with:
-            fetch-depth: 0
 
         # Every build job names its output file after its own artifact name
         # (sdrpp-iak-${VER}-<suffix>.<ext>), so merging them by pattern needs
@@ -347,11 +351,19 @@ jobs:
     update_nightly_release:
         needs: [prepare, create_full_archive]
         runs-on: ubuntu-latest
+        permissions:
+          contents: write
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
 
         steps:
+        # Only the merged -all bundle is needed here; pulling it by name (into a
+        # dir of the same name) avoids re-downloading all ~25 per-platform
+        # artifacts that create_full_archive already merged into it.
         - name: Download All Builds
           uses: actions/download-artifact@v6
+          with:
+            name: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-all
+            path: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-all
 
         - name: Create or Update Nightly Release
           env:
@@ -380,11 +392,19 @@ jobs:
     create_release:
         needs: [prepare, create_full_archive]
         runs-on: ubuntu-latest
+        permissions:
+          contents: write
         if: github.ref_type == 'tag'
 
         steps:
+        # Only the merged -all bundle is needed here; pulling it by name (into a
+        # dir of the same name) avoids re-downloading all ~25 per-platform
+        # artifacts that create_full_archive already merged into it.
         - name: Download All Builds
           uses: actions/download-artifact@v6
+          with:
+            name: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-all
+            path: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-all
 
         - name: Publish GitHub Release
           env:
@@ -410,7 +430,7 @@ jobs:
         - uses: actions/checkout@v5
 
         - name: Install codespell
-          run: sudo apt update -y && sudo apt install -y codespell
+          run: pip install --user codespell
         
         # Advisory only: codespell has no ignore-words-list tuned for this repo
         # (RF/SDR jargon, vendor names, etc. read as typos), so its output is
@@ -428,5 +448,5 @@ jobs:
         
         # Advisory only: formatting diffs should be visible in CI logs,
         # but should not block packaging/release jobs.
-        - name: Run check_clang_format
-          run: cd $GITHUB_WORKSPACE && chmod +x ./check_clang_format.sh && ./check_clang_format.sh || true
+        - name: Run clang-format check
+          run: cd $GITHUB_WORKSPACE && chmod +x ./clang_format.sh && ./clang_format.sh --check || true

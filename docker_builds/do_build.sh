@@ -10,14 +10,18 @@ VOLK_PACKAGE=${VOLK_PACKAGE:-libvolk2-dev}
 CURL_SOURCE=${CURL_SOURCE:-system}
 
 CURL_DEP_ARG=""
+# System build links the distro libcurl; bundled builds it from source (needs
+# libssl-dev) so the distro -dev headers are dead weight there.
+CURL_APT="libcurl4-openssl-dev"
 if [ "$CURL_SOURCE" = "bundled" ]; then
     EXTRA_APT="${EXTRA_APT:-} libssl-dev"
     CURL_DEP_ARG="-DSDRPP_DEP_FORCE_BUNDLED=libcurl"
+    CURL_APT=""
 fi
 
 # Install dependencies and tools
 apt-get -o Acquire::Retries=3 update
-apt-get -o Acquire::Retries=3 install -y build-essential cmake git pkg-config libfftw3-dev libglfw3-dev ${VOLK_PACKAGE} liborc-0.4-dev libzstd-dev libcurl4-openssl-dev libairspy-dev libairspyhf-dev \
+apt-get -o Acquire::Retries=3 install -y build-essential cmake git pkg-config libfftw3-dev libglfw3-dev ${VOLK_PACKAGE} liborc-0.4-dev libzstd-dev ${CURL_APT} libairspy-dev libairspyhf-dev \
     libiio-dev libad9361-dev librtaudio-dev libhackrf-dev librtlsdr-dev libbladerf-dev liblimesuite-dev p7zip-full wget portaudio19-dev \
     libcodec2-dev autoconf libtool xxd libspdlog-dev ${EXTRA_APT}
 
@@ -43,7 +47,7 @@ git config --global --add safe.directory /root/SDRPlusPlus
 cd SDRPlusPlus
 cmake --preset ci-linux-deb ${CURL_DEP_ARG}
 cd build
-make VERBOSE=1 -j2
+make VERBOSE=1 -j"$(nproc)"
 cpack
 
 cd ..

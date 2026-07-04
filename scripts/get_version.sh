@@ -21,15 +21,20 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-git -C "$REPO_ROOT" config --global --add safe.directory "$REPO_ROOT" 2>/dev/null || true
+# Pass safe.directory per-invocation (git -c) rather than `config --global`,
+# which would append a duplicate line to the caller's ~/.gitconfig on every
+# run (this is invoked on every Linux cmake configure via the CPack block).
+git_repo() {
+    git -c safe.directory="$REPO_ROOT" -C "$REPO_ROOT" "$@"
+}
 
-DESCRIBE=$(git -C "$REPO_ROOT" describe --tags --long --match "v[0-9]*.[0-9]*.[0-9]*" 2>/dev/null || true)
+DESCRIBE=$(git_repo describe --tags --long --match "v[0-9]*.[0-9]*.[0-9]*" 2>/dev/null || true)
 if [ -n "$DESCRIBE" ]; then
     BUILD_INFO=$(echo "$DESCRIBE" | grep -oE '[0-9]+-g[0-9a-f]+$')
     BUILD_COUNT=$(echo "$BUILD_INFO" | grep -oE '^[0-9]+')
 else
-    BUILD_COUNT=$(git -C "$REPO_ROOT" rev-list --count HEAD 2>/dev/null || echo "0")
-    HASH=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    BUILD_COUNT=$(git_repo rev-list --count HEAD 2>/dev/null || echo "0")
+    HASH=$(git_repo rev-parse --short HEAD 2>/dev/null || echo "unknown")
     BUILD_INFO="${BUILD_COUNT}-g${HASH}"
 fi
 
