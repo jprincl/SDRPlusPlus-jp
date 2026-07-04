@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.2.2-alpha4 - 2026-07-04
+
+### Added
+
+- New CMake-based dependency build system, ported from PrusaSlicer's (written by Tamas Meszaros, @tamasmeszaros): all third-party libraries are now built from source instead of pulling prebuilt binary blobs. This enables native Windows on ARM64 builds and removes the need for the custom Android SDR-kit Docker image.
+- Native Windows on ARM64 builds.
+- Linux AppImage builds, with isolated config root.
+- Radiosonde decoder plugin, merged directly into the `iak` fork from `sdrpp_radiosonde` by @dbdexter-dev (Davide Belloli), built on his `sondedump` decoding library.
+- Spots module, merged from `sdrpp-spots` by @gerner.
+- WebSDR view module, based on the KiwiSDR map and waterfall code from SDRPlusPlusBrown by @sannysanoff.
+- libcurl integration for HTTPS and secure WebSockets, statically bundled and exported through `sdrpp_core`.
+- KiwiSDR improvements merged from the `qrp73`/`sdr73` forks by @qrp73: server selection by address and port, server band parsing, and map improvements (day/night terminator, country colors, hover tooltips, and a runtime-toggleable marker style).
+
+### Changed
+
+- Reworked the WebSocket client for RFC 6455 correctness and hardening (handshake validation, fragmentation, redirect handling, and concurrency/write safety).
+- Networking hardening and cleanup across the KiwiSDR and web modules.
+
+### Fixed
+
+- QMX on Linux: fixed an exception when enumerating ALSA audio devices (#3).
+- Fixed input events leaking through overlapping ImGui windows.
+- Fixed `flog` string conversion for all numeric types supported by `to_string`.
+- Fixed a Debian package build regression where optimization was disabled.
+
 ## v1.2.2-alpha3 - 2026-04-21
 
 ### Added
