@@ -158,11 +158,8 @@ set(SDRPP_CORE_ROOT "${CMAKE_SOURCE_DIR}/core/src/")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-# Project-specific compile options. Keep CMake's generator/compiler defaults
-# responsible for optimization, debug info, exception handling, and standards.
-set(SDRPP_COMPILE_OPTIONS "")
-set(SDRPP_MODULE_COMPILE_OPTIONS "${SDRPP_COMPILE_OPTIONS}")
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
 
 # Set a default install prefix
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -292,15 +289,11 @@ endif ()
 
 set_target_properties(sdrpp PROPERTIES OUTPUT_NAME "sdrpp-iak")
 
-target_link_libraries(sdrpp PRIVATE sdrpp_core)
-target_compile_features(sdrpp PRIVATE cxx_std_17)
+target_link_libraries(sdrpp PRIVATE sdrpp_core Threads::Threads)
 
 # libcurl is resolved by deps/+libcurl (bundled profiles) or via the distro
 # package (Linux). Static deps builds absorb it into sdrpp_core; system mode
 # picks up the distro libcurl through the dynamic linker's default search.
-
-# Compiler arguments
-target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILE_OPTIONS})
 
 # Copy dynamic libs over
 if (MSVC)
@@ -353,19 +346,11 @@ if (MSVC)
         set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP True)
         include(InstallRequiredSystemLibraries)
 
-        set(_sdrpp_msvc_redist_manifest "${CMAKE_CURRENT_BINARY_DIR}/sdrpp_msvc_redist_$<CONFIG>.cmake")
-        set(_sdrpp_msvc_redist_manifest_content "set(SDRPP_MSVC_REDIST_DLLS\n")
-        foreach (_dll IN LISTS CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
-            string(APPEND _sdrpp_msvc_redist_manifest_content "    [=[${_dll}]=]\n")
-        endforeach ()
-        string(APPEND _sdrpp_msvc_redist_manifest_content ")\n")
-        file(GENERATE OUTPUT "${_sdrpp_msvc_redist_manifest}" CONTENT "${_sdrpp_msvc_redist_manifest_content}")
-
         add_custom_target(do_always_msvc ALL
             COMMAND ${CMAKE_COMMAND}
                 -DCONFIG="$<CONFIG>"
                 -DDST="$<TARGET_FILE_DIR:sdrpp>"
-                -DREDIST_MANIFEST="${_sdrpp_msvc_redist_manifest}"
+                "-DREDIST_DLLS=${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}"
                 -P "${CMAKE_SOURCE_DIR}/cmake/copy_msvc_redist.cmake"
             COMMENT "Copying MSVC redistributables"
             VERBATIM)
@@ -373,21 +358,12 @@ if (MSVC)
     endif ()
 endif ()
 
-if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
-    target_link_libraries(sdrpp PUBLIC pthread)
-endif ()
-
 # Create module cmake file
 configure_file(${CMAKE_SOURCE_DIR}/sdrpp_module.cmake ${CMAKE_CURRENT_BINARY_DIR}/sdrpp_module.cmake @ONLY)
 
 # Install directives
 install(TARGETS sdrpp DESTINATION bin)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/bandplans DESTINATION share/sdrpp-iak)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/colormaps DESTINATION share/sdrpp-iak)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/cty DESTINATION share/sdrpp-iak)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/fonts DESTINATION share/sdrpp-iak)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/icons DESTINATION share/sdrpp-iak)
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/themes DESTINATION share/sdrpp-iak)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/root/res/ DESTINATION share/sdrpp-iak)
 configure_file(${CMAKE_SOURCE_DIR}/sdrpp-iak.desktop ${CMAKE_CURRENT_BINARY_DIR}/sdrpp-iak.desktop @ONLY)
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")

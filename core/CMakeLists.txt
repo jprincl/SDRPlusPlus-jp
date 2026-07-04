@@ -35,9 +35,6 @@ if (MSVC AND SDRPP_RUNTIME_OUTPUT_DIRECTORY)
         VERBATIM)
 endif ()
 
-# Set compiler options
-target_compile_options(sdrpp_core PRIVATE ${SDRPP_COMPILE_OPTIONS})
-target_compile_features(sdrpp_core PUBLIC cxx_std_17)
 target_compile_definitions(sdrpp_core PRIVATE
     SDRPP_IS_CORE
     "FLOG_ANDROID_TAG=\"SDR++ iak\"")
@@ -137,11 +134,12 @@ sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
     STATIC_TARGETS zstd::libzstd_static)
 sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
 
-if (MSVC)
-    # OpenGL
+if (NOT ANDROID)
     find_package(OpenGL REQUIRED)
     target_link_libraries(sdrpp_core PUBLIC OpenGL::GL)
+endif ()
 
+if (MSVC)
     # WinSock2
     target_link_libraries(sdrpp_core PUBLIC wsock32 ws2_32 iphlpapi)
 elseif (ANDROID)
@@ -156,18 +154,12 @@ elseif (ANDROID)
         log
     )
 else()
-    find_package(OpenGL REQUIRED)
-
-    target_link_libraries(sdrpp_core PUBLIC
-        ${OPENGL_LIBRARIES}
-    )
-
     if (NOT USE_INTERNAL_LIBCORRECT)
         find_package(PkgConfig REQUIRED)
-        pkg_check_modules(CORRECT REQUIRED libcorrect)
-        target_include_directories(sdrpp_core PUBLIC ${CORRECT_INCLUDE_DIRS})
-        target_link_directories(sdrpp_core PUBLIC ${CORRECT_LIBRARY_DIRS})
-        target_link_libraries(sdrpp_core PUBLIC ${CORRECT_LIBRARIES})
+        # GLOBAL: the imported target sits in sdrpp_core's PUBLIC link
+        # interface, so plugin targets in sibling directories must see it too.
+        pkg_check_modules(CORRECT REQUIRED IMPORTED_TARGET GLOBAL libcorrect)
+        target_link_libraries(sdrpp_core PUBLIC PkgConfig::CORRECT)
     endif (NOT USE_INTERNAL_LIBCORRECT)
 
     if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")

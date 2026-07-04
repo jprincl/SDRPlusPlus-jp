@@ -50,19 +50,6 @@ if (EXISTS "${_sdrpp_repo_root}/deps/cmake/DepClassification.cmake")
     include("${_sdrpp_repo_root}/deps/cmake/DepClassification.cmake")
 endif ()
 
-function(_sdrpp_link_dep_collect_prefix_hints out_var)
-    set(_prefix_hints "")
-
-    foreach (_prefix ${CMAKE_PREFIX_PATH})
-        if (NOT "${_prefix}" STREQUAL "")
-            list(APPEND _prefix_hints "${_prefix}")
-        endif ()
-    endforeach ()
-
-    list(REMOVE_DUPLICATES _prefix_hints)
-    set(${out_var} ${_prefix_hints} PARENT_SCOPE)
-endfunction()
-
 function(_sdrpp_link_dep_resolve_targets pkg out_var)
     cmake_parse_arguments(P "" "" "TARGETS;SHARED_TARGETS;STATIC_TARGETS" ${ARGN})
 
@@ -117,7 +104,7 @@ function(sdrpp_link_dep target pkg)
         SHARED_TARGETS ${P_SHARED_TARGETS}
         STATIC_TARGETS ${P_STATIC_TARGETS})
 
-    _sdrpp_link_dep_collect_prefix_hints(_prefix_hints)
+    set(_prefix_hints ${CMAKE_PREFIX_PATH})
 
     # System-sourced deps (e.g. libcurl on distro profiles) intentionally live
     # outside the deps install prefix — they come from the host packages. The
@@ -202,9 +189,7 @@ function(sdrpp_link_dep target pkg)
             "Build the deps preset for this platform and point CMAKE_PREFIX_PATH at its install prefix.")
     endif ()
 
-    if (UNIX OR APPLE)
-        find_package(${_package} CONFIG QUIET)
-    endif ()
+    find_package(${_package} CONFIG QUIET)
     foreach (t ${_targets})
         if (TARGET ${t})
             target_link_libraries(${target} ${_scope} ${t})
