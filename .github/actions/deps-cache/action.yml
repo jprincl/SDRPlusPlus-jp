@@ -14,8 +14,8 @@ inputs:
     key-suffix:
         description: >-
             Platform/arch-specific suffix for the destdir cache key, e.g.
-            "macos-${{ inputs.runner }}" or
-            "android-${{ matrix.flavor }}-${{ matrix.build_type_caps }}".
+            "macos-<runner>" or
+            "android-<flavor>-<build_type_caps>".
             Required when destdir-path is set.
         required: false
         default: ''
