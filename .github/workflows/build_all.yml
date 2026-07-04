@@ -336,7 +336,7 @@ jobs:
         # through. Optional artifacts (AppImages, signed release APKs) simply
         # aren't present when skipped; nothing to guard.
         - name: Download All Builds
-          uses: actions/download-artifact@v5
+          uses: actions/download-artifact@v6
           with:
             path: sdrpp_all
             pattern: sdrpp-iak-*
@@ -359,7 +359,7 @@ jobs:
 
         steps:
         - name: Download All Builds
-          uses: actions/download-artifact@v5
+          uses: actions/download-artifact@v6
 
         - name: Create or Update Nightly Release
           env:
@@ -392,7 +392,7 @@ jobs:
 
         steps:
         - name: Download All Builds
-          uses: actions/download-artifact@v5
+          uses: actions/download-artifact@v6
 
         - name: Publish GitHub Release
           env:
