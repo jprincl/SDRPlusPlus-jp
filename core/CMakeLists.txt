@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.16...3.24)
 project(sdrpp_core)
 
 if (USE_INTERNAL_LIBCORRECT)
@@ -22,10 +22,13 @@ if (OPT_BACKEND_ANDROID)
 endif ()
 
 # Add code to dyn lib
+if (SDRPP_RUNTIME_OUTPUT_DIRECTORY)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}")
+endif ()
+
 add_library(sdrpp_core SHARED ${SRC} ${BACKEND_SRC})
 if (MSVC AND SDRPP_RUNTIME_OUTPUT_DIRECTORY)
-    set_target_properties(sdrpp_core PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}")
     add_custom_command(TARGET sdrpp_core POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E remove -f
             "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/$<TARGET_FILE_NAME:sdrpp_core>"

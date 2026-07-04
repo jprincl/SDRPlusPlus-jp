@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.16...3.24)
 project(falcon9_decoder)
 
 file(GLOB_RECURSE SRC "src/*.cpp")

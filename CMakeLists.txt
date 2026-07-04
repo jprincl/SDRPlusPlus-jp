@@ -1,12 +1,5 @@
-cmake_minimum_required(VERSION 3.13)
-if (POLICY CMP0091)
-    cmake_policy(SET CMP0091 NEW)
-endif ()
+cmake_minimum_required(VERSION 3.16...3.24)
 project(sdrpp)
-
-if (MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "MSVC runtime library" FORCE)
-endif ()
 
 # Backends
 option(OPT_BACKEND_GLFW "Use the GLFW backend" ON)
@@ -143,10 +136,18 @@ endif ()
 # Module cmake path
 set(SDRPP_MODULE_CMAKE "${CMAKE_SOURCE_DIR}/sdrpp_module.cmake")
 
-# Windows runtime layout mirrors the ZIP bundle: the application and shared
-# runtime DLLs live in the config root, while SDR++ plugins live under modules.
+# Build-tree runtime layout: the application and core runtime library live
+# together, while SDR++ plugins keep their existing per-module output layout.
 if (MSVC)
     set(SDRPP_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")
+elseif (NOT ANDROID)
+    if (CMAKE_CONFIGURATION_TYPES)
+        set(SDRPP_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")
+    else ()
+        set(SDRPP_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    endif ()
+endif ()
+if (SDRPP_RUNTIME_OUTPUT_DIRECTORY)
     set(SDRPP_MODULE_RUNTIME_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}/modules")
 endif ()
 
@@ -279,6 +280,10 @@ sdrpp_add_optional_modules(
     WEBSDR_VIEW:misc_modules/websdr_view
 )
 
+if (SDRPP_RUNTIME_OUTPUT_DIRECTORY)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}")
+endif ()
+
 if (MSVC)
     add_executable(sdrpp "src/main.cpp" "win32/resources.rc")
 else ()
@@ -286,9 +291,6 @@ else ()
 endif ()
 
 set_target_properties(sdrpp PROPERTIES OUTPUT_NAME "sdrpp-iak")
-if (MSVC)
-    set_target_properties(sdrpp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SDRPP_RUNTIME_OUTPUT_DIRECTORY}")
-endif ()
 
 target_link_libraries(sdrpp PRIVATE sdrpp_core)
 target_compile_features(sdrpp PRIVATE cxx_std_17)
@@ -302,10 +304,13 @@ target_compile_options(sdrpp PRIVATE ${SDRPP_COMPILE_OPTIONS})
 
 # Copy dynamic libs over
 if (MSVC)
-    get_property(_sdrpp_runtime_dlls GLOBAL PROPERTY SDRPP_RUNTIME_DLLS)
-    if (_sdrpp_runtime_dlls)
-        list(REMOVE_DUPLICATES _sdrpp_runtime_dlls)
+    if (CMAKE_VERSION VERSION_LESS 3.21)
+        message(FATAL_ERROR "MSVC builds require CMake 3.21 or newer for $<TARGET_RUNTIME_DLLS> runtime DLL staging.")
     endif ()
+
+    get_property(_sdrpp_plugin_targets GLOBAL PROPERTY SDRPP_PLUGIN_TARGETS)
+    set(_sdrpp_runtime_targets sdrpp ${_sdrpp_plugin_targets})
+    list(REMOVE_DUPLICATES _sdrpp_runtime_targets)
 
     set(_sdrpp_runtime_source_dirs "")
     foreach (_pp ${CMAKE_PREFIX_PATH})
@@ -317,8 +322,8 @@ if (MSVC)
 
     set(_sdrpp_runtime_manifest "${CMAKE_CURRENT_BINARY_DIR}/sdrpp_runtime_dlls_$<CONFIG>.cmake")
     set(_sdrpp_runtime_manifest_content "set(SDRPP_RUNTIME_DLLS\n")
-    foreach (_dll IN LISTS _sdrpp_runtime_dlls)
-        string(APPEND _sdrpp_runtime_manifest_content "    [=[${_dll}]=]\n")
+    foreach (_target IN LISTS _sdrpp_runtime_targets)
+        string(APPEND _sdrpp_runtime_manifest_content "    [=[$<TARGET_RUNTIME_DLLS:${_target}>]=]\n")
     endforeach ()
     string(APPEND _sdrpp_runtime_manifest_content ")\nset(SDRPP_RUNTIME_SOURCE_DIRS\n")
     foreach (_dir IN LISTS _sdrpp_runtime_source_dirs)
@@ -372,16 +377,6 @@ if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
     target_link_libraries(sdrpp PUBLIC pthread)
 endif ()
 
-if (CMAKE_SYSTEM_NAME MATCHES "OpenBSD|FreeBSD|Linux|Darwin")
-    add_custom_target(do_always ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:sdrpp_core>"
-            "$<TARGET_FILE_DIR:sdrpp>/$<TARGET_FILE_NAME:sdrpp_core>"
-        COMMENT "Copying SDR++ core runtime library"
-        VERBATIM)
-    add_dependencies(do_always sdrpp sdrpp_core)
-endif ()
-
 # Create module cmake file
 configure_file(${CMAKE_SOURCE_DIR}/sdrpp_module.cmake ${CMAKE_CURRENT_BINARY_DIR}/sdrpp_module.cmake @ONLY)
 
@@ -413,9 +408,6 @@ if (MSVC)
         COMMENT "Staging Windows bundle under ${SDRPP_WINDOWS_BUNDLE_STAGE_ROOT}"
         VERBATIM)
     add_dependencies(stage_windows_bundle sdrpp)
-    if (TARGET do_always)
-        add_dependencies(stage_windows_bundle do_always)
-    endif ()
     if (TARGET do_always_msvc)
         add_dependencies(stage_windows_bundle do_always_msvc)
     endif ()

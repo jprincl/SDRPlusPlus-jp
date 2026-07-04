@@ -144,8 +144,7 @@ function(add_cmake_project projectname)
         -DCMAKE_POLICY_VERSION_MINIMUM:STRING=3.5)
     if (MSVC)
         list(APPEND _cmake_args
-            -DCMAKE_POLICY_DEFAULT_CMP0091:STRING=NEW
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+            -DCMAKE_POLICY_DEFAULT_CMP0091:STRING=NEW)
     endif ()
     if (_configs_line)
         list(APPEND _cmake_args "${_configs_line}")

@@ -23,15 +23,8 @@
 # from CMakePresets.json at the repo root.
 #
 
-cmake_minimum_required(VERSION 3.16)  # Ubuntu focal floor
-if (POLICY CMP0091)
-    cmake_policy(SET CMP0091 NEW)
-endif ()
+cmake_minimum_required(VERSION 3.16...3.24)  # Ubuntu focal floor
 project(sdrpp_deps)
-
-if (MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "MSVC runtime library" FORCE)
-endif ()
 
 include(${PROJECT_SOURCE_DIR}/../cmake/sdrpp_trace_helpers.cmake)
 include(${PROJECT_SOURCE_DIR}/../cmake/sdrpp_dep_list_helpers.cmake)
@@ -57,10 +50,6 @@ option(SDRPP_DEP_POLICY_STRICT "Require explicit policy metadata for every depen
 
 option(BUILD_SHARED_LIBS "Build shared libraries instead of static" ON)
 set(${PROJECT_NAME}_PACKAGE_EXCLUDES "" CACHE STRING "Exclude packages matching this regex pattern")
-
-if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
-    cmake_policy(SET CMP0135 NEW)  # URL timestamp = extraction time, so re-extracts on URL change
-endif ()
 
 include(${PROJECT_SOURCE_DIR}/cmake/DepPolicy.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/DepClassification.cmake)

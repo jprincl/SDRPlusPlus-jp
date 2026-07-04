@@ -6,6 +6,11 @@ file(MAKE_DIRECTORY "${DST}")
 
 include("${RUNTIME_MANIFEST}")
 
+if (SDRPP_RUNTIME_DLLS)
+    list(REMOVE_ITEM SDRPP_RUNTIME_DLLS "")
+    list(REMOVE_DUPLICATES SDRPP_RUNTIME_DLLS)
+endif ()
+
 set(_runtime_names "")
 foreach (_dll IN LISTS SDRPP_RUNTIME_DLLS)
     get_filename_component(_name "${_dll}" NAME)
@@ -29,7 +34,12 @@ endforeach ()
 
 foreach (_dll IN LISTS SDRPP_RUNTIME_DLLS)
     if (EXISTS "${_dll}")
-        file(COPY "${_dll}" DESTINATION "${DST}")
+        get_filename_component(_name "${_dll}" NAME)
+        get_filename_component(_src_abs "${_dll}" ABSOLUTE)
+        get_filename_component(_dst_abs "${DST}/${_name}" ABSOLUTE)
+        if (NOT _src_abs STREQUAL _dst_abs)
+            file(COPY "${_dll}" DESTINATION "${DST}")
+        endif ()
     endif ()
 endforeach ()
 
