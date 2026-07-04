@@ -27,8 +27,17 @@ function Resolve-Arch($buildDir, $explicit) {
 	switch -Regex ($platform) {
 		'^(?i)ARM64$' { return "arm64" }
 		'^(?i)x64$'   { return "x64" }
+	}
+
+	# Ninja generators (the msvc-x64-*/msvc-arm64-* presets) never populate
+	# CMAKE_GENERATOR_PLATFORM. Fall back to the MSVC host/target compiler
+	# path, e.g. ".../bin/Hostx64/arm64/cl.exe".
+	$compiler = Get-CMakeCacheValue $cachePath "CMAKE_CXX_COMPILER"
+	switch -Regex ($compiler) {
+		'[\\/]Host\w+[\\/]arm64[\\/]' { return "arm64" }
+		'[\\/]Host\w+[\\/]x64[\\/]'   { return "x64" }
 		default {
-			throw "Cannot infer architecture from CMakeCache CMAKE_GENERATOR_PLATFORM='$platform'. Pass -Arch x64|arm64 explicitly."
+			throw "Cannot infer architecture from CMakeCache (CMAKE_GENERATOR_PLATFORM='$platform', CMAKE_CXX_COMPILER='$compiler'). Pass -Arch x64|arm64 explicitly."
 		}
 	}
 }
@@ -58,11 +67,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $stage_dir = Get-WindowsStageDir $BuildDir $BuildConfig
+$stage_leaf = Split-Path $stage_dir -Leaf
+$renamed_dir = Join-Path (Split-Path $stage_dir -Parent) $package_dir
 
-Remove-Item -Force -Recurse $package_dir -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path $package_dir -Force | Out-Null
-Copy-Item -Recurse "$stage_dir\*" "$package_dir/"
-
-Compress-Archive -Path "$package_dir/" -DestinationPath $zip_path -Force
-
-Remove-Item -Force -Recurse $package_dir
+Rename-Item -Path $stage_dir -NewName $package_dir
+try {
+	Compress-Archive -Path $renamed_dir -DestinationPath $zip_path -Force
+}
+finally {
+	Rename-Item -Path $renamed_dir -NewName $stage_leaf
+}

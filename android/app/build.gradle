@@ -104,6 +104,7 @@ android {
 
     externalNativeBuild {
         cmake {
+            // devenv:cmake - install_android_devenv.sh anchors its sed extraction to this marker.
             version = "3.22.1"
             path "../../CMakeLists.txt"
         }

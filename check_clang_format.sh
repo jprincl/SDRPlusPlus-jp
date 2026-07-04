@@ -1,20 +1,11 @@
 #!/bin/bash
-
-echo Searching directories...
-CODE_FILES=$(find . -iregex '.*\.\(h\|hpp\|c\|cpp\)$')
-while read -r CPP_FILE_PATH; do
-    # Skip unwanted files
-    if [[ "$CPP_FILE_PATH" == "./.old"* ]]; then continue; fi
-    if [[ "$CPP_FILE_PATH" == "./build"* ]]; then continue; fi
-    if [[ "$CPP_FILE_PATH" == "./core/libcorrect"* ]]; then continue; fi
-    if [[ "$CPP_FILE_PATH" == "./core/std_replacement"* ]]; then continue; fi
-    if [[ "$CPP_FILE_PATH" == "./core/src/imgui"* ]]; then continue; fi
-    if [[ "$CPP_FILE_PATH" == "./misc_modules/discord_integration/discord-rpc"* ]]; then continue; fi
-    if [[ "$CPP_FILE_PATH" == "./source_modules/sddc_source/src/libsddc"* ]]; then continue; fi
-    
-    if [ "$CPP_FILE_PATH" = ./core/src/json.hpp ]; then continue; fi
-    if [ "$CPP_FILE_PATH" = ./core/src/gui/file_dialogs.h ]; then continue; fi
-
-    echo Checking $CPP_FILE_PATH
-    clang-format --style=file -i -n -Werror $CPP_FILE_PATH
-done <<< "$CODE_FILES"
+# Vendored / third-party code that isn't formatted to our style is excluded via pathspecs below.
+git ls-files -z '*.h' '*.hpp' '*.c' '*.cpp' \
+    ':(exclude)core/libcorrect' \
+    ':(exclude)core/std_replacement' \
+    ':(exclude)core/src/imgui' \
+    ':(exclude)misc_modules/discord_integration/discord-rpc' \
+    ':(exclude)source_modules/sddc_source/libsddc' \
+    ':(exclude)core/src/json.hpp' \
+    ':(exclude)core/src/gui/file_dialogs.h' \
+    | xargs -0 clang-format --style=file --dry-run -Werror

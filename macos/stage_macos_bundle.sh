@@ -17,11 +17,8 @@ bundle_create_struct "$BUNDLE"
 cp -R "$REPO_ROOT/root/res"/* "$BUNDLE/Contents/Resources/"
 bundle_create_icns "$REPO_ROOT/root/res/icons/sdrpp.macos.png" "$BUNDLE/Contents/Resources/sdrpp"
 
-APP_VERSION=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9]*)?"' "$REPO_ROOT/core/src/version.h" | tr -d '"')
-if [ -z "$APP_VERSION" ]; then
-    echo "ERROR: could not parse version from core/src/version.h" >&2
-    exit 1
-fi
+eval "$("$REPO_ROOT/scripts/get_version.sh" "$REPO_ROOT")"
+APP_VERSION="$VERSION"
 
 bundle_create_plist sdrpp-iak "SDR++ iak" org.ok1iak.sdrpp "$APP_VERSION" sdri sdrpp-iak sdrpp "$BUNDLE/Contents/Info.plist"
 

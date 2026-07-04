@@ -17,11 +17,27 @@ read_gradle_value() {
     echo "$value"
 }
 
+# Like read_gradle_value, but only matches on the line immediately following
+# a marker comment, so it can't be shadowed by an unrelated "version = ..."
+# assignment added elsewhere in the file.
+read_gradle_value_after_marker() {
+    local marker="$1"
+    local pattern="$2"
+    local value
+
+    value="$(sed -nE "/${marker}/{n;s/${pattern}/\\1/p}" "$APP_GRADLE")"
+    if [ -z "$value" ]; then
+        echo "Unable to read Android build setting from $APP_GRADLE" >&2
+        exit 1
+    fi
+    echo "$value"
+}
+
 # Keep the SDK components aligned with android/app/build.gradle.
 ANDROID_SDK_PLATFORM="${ANDROID_SDK_PLATFORM:-$(read_gradle_value '^[[:space:]]*compileSdk[[:space:]]+([0-9]+).*')}"
 ANDROID_BUILD_TOOLS_VERSION="${ANDROID_BUILD_TOOLS_VERSION:-${ANDROID_SDK_PLATFORM}.0.0}"
 ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:-$(read_gradle_value '^[[:space:]]*ndkVersion[[:space:]]+"([^"]+)".*')}"
-ANDROID_CMAKE_VERSION="${ANDROID_CMAKE_VERSION:-$(read_gradle_value '^[[:space:]]*version[[:space:]]*=[[:space:]]*"([^"]+)".*')}"
+ANDROID_CMAKE_VERSION="${ANDROID_CMAKE_VERSION:-$(read_gradle_value_after_marker 'devenv:cmake' '^[[:space:]]*version[[:space:]]*=[[:space:]]*"([^"]+)".*')}"
 ANDROID_INSTALLER="${ANDROID_INSTALLER:-commandlinetools-linux-14742923_latest.zip}"
 
 # Prefer an existing SDK on the runner (GitHub Actions images set

@@ -72,32 +72,15 @@ jobs:
           with:
               gradle-version: 9.4.1
 
-        # Shared across every workflow in the repo — tarballs are byte-identical
-        # regardless of target platform, URL_HASH validates correctness at
-        # extraction. The same key in every workflow means Android, Linux,
-        # macOS, and Windows all hit the same cache entry: a curl tarball
-        # downloaded by one workflow is reused by the next instead of being
-        # re-fetched. Restore-keys keep tarballs accumulating across recipe
-        # edits — additions to .pkg_cache never conflict, URL_HASH guards
-        # against stale content.
-        - name: Cache deps download tarballs
-          uses: actions/cache@v4
-          with:
-              path: deps/.pkg_cache
-              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
-              restore-keys: |
-                  deps-pkgcache-
-
         # Per-(flavor, build_type) install-prefix cache. Glob covers both
         # ABIs in this flavor (arm* matches armeabi-v7a + arm64-v8a; x86*
-        # matches x86 + x86_64) for the specific build type. Exact-key only
-        # — autobuild.cmake's recipe-hash marker is the safety net against
-        # stale state slipping through.
-        - name: Cache deps install prefix (${{ matrix.flavor }} / ${{ matrix.build_type_caps }})
-          uses: actions/cache@v4
+        # matches x86 + x86_64) for the specific build type.
+        - name: Cache deps
+          uses: ./.github/actions/deps-cache
           with:
-              path: deps/build-android-${{ matrix.flavor }}*-${{ matrix.build_type_caps }}/destdir
-              key: deps-destdir-android-${{ matrix.flavor }}-${{ matrix.build_type_caps }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake', 'android/app/build.gradle') }}
+              destdir-path: deps/build-android-${{ matrix.flavor }}*-${{ matrix.build_type_caps }}/destdir
+              key-suffix: android-${{ matrix.flavor }}-${{ matrix.build_type_caps }}
+              extra-hash-file: android/app/build.gradle
 
         - name: Install Android development environment
           run: bash ./install_android_devenv.sh
@@ -129,9 +112,16 @@ jobs:
             ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
           run: gradle --info -PoptBuildDeps=ON assemble${{ matrix.flavor_caps }}${{ matrix.build_type_caps }}
 
+        # Renamed to the artifact name here (rather than in create_full_archive)
+        # so the file inside the artifact already has its final published name.
+        - name: Rename ${{ matrix.flavor_caps }} ${{ matrix.build_type_caps }} APK
+          if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
+          working-directory: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}
+          run: mv sdrpp-iak-${{ matrix.flavor }}-${{ matrix.build_type }}.apk sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}.apk
+
         - name: Save ${{ matrix.flavor_caps }} ${{ matrix.build_type_caps }} APK
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v4
           with:
               name: sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}/sdrpp-iak-${{ matrix.flavor }}-${{ matrix.build_type }}.apk
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}/sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}.apk

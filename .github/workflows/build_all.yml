@@ -16,52 +16,37 @@ permissions:
   actions: read      # Standard workflow permission
 
 env:
-    # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
-    BUILD_TYPE: Release
-    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-    get_version:
+    prepare:
+        # Version read, AppImage change-detection, and tag validation in one job:
+        # they all just need a single full-history checkout and none warrant
+        # their own runner.
         runs-on: ubuntu-latest
         outputs:
             version: ${{ steps.read.outputs.version }}
             version_full: ${{ steps.read.outputs.version_full }}
-        steps:
-        - uses: actions/checkout@v4
-          with:
-            fetch-depth: 0
-        - name: Read version
-          id: read
-          run: |
-            version=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9]*)?"' core/src/version.h | tr -d '"')
-            echo "version=$version" >> $GITHUB_OUTPUT
-            describe=$(git describe --tags --long --match "v[0-9]*.[0-9]*.[0-9]*" 2>/dev/null || true)
-            if [ -n "$describe" ]; then
-              build_info=$(echo "$describe" | grep -oE '[0-9]+-g[0-9a-f]+$')
-              count=$(echo "$build_info" | grep -oE '^[0-9]+')
-            else
-              count=$(git rev-list --count HEAD)
-              hash=$(git rev-parse --short HEAD)
-              build_info="${count}-g${hash}"
-            fi
-            if [ "$count" = "0" ]; then
-              version_full="$version"
-            else
-              version_full="${version}+${build_info}"
-            fi
-            echo "version_full=$version_full" >> $GITHUB_OUTPUT
-
-    detect_changes:
-        # On PRs, AppImage builds are gated on whether AppImage-relevant files changed
-        # (saves ~30 min of CI on the average PR). On push/tag/dispatch, always build.
-        runs-on: ubuntu-latest
-        outputs:
             appimage: ${{ steps.filter.outputs.appimage }}
         steps:
         - uses: actions/checkout@v4
           with:
             fetch-depth: 0
+
+        - name: Read version
+          id: read
+          run: |
+            eval "$(scripts/get_version.sh "$GITHUB_WORKSPACE")"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            if [ "$BUILD_COUNT" = "0" ]; then
+              version_full="$VERSION"
+            else
+              version_full="${VERSION}+${BUILD_INFO}"
+            fi
+            echo "version_full=$version_full" >> $GITHUB_OUTPUT
+
+        # On PRs, AppImage builds are gated on whether AppImage-relevant files changed
+        # (saves ~30 min of CI on the average PR). On push/tag/dispatch, always build.
         - id: filter
           run: |
             if [ "${{ github.event_name }}" != "pull_request" ]; then
@@ -74,34 +59,27 @@ jobs:
             #   - the orchestrator workflow (matrix changes)
             #   - the desktop file (referenced by linuxdeploy)
             #   - the root and core CMakeLists (install paths, INSTALL_PREFIX define)
+            #   - CMakePresets.json (the ci-appimage configure preset)
             #   - sdrpp_module.cmake (plugin install destination)
             #   - core.cpp (resource/module path resolution + APPDIR override)
             #   - command_args.cpp (config root directory selection)
             #   - core curl/HTTP wrappers and curl-using modules
             #   - the icon resource (referenced by the desktop file)
             if git diff --name-only "$BASE...HEAD" | \
-              grep -qE '^(docker_builds/appimage/|deps/|\.github/workflows/build_appimage\.yml|\.github/workflows/build_all\.yml|sdrpp-iak\.desktop|CMakeLists\.txt|core/CMakeLists\.txt|sdrpp_module\.cmake|cmake/sdrpp_collect_required_deps\.cmake|cmake/sdrpp_dep_list_helpers\.cmake|cmake/sdrpp_find_dep\.cmake|core/src/core\.cpp|core/src/command_args\.cpp|core/src/utils/curl_init\.(cpp|h)|core/src/utils/proto/curl_http\.(cpp|h)|misc_modules/spots/|root/res/icons/)'; then
+              grep -qE '^(docker_builds/appimage/|deps/|\.github/workflows/build_appimage\.yml|\.github/workflows/build_all\.yml|sdrpp-iak\.desktop|CMakeLists\.txt|CMakePresets\.json|core/CMakeLists\.txt|sdrpp_module\.cmake|cmake/sdrpp_collect_required_deps\.cmake|cmake/sdrpp_dep_list_helpers\.cmake|cmake/sdrpp_find_dep\.cmake|core/src/core\.cpp|core/src/command_args\.cpp|core/src/utils/curl_init\.(cpp|h)|core/src/utils/proto/curl_http\.(cpp|h)|misc_modules/spots/|root/res/icons/)'; then
               echo "appimage=true" >> $GITHUB_OUTPUT
             else
               echo "appimage=false" >> $GITHUB_OUTPUT
             fi
 
-    validate_tag:
         # On tag pushes, verify the tag matches the version in version.h before
-        # starting expensive platform builds. On non-tag runs this job succeeds
-        # as a no-op so build jobs can depend on it uniformly.
-        needs: [get_version]
-        runs-on: ubuntu-latest
-        steps:
-        - name: Non-tag build
-          if: github.ref_type != 'tag'
-          run: echo "Not a tag; no tag validation needed."
-
+        # starting expensive platform builds; fails the job (and everything
+        # depending on it) rather than being a separate no-op job on non-tag runs.
         - name: Check tag vs version.h
           if: github.ref_type == 'tag'
           env:
             TAG: ${{ github.ref_name }}
-            HEADER_VER: ${{ needs.get_version.outputs.version }}
+            HEADER_VER: ${{ steps.read.outputs.version }}
           run: |
             EXPECTED="v${HEADER_VER}"
             if [ "$TAG" != "$EXPECTED" ]; then
@@ -111,7 +89,19 @@ jobs:
             echo "Tag ${TAG} matches version.h — OK"
 
     build_windows:
-        needs: [get_version, validate_tag]
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - arch: x64
+                      vcvars_arg: x64
+                      preset: msvc-x64-release
+                      deps_build_dir: build-default-Release
+                    - arch: arm64
+                      vcvars_arg: x64_arm64
+                      preset: msvc-arm64-release
+                      deps_build_dir: build-default-arm64-Release
+        needs: [prepare]
         runs-on: windows-2025-vs2026
 
         steps:
@@ -127,100 +117,41 @@ jobs:
             & "$env:pythonLocation\python.exe" -m pip install --user mako
             & "$env:pythonLocation\python.exe" -c "import sys, mako; print('VOLK Python:', sys.executable); print('Mako:', mako.__version__)"
 
-        # Shared across every workflow in the repo — tarballs are byte-identical
-        # regardless of target platform.
-        - name: Cache deps download tarballs
-          uses: actions/cache@v4
+        - name: Cache deps
+          uses: ./.github/actions/deps-cache
           with:
-              path: deps/.pkg_cache
-              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
-              restore-keys: |
-                  deps-pkgcache-
-
-        - name: Cache deps install prefix (Windows x64)
-          uses: actions/cache@v4
-          with:
-              path: deps/build-default-Release/destdir
-              key: deps-destdir-windows-x64-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake') }}
+              destdir-path: deps/${{ matrix.deps_build_dir }}/destdir
+              key-suffix: windows-${{ matrix.arch }}
 
         - name: Configure
           working-directory: ${{ github.workspace }}
           shell: cmd
           run: |
-            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-            cmake --preset msvc-x64-release "-DPython3_EXECUTABLE=%pythonLocation%\python.exe"
+            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars_arg }}
+            cmake --preset ${{ matrix.preset }} "-DPython3_EXECUTABLE=%pythonLocation%\python.exe"
 
         - name: Build
           working-directory: ${{ github.workspace }}
           shell: cmd
           run: |
-            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-            cmake --build build-msvc-x64-release --config Release --verbose
+            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars_arg }}
+            cmake --build build-${{ matrix.preset }} --config Release --verbose
 
         - name: Create Archive
           working-directory: ${{runner.workspace}}
-          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-msvc-x64-release") ($Env:GITHUB_WORKSPACE + "/root") Release x64'
+          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-${{ matrix.preset }}") ($Env:GITHUB_WORKSPACE + "/root") Release ${{ matrix.arch }}'
+
+        # Renamed to the artifact name here (rather than in create_full_archive)
+        # so the file inside the artifact already has its final published name.
+        - name: Rename Archive
+          working-directory: ${{runner.workspace}}
+          run: Move-Item sdrpp_windows_${{ matrix.arch }}.zip sdrpp-iak-${{ needs.prepare.outputs.version_full }}-windows-${{ matrix.arch }}.zip
 
         - name: Save Archive
           uses: actions/upload-artifact@v4
           with:
-              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-windows-x64
-              path: ${{runner.workspace}}/sdrpp_windows_x64.zip
-
-    build_windows_arm64:
-        needs: [get_version, validate_tag]
-        runs-on: windows-2025-vs2026
-
-        steps:
-        - uses: actions/checkout@v4
-
-        - uses: actions/setup-python@v5
-          with:
-            python-version: '3.12'
-
-        - name: Install Python package for volk
-          shell: pwsh
-          run: |
-            & "$env:pythonLocation\python.exe" -m pip install --user mako
-            & "$env:pythonLocation\python.exe" -c "import sys, mako; print('VOLK Python:', sys.executable); print('Mako:', mako.__version__)"
-
-        - name: Cache deps download tarballs
-          uses: actions/cache@v4
-          with:
-              path: deps/.pkg_cache
-              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
-              restore-keys: |
-                  deps-pkgcache-
-
-        - name: Cache deps install prefix (Windows ARM64)
-          uses: actions/cache@v4
-          with:
-              path: deps/build-default-arm64-Release/destdir
-              key: deps-destdir-windows-arm64-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake') }}
-
-        - name: Configure
-          working-directory: ${{ github.workspace }}
-          shell: cmd
-          run: |
-            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
-            cmake --preset msvc-arm64-release "-DPython3_EXECUTABLE=%pythonLocation%\python.exe"
-
-        - name: Build
-          working-directory: ${{ github.workspace }}
-          shell: cmd
-          run: |
-            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64_arm64
-            cmake --build build-msvc-arm64-release --config Release --verbose
-
-        - name: Create Archive
-          working-directory: ${{runner.workspace}}
-          run: '&($Env:GITHUB_WORKSPACE + "/make_windows_package.ps1") ($Env:GITHUB_WORKSPACE + "/build-msvc-arm64-release") ($Env:GITHUB_WORKSPACE + "/root") Release arm64'
-
-        - name: Save Archive
-          uses: actions/upload-artifact@v4
-          with:
-              name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-windows-arm64
-              path: ${{runner.workspace}}/sdrpp_windows_arm64.zip
+              name: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-windows-${{ matrix.arch }}
+              path: ${{runner.workspace}}/sdrpp-iak-${{ needs.prepare.outputs.version_full }}-windows-${{ matrix.arch }}.zip
 
     build_macos:
         strategy:
@@ -229,22 +160,19 @@ jobs:
                 include:
                     - runner: macos-15-intel
                       artifact_suffix: macos-intel
-                      zip_name: sdrpp_macos_intel.zip
-                      m17_decoder: 'ON'
-                      perseus_source: 'ON'
+                      preset: ci-macos-intel
                     - runner: macos-15
                       artifact_suffix: macos-arm
-                      zip_name: sdrpp_macos_arm.zip
-                      m17_decoder: 'OFF'
-                      perseus_source: 'OFF'
-        needs: [get_version, validate_tag]
+                      preset: ci-macos-arm
+        needs: [prepare]
         uses: ./.github/workflows/build_macos.yml
         with:
             runner: ${{ matrix.runner }}
-            artifact: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-${{ matrix.artifact_suffix }}
-            zip_name: ${{ matrix.zip_name }}
-            m17_decoder: ${{ matrix.m17_decoder }}
-            perseus_source: ${{ matrix.perseus_source }}
+            artifact: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-${{ matrix.artifact_suffix }}
+            # Named to match `artifact` so create_full_archive can merge every
+            # build's output straight in without a per-artifact rename table.
+            zip_name: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-${{ matrix.artifact_suffix }}.zip
+            preset: ${{ matrix.preset }}
 
     build_linux:
         strategy:
@@ -335,15 +263,16 @@ jobs:
                       volk_package: libvolk-dev
                       extra_apt: ''
                       curl_source: system
-        needs: [get_version, validate_tag]
+        needs: [prepare]
         uses: ./.github/workflows/build_linux.yml
         with:
             base_image: ${{ matrix.base_image }}
             runner: ${{ matrix.runner }}
-            artifact: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-${{ matrix.artifact }}
+            artifact: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-${{ matrix.artifact }}
             volk_package: ${{ matrix.volk_package }}
             extra_apt: ${{ matrix.extra_apt }}
             curl_source: ${{ matrix.curl_source }}
+            version_full: ${{ needs.prepare.outputs.version_full }}
 
     build_appimage:
         strategy:
@@ -356,20 +285,20 @@ jobs:
                     - runner: ubuntu-24.04-arm
                       arch: aarch64
                       artifact_suffix: linux-appimage-aarch64
-        needs: [get_version, detect_changes, validate_tag]
-        if: needs.detect_changes.outputs.appimage == 'true'
+        needs: [prepare]
+        if: needs.prepare.outputs.appimage == 'true'
         uses: ./.github/workflows/build_appimage.yml
         with:
             runner: ${{ matrix.runner }}
             arch: ${{ matrix.arch }}
-            artifact: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-${{ matrix.artifact_suffix }}
-            version_full: ${{ needs.get_version.outputs.version_full }}
+            artifact: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-${{ matrix.artifact_suffix }}
+            version_full: ${{ needs.prepare.outputs.version_full }}
 
     build_android:
-        needs: [get_version, validate_tag]
+        needs: [prepare]
         uses: ./.github/workflows/build_android.yml
         with:
-            version_full: ${{ needs.get_version.outputs.version_full }}
+            version_full: ${{ needs.prepare.outputs.version_full }}
         secrets:
             ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
             ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -378,27 +307,22 @@ jobs:
 
     create_full_archive:
         needs: [
-          'get_version',
+          'prepare',
           'build_windows',
-          'build_windows_arm64',
           'build_macos',
           'build_linux',
           'build_appimage',
           'build_android'
         ]
-        # build_appimage may be skipped on PRs that don't touch AppImage files;
-        # build_windows_arm64 is treated as optional while ARM64 Windows support
-        # stabilizes. In either case we still want the archive for the rest of
-        # the platforms.
+        # build_appimage may be skipped on PRs that don't touch AppImage files.
         if: |
           always() &&
-          needs.get_version.result == 'success' &&
+          needs.prepare.result == 'success' &&
           needs.build_windows.result == 'success' &&
           needs.build_macos.result == 'success' &&
           needs.build_linux.result == 'success' &&
           needs.build_android.result == 'success' &&
-          (needs.build_appimage.result == 'success' || needs.build_appimage.result == 'skipped') &&
-          (needs.build_windows_arm64.result == 'success' || needs.build_windows_arm64.result == 'skipped' || needs.build_windows_arm64.result == 'failure')
+          (needs.build_appimage.result == 'success' || needs.build_appimage.result == 'skipped')
         runs-on: ubuntu-latest
 
         steps:
@@ -406,50 +330,30 @@ jobs:
           with:
             fetch-depth: 0
 
+        # Every build job names its output file after its own artifact name
+        # (sdrpp-iak-${VER}-<suffix>.<ext>), so merging them by pattern needs
+        # no per-artifact rename table here — new matrix entries just flow
+        # through. Optional artifacts (AppImages, signed release APKs) simply
+        # aren't present when skipped; nothing to guard.
         - name: Download All Builds
           uses: actions/download-artifact@v4
+          with:
+            path: sdrpp_all
+            pattern: sdrpp-iak-*
+            merge-multiple: true
 
-        - name: Create Archive
+        - name: Add source archive
           env:
-            VER: ${{ needs.get_version.outputs.version_full }}
-          run: |
-            mkdir sdrpp_all
-            git archive --format=tar.gz --prefix=sdrpp-iak-${VER}/ HEAD -o sdrpp_all/sdrpp-iak-${VER}-source.tar.gz
-            mv sdrpp-iak-${VER}-windows-x64/sdrpp_windows_x64.zip                                 sdrpp_all/sdrpp-iak-${VER}-windows-x64.zip
-            # ARM64 Windows is optional while support stabilizes.
-            [ -d sdrpp-iak-${VER}-windows-arm64 ] && mv sdrpp-iak-${VER}-windows-arm64/sdrpp_windows_arm64.zip sdrpp_all/sdrpp-iak-${VER}-windows-arm64.zip || true
-            mv sdrpp-iak-${VER}-macos-intel/sdrpp_macos_intel.zip                                 sdrpp_all/sdrpp-iak-${VER}-macos-intel.zip
-            mv sdrpp-iak-${VER}-macos-arm/sdrpp_macos_arm.zip                                     sdrpp_all/sdrpp-iak-${VER}-macos-arm.zip
-            mv sdrpp-iak-${VER}-debian-bullseye-amd64/sdrpp_debian_pkg.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-amd64.deb
-            mv sdrpp-iak-${VER}-debian-bullseye-aarch64/sdrpp_debian_pkg.deb                    sdrpp_all/sdrpp-iak-${VER}-debian-bullseye-aarch64.deb
-            mv sdrpp-iak-${VER}-debian-bookworm-amd64/sdrpp_debian_pkg.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-bookworm-amd64.deb
-            mv sdrpp-iak-${VER}-debian-bookworm-aarch64/sdrpp_debian_pkg.deb                    sdrpp_all/sdrpp-iak-${VER}-debian-bookworm-aarch64.deb
-            mv sdrpp-iak-${VER}-debian-trixie-amd64/sdrpp_debian_pkg.deb                        sdrpp_all/sdrpp-iak-${VER}-debian-trixie-amd64.deb
-            mv sdrpp-iak-${VER}-debian-trixie-aarch64/sdrpp_debian_pkg.deb                      sdrpp_all/sdrpp-iak-${VER}-debian-trixie-aarch64.deb
-            mv sdrpp-iak-${VER}-debian-sid-amd64/sdrpp_debian_pkg.deb                           sdrpp_all/sdrpp-iak-${VER}-debian-sid-amd64.deb
-            mv sdrpp-iak-${VER}-debian-sid-aarch64/sdrpp_debian_pkg.deb                         sdrpp_all/sdrpp-iak-${VER}-debian-sid-aarch64.deb
-            mv sdrpp-iak-${VER}-ubuntu-focal-amd64/sdrpp_debian_pkg.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-focal-amd64.deb
-            mv sdrpp-iak-${VER}-ubuntu-focal-aarch64/sdrpp_debian_pkg.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-focal-aarch64.deb
-            mv sdrpp-iak-${VER}-ubuntu-jammy-amd64/sdrpp_debian_pkg.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-jammy-amd64.deb
-            mv sdrpp-iak-${VER}-ubuntu-jammy-aarch64/sdrpp_debian_pkg.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-jammy-aarch64.deb
-            mv sdrpp-iak-${VER}-ubuntu-noble-amd64/sdrpp_debian_pkg.deb                         sdrpp_all/sdrpp-iak-${VER}-ubuntu-noble-amd64.deb
-            mv sdrpp-iak-${VER}-ubuntu-noble-aarch64/sdrpp_debian_pkg.deb                       sdrpp_all/sdrpp-iak-${VER}-ubuntu-noble-aarch64.deb
-            # AppImages are optional on PRs (build_appimage may have been skipped).
-            [ -d sdrpp-iak-${VER}-linux-appimage-x86_64 ]  && mv sdrpp-iak-${VER}-linux-appimage-x86_64/sdrpp-iak-${VER}-x86_64.AppImage   sdrpp_all/sdrpp-iak-${VER}-linux-x86_64.AppImage   || true
-            [ -d sdrpp-iak-${VER}-linux-appimage-aarch64 ] && mv sdrpp-iak-${VER}-linux-appimage-aarch64/sdrpp-iak-${VER}-aarch64.AppImage sdrpp_all/sdrpp-iak-${VER}-linux-aarch64.AppImage || true
-            mv sdrpp-iak-${VER}-android-arm-debug/sdrpp-iak-arm-debug.apk                         sdrpp_all/sdrpp-iak-${VER}-android-arm-debug.apk
-            mv sdrpp-iak-${VER}-android-x86-debug/sdrpp-iak-x86-debug.apk                         sdrpp_all/sdrpp-iak-${VER}-android-x86-debug.apk
-            # Signed release APKs are optional when the Android keystore secret is unavailable.
-            [ -d sdrpp-iak-${VER}-android-arm-release ] && mv sdrpp-iak-${VER}-android-arm-release/sdrpp-iak-arm-release.apk sdrpp_all/sdrpp-iak-${VER}-android-arm-release.apk || true
-            [ -d sdrpp-iak-${VER}-android-x86-release ] && mv sdrpp-iak-${VER}-android-x86-release/sdrpp-iak-x86-release.apk sdrpp_all/sdrpp-iak-${VER}-android-x86-release.apk || true
+            VER: ${{ needs.prepare.outputs.version_full }}
+          run: git archive --format=tar.gz --prefix=sdrpp-iak-${VER}/ HEAD -o sdrpp_all/sdrpp-iak-${VER}-source.tar.gz
 
         - uses: actions/upload-artifact@v4
           with:
-            name: sdrpp-iak-${{ needs.get_version.outputs.version_full }}-all
+            name: sdrpp-iak-${{ needs.prepare.outputs.version_full }}-all
             path: sdrpp_all/
 
     update_nightly_release:
-        needs: [get_version, create_full_archive]
+        needs: [prepare, create_full_archive]
         runs-on: ubuntu-latest
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
 
@@ -460,7 +364,7 @@ jobs:
         - name: Create or Update Nightly Release
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            VER: ${{ needs.get_version.outputs.version_full }}
+            VER: ${{ needs.prepare.outputs.version_full }}
           run: |
             NOTES="Nightly build — v${VER} (commit ${{ github.sha }}) built $(date -u '+%Y-%m-%d %H:%M UTC')"
 
@@ -482,7 +386,7 @@ jobs:
             gh release upload nightly sdrpp-iak-${VER}-all/* -R ${{github.repository}} --clobber
 
     create_release:
-        needs: [get_version, validate_tag, create_full_archive]
+        needs: [prepare, create_full_archive]
         runs-on: ubuntu-latest
         if: github.ref_type == 'tag'
 
@@ -493,7 +397,7 @@ jobs:
         - name: Publish GitHub Release
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            VER: ${{ needs.get_version.outputs.version_full }}
+            VER: ${{ needs.prepare.outputs.version_full }}
           run: |
             # Mark alpha/beta/rc tags as pre-releases on GitHub.
             PRERELEASE_FLAG=""
@@ -516,6 +420,11 @@ jobs:
         - name: Install codespell
           run: sudo apt update -y && sudo apt install -y codespell
         
+        # Advisory only: codespell has no ignore-words-list tuned for this repo
+        # (RF/SDR jargon, vendor names, etc. read as typos), so its output is
+        # noisy enough that gating CI on it would block unrelated PRs. Read
+        # the job's log for hits rather than relying on its (always-green)
+        # conclusion.
         - name: Running codespell
           run: cd $GITHUB_WORKSPACE && codespell -q 2 || true
 
@@ -526,4 +435,4 @@ jobs:
         - uses: actions/checkout@v4
         
         - name: Run check_clang_format
-          run: cd $GITHUB_WORKSPACE && chmod +x ./check_clang_format.sh && ./check_clang_format.sh || true
+          run: cd $GITHUB_WORKSPACE && chmod +x ./check_clang_format.sh && ./check_clang_format.sh

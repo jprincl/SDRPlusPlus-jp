@@ -368,6 +368,21 @@ configure_file(${CMAKE_SOURCE_DIR}/sdrpp-iak.desktop ${CMAKE_CURRENT_BINARY_DIR}
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sdrpp-iak.desktop DESTINATION share/applications)
+    install(FILES ${CMAKE_SOURCE_DIR}/license DESTINATION share/doc/sdrpp-iak RENAME copyright)
+
+    # Bundled-shared deps (sdrplay's closed-source blob, librfnm, any other dep
+    # the policy resolved to distro:bundled distro:shared) live under
+    # SDRPP_DEPS_AUTOBUILD_PREFIX (deps/build-<preset>-<config>/destdir/usr/local)
+    # rather than the main install tree. Ship them under lib/ alongside the
+    # rest of our libraries so both dpkg-shlibdeps (packaging) and dlopen
+    # (runtime) resolve them through a standard search path. AppImage builds
+    # don't need this — linuxdeploy bundles them into the AppDir automatically.
+    if (SDRPP_DEPS_AUTOBUILD_PREFIX AND NOT OPT_BUILD_APPIMAGE)
+        file(GLOB _sdrpp_bundled_dep_libs "${SDRPP_DEPS_AUTOBUILD_PREFIX}/lib/*.so*")
+        if (_sdrpp_bundled_dep_libs)
+            install(FILES ${_sdrpp_bundled_dep_libs} DESTINATION lib)
+        endif ()
+    endif ()
 endif ()
 
 if (MSVC)
@@ -425,3 +440,76 @@ endif ()
 # Create uninstall target
 configure_file(${CMAKE_SOURCE_DIR}/cmake_uninstall.cmake ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake @ONLY)
 add_custom_target(uninstall ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
+
+# .deb packaging (replaces the old make_debian_package.sh). VERSION_FULL, if
+# set in the environment, comes from CI (build_all.yml's get_version job,
+# passed through the build container); otherwise fall back to deriving it
+# locally via the same scripts/get_version.sh CI uses, so there is exactly
+# one place that computes the git-describe-based build info.
+if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+    if (DEFINED ENV{VERSION_FULL} AND NOT "$ENV{VERSION_FULL}" STREQUAL "")
+        set(_sdrpp_version_full "$ENV{VERSION_FULL}")
+    else ()
+        execute_process(
+            COMMAND sh "${CMAKE_SOURCE_DIR}/scripts/get_version.sh" "${CMAKE_SOURCE_DIR}"
+            OUTPUT_VARIABLE _sdrpp_get_version_out
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        string(REGEX MATCH "VERSION=([^\n]+)" _ "${_sdrpp_get_version_out}")
+        set(_sdrpp_app_version "${CMAKE_MATCH_1}")
+        string(REGEX MATCH "BUILD_COUNT=([^\n]+)" _ "${_sdrpp_get_version_out}")
+        set(_sdrpp_build_count "${CMAKE_MATCH_1}")
+        string(REGEX MATCH "BUILD_INFO=([^\n]+)" _ "${_sdrpp_get_version_out}")
+        set(_sdrpp_build_info "${CMAKE_MATCH_1}")
+        if (_sdrpp_build_count STREQUAL "0")
+            set(_sdrpp_build_info "")
+        endif ()
+        if (_sdrpp_build_info)
+            set(_sdrpp_version_full "${_sdrpp_app_version}+${_sdrpp_build_info}")
+        else ()
+            set(_sdrpp_version_full "${_sdrpp_app_version}")
+        endif ()
+    endif ()
+
+    # Split "X.Y.Z[-pre]+<count>-g<hash>" into base version / build info.
+    string(REPLACE "+" ";" _sdrpp_version_full_parts "${_sdrpp_version_full}")
+    list(GET _sdrpp_version_full_parts 0 _sdrpp_app_version)
+    set(_sdrpp_build_info "")
+    list(LENGTH _sdrpp_version_full_parts _sdrpp_version_full_parts_len)
+    if (_sdrpp_version_full_parts_len GREATER 1)
+        list(GET _sdrpp_version_full_parts 1 _sdrpp_build_info)
+    endif ()
+
+    # Debian uses '~' as a "pre-release" separator that sorts BELOW the base
+    # version, so "1.2.1~beta2" < "1.2.1" in apt's version comparison.
+    string(REPLACE "-" "~" _sdrpp_deb_base "${_sdrpp_app_version}")
+    if (_sdrpp_build_info)
+        set(CPACK_PACKAGE_VERSION "${_sdrpp_deb_base}-${_sdrpp_build_info}")
+    else ()
+        set(CPACK_PACKAGE_VERSION "${_sdrpp_deb_base}")
+    endif ()
+
+    set(CPACK_PACKAGE_NAME "sdrpp-iak")
+    set(CPACK_PACKAGE_FILE_NAME "sdrpp_debian_pkg")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Bloat-free SDR receiver software")
+    set(CPACK_PACKAGING_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Vojtech Bubnik OK1IAK")
+
+    # Resolve runtime deps via dpkg-shlibdeps instead of a hand-maintained
+    # -dev package list, so it adapts to the build host's distro conventions
+    # (libcurl4 vs libcurl4t64, libvolk2.X vs libvolk3, the libssl ABI of the
+    # day). The private dirs below are where our own bundled/plugin libraries
+    # live so their NEEDED entries resolve without relying on generator
+    # auto-detection of non-standard library locations.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    # dpkg-shlibdeps runs with its working directory set to the staging root
+    # (CPACK_TEMPORARY_DIRECTORY), so these must be staging-relative paths,
+    # not the absolute CMAKE_INSTALL_PREFIX-based install paths.
+    string(REGEX REPLACE "^/" "" _sdrpp_deb_install_prefix_rel "${CMAKE_INSTALL_PREFIX}")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS
+        "${_sdrpp_deb_install_prefix_rel}/lib"
+        "${_sdrpp_deb_install_prefix_rel}/lib/sdrpp-iak/plugins")
+
+    include(CPack)
+endif ()

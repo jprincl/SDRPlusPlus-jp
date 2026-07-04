@@ -41,11 +41,10 @@ fi
 git config --global --add safe.directory /root/SDRPlusPlus
 
 cd SDRPlusPlus
-mkdir build && cd build
-cmake .. ${CURL_DEP_ARG} -DOPT_BUILD_DEPS=ON -DSDRPP_DEPS_PRESET=default -DOPT_BUILD_BLADERF_SOURCE=ON -DOPT_BUILD_LIMESDR_SOURCE=ON -DOPT_BUILD_SDRPLAY_SOURCE=ON \
-    -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON -DOPT_BUILD_M17_DECODER=ON -DOPT_BUILD_PERSEUS_SOURCE=ON \
-    -DOPT_BUILD_RFNM_SOURCE=ON -DOPT_BUILD_FOBOSSDR_SOURCE=ON -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON
+cmake --preset ci-linux-deb ${CURL_DEP_ARG}
+cd build
 make VERBOSE=1 -j2
+cpack
 
 cd ..
-sh make_debian_package.sh ./build
+mv build/sdrpp_debian_pkg.deb .

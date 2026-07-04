@@ -43,26 +43,11 @@ cd "${SRC_DIR}"
 # The main build dir is per-run and not cached; wiping it preserves a
 # from-scratch app build for repeatability.
 rm -rf build
-mkdir build
-cd build
 
-cmake "${SRC_DIR}" \
-    -DCMAKE_INSTALL_PREFIX=/usr \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DOPT_BUILD_DEPS=ON \
+cmake --preset ci-appimage \
     -DSDRPP_DEPS_PRESET="${DEPS_PRESET}" \
-    -DSDRPP_DEPS_BUILD_DIR="${DEPS_BUILD_DIR}" \
-    -DSDRPP_DEP_FORCE_BUNDLED=libcurl \
-    -DOPT_BUILD_APPIMAGE=ON \
-    -DOPT_BUILD_BLADERF_SOURCE=ON \
-    -DOPT_BUILD_LIMESDR_SOURCE=ON \
-    -DOPT_BUILD_SDRPLAY_SOURCE=ON \
-    -DOPT_BUILD_PERSEUS_SOURCE=ON \
-    -DOPT_BUILD_RFNM_SOURCE=ON \
-    -DOPT_BUILD_FOBOSSDR_SOURCE=ON \
-    -DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON \
-    -DOPT_BUILD_NEW_PORTAUDIO_SINK=ON \
-    -DOPT_BUILD_M17_DECODER=ON
+    -DSDRPP_DEPS_BUILD_DIR="${DEPS_BUILD_DIR}"
+cd build
 
 make -j"$(nproc)"
 

@@ -2,9 +2,26 @@
     "version": 3,
     "configurePresets": [
         {
+            "name": "modules-standard-base",
+            "hidden": true,
+            "description": "Third-party source/sink module set shipped in every official build (Windows, Linux .deb, AppImage, and the macOS base — macOS and Windows ARM64 flip a couple back OFF after inheriting this).",
+            "cacheVariables": {
+                "OPT_BUILD_BLADERF_SOURCE":        "ON",
+                "OPT_BUILD_LIMESDR_SOURCE":        "ON",
+                "OPT_BUILD_PERSEUS_SOURCE":        "ON",
+                "OPT_BUILD_SDRPLAY_SOURCE":        "ON",
+                "OPT_BUILD_NEW_PORTAUDIO_SINK":    "ON",
+                "OPT_BUILD_M17_DECODER":           "ON",
+                "OPT_BUILD_RFNM_SOURCE":           "ON",
+                "OPT_BUILD_FOBOSSDR_SOURCE":       "ON",
+                "OPT_BUILD_HYDRASDR_RFONE_SOURCE": "ON"
+            }
+        },
+        {
             "name": "vs2026-x64-base",
             "hidden": true,
             "description": "Common Visual Studio 2026 x64 settings. Concrete presets pin exactly one configuration so the app and deps prefixes cannot drift.",
+            "inherits": "modules-standard-base",
             "generator": "Visual Studio 18 2026",
             "architecture": "x64",
             "condition": {
@@ -13,16 +30,7 @@
                 "rhs": "Windows"
             },
             "cacheVariables": {
-                "COPY_MSVC_REDISTRIBUTABLES": "ON",
-                "OPT_BUILD_BLADERF_SOURCE":       "ON",
-                "OPT_BUILD_LIMESDR_SOURCE":       "ON",
-                "OPT_BUILD_PERSEUS_SOURCE":       "ON",
-                "OPT_BUILD_SDRPLAY_SOURCE":       "ON",
-                "OPT_BUILD_NEW_PORTAUDIO_SINK":   "ON",
-                "OPT_BUILD_M17_DECODER":          "ON",
-                "OPT_BUILD_RFNM_SOURCE":          "ON",
-                "OPT_BUILD_FOBOSSDR_SOURCE":      "ON",
-                "OPT_BUILD_HYDRASDR_RFONE_SOURCE":"ON"
+                "COPY_MSVC_REDISTRIBUTABLES": "ON"
             }
         },
         {
@@ -201,6 +209,7 @@
             "name": "ninja-msvc-base",
             "hidden": true,
             "description": "Hidden base for Ninja+MSVC single-config builds. Run from a 'Developer PowerShell for VS 2026' (or vcvarsall'd shell) so cl.exe and ninja are on PATH. Each derived preset produces ONE configuration; switch configs by switching presets.",
+            "inherits": "modules-standard-base",
             "generator": "Ninja",
             "condition": {
                 "type": "equals",
@@ -210,16 +219,7 @@
             "cacheVariables": {
                 "OPT_BUILD_DEPS": "ON",
                 "SDRPP_DEPS_PRESET": "default",
-                "COPY_MSVC_REDISTRIBUTABLES": "ON",
-                "OPT_BUILD_BLADERF_SOURCE":       "ON",
-                "OPT_BUILD_LIMESDR_SOURCE":       "ON",
-                "OPT_BUILD_PERSEUS_SOURCE":       "ON",
-                "OPT_BUILD_SDRPLAY_SOURCE":       "ON",
-                "OPT_BUILD_NEW_PORTAUDIO_SINK":   "ON",
-                "OPT_BUILD_M17_DECODER":          "ON",
-                "OPT_BUILD_RFNM_SOURCE":          "ON",
-                "OPT_BUILD_FOBOSSDR_SOURCE":      "ON",
-                "OPT_BUILD_HYDRASDR_RFONE_SOURCE":"ON"
+                "COPY_MSVC_REDISTRIBUTABLES": "ON"
             }
         },
         {
@@ -278,6 +278,89 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "ci-linux-deb",
+            "displayName": "Linux .deb CI build",
+            "description": "Used by docker_builds/do_build.sh inside the per-distro build containers. Bootstraps deps/ via OPT_BUILD_DEPS; module set is the standard one shipped in the .deb packages.",
+            "inherits": "modules-standard-base",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "default"
+            }
+        },
+        {
+            "name": "ci-appimage",
+            "displayName": "Linux AppImage CI build",
+            "description": "Used by docker_builds/appimage/make_appimage.sh. Deps live in deps/build-appimage (no config suffix) to match the actions/cache key in build_appimage.yml.",
+            "inherits": "modules-standard-base",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "/usr",
+                "CMAKE_BUILD_TYPE": "Release",
+                "OPT_BUILD_DEPS": "ON",
+                "SDRPP_DEPS_PRESET": "appimage",
+                "SDRPP_DEPS_BUILD_DIR": "${sourceDir}/deps/build-appimage",
+                "SDRPP_DEP_FORCE_BUNDLED": "libcurl",
+                "OPT_BUILD_APPIMAGE": "ON"
+            }
+        },
+        {
+            "name": "ci-macos-base",
+            "hidden": true,
+            "description": "Common settings for the macOS CI matrix in build_macos.yml. Concrete presets pin the m17_decoder/perseus_source combination for each runner leg.",
+            "inherits": "modules-standard-base",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            },
+            "cacheVariables": {
+                "CMAKE_POLICY_VERSION_MINIMUM": "3.5",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "10.15",
+                "CMAKE_BUILD_TYPE": "Release",
+                "OPT_BUILD_DEPS": "ON",
+                "USE_BUNDLE_DEFAULTS": "ON",
+                "OPT_BUILD_PLUTOSDR_SOURCE": "ON",
+                "OPT_BUILD_AUDIO_SINK":      "OFF",
+                "OPT_BUILD_PORTAUDIO_SINK":  "ON",
+                "OPT_BUILD_AUDIO_SOURCE":    "OFF"
+            }
+        },
+        {
+            "name": "ci-macos-intel",
+            "displayName": "macOS Intel CI build",
+            "description": "Used by build_macos.yml on the macos-15-intel runner leg.",
+            "inherits": "ci-macos-base",
+            "cacheVariables": {
+                "OPT_BUILD_M17_DECODER": "ON",
+                "OPT_BUILD_PERSEUS_SOURCE": "ON"
+            }
+        },
+        {
+            "name": "ci-macos-arm",
+            "displayName": "macOS ARM CI build",
+            "description": "Used by build_macos.yml on the macos-15 (Apple Silicon) runner leg.",
+            "inherits": "ci-macos-base",
+            "cacheVariables": {
+                "OPT_BUILD_M17_DECODER": "OFF",
+                "OPT_BUILD_PERSEUS_SOURCE": "OFF"
             }
         }
     ]

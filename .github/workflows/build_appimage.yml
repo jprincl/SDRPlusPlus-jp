@@ -26,30 +26,15 @@ jobs:
         steps:
         - uses: actions/checkout@v4
 
-        # Shared across every workflow in the repo — tarballs are byte-identical
-        # regardless of target platform. The .pkg_cache lives inside the
-        # source tree, which the docker run below bind-mounts into the
-        # container, so the container reads/writes through to the same path.
-        - name: Cache deps download tarballs
-          uses: actions/cache@v4
+        # make_appimage.sh forces the deps build dir to deps/build-appimage/
+        # (no -Release suffix — its DEPS_PRESET=appimage, DEPS_BUILD_DIR
+        # override skips the usual _config suffix autobuild.cmake adds), so
+        # that's the destdir path we cache.
+        - name: Cache deps
+          uses: ./.github/actions/deps-cache
           with:
-              path: deps/.pkg_cache
-              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
-              restore-keys: |
-                  deps-pkgcache-
-
-        # Per-arch install prefix cache. make_appimage.sh forces the deps
-        # build dir to deps/build-appimage/ (no -Release suffix — its
-        # DEPS_PRESET=appimage, DEPS_BUILD_DIR override skips the usual
-        # _config suffix autobuild.cmake adds), so that's the path we cache.
-        # Exact-key only — autobuild.cmake's recipe-hash marker in
-        # destdir/share/sdrpp-deps/recipe-hash is the safety net against
-        # a wrong destdir slipping through.
-        - name: Cache deps install prefix (AppImage)
-          uses: actions/cache@v4
-          with:
-              path: deps/build-appimage/destdir
-              key: deps-destdir-appimage-${{ inputs.arch }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake') }}
+              destdir-path: deps/build-appimage/destdir
+              key-suffix: appimage-${{ inputs.arch }}
 
         - name: Build Docker Image
           run: docker build -f $GITHUB_WORKSPACE/docker_builds/appimage/Dockerfile $GITHUB_WORKSPACE/docker_builds/appimage --tag sdrpp_appimage_build
@@ -74,12 +59,16 @@ jobs:
             sudo chown -R $(id -u):$(id -g) deps/.pkg_cache 2>/dev/null || true
             sudo chown -R $(id -u):$(id -g) deps/build-appimage/destdir 2>/dev/null || true
 
+        # Named sdrpp-iak-${VER}-linux-${arch}.AppImage (not ${{ inputs.artifact
+        # }}.AppImage, which would read "...-linux-appimage-${arch}") so the
+        # published filename matches the original convention; still computed
+        # purely from this job's own inputs, no aggregator-side table needed.
         - name: Recover AppImage
           working-directory: ${{ runner.workspace }}
-          run: docker cp build:/root/sdrpp-iak-${{ inputs.version_full }}-${{ inputs.arch }}.AppImage ./
+          run: docker cp build:/root/sdrpp-iak-${{ inputs.version_full }}-${{ inputs.arch }}.AppImage ./sdrpp-iak-${{ inputs.version_full }}-linux-${{ inputs.arch }}.AppImage
 
         - name: Save AppImage
           uses: actions/upload-artifact@v4
           with:
               name: ${{ inputs.artifact }}
-              path: ${{ runner.workspace }}/sdrpp-iak-${{ inputs.version_full }}-${{ inputs.arch }}.AppImage
+              path: ${{ runner.workspace }}/sdrpp-iak-${{ inputs.version_full }}-linux-${{ inputs.arch }}.AppImage

@@ -1,0 +1,54 @@
+name: Cache deps
+description: >-
+  Restores the deps download-tarball cache shared by every SDR++ build
+  workflow, and, if destdir-path is given, the per-target deps install
+  prefix (destdir) cache on top of it.
+inputs:
+    destdir-path:
+        description: >-
+            Path to the deps install prefix (destdir) to cache. Leave unset to
+            skip destdir caching (e.g. build_linux, which rebuilds deps fresh
+            inside each Docker image and has nothing to persist here).
+        required: false
+        default: ''
+    key-suffix:
+        description: >-
+            Platform/arch-specific suffix for the destdir cache key, e.g.
+            "macos-${{ inputs.runner }}" or
+            "android-${{ matrix.flavor }}-${{ matrix.build_type_caps }}".
+            Required when destdir-path is set.
+        required: false
+        default: ''
+    extra-hash-file:
+        description: >-
+            Extra glob folded into the destdir cache key hash on top of the
+            common deps/cmake inputs, e.g. android/app/build.gradle for
+            Android. Defaults to a file already covered by the common inputs
+            so it's a harmless no-op when there's nothing extra to add.
+        required: false
+        default: 'deps/CMakePresets.json'
+
+runs:
+    using: composite
+    steps:
+        # Shared across every workflow in the repo — tarballs are byte-identical
+        # regardless of target platform. Key is recipe-content-derived so a URL
+        # bump invalidates for everyone consistently; restore-keys keeps
+        # tarballs accumulating across recipe edits.
+        - name: Cache deps download tarballs
+          uses: actions/cache@v4
+          with:
+              path: deps/.pkg_cache
+              key: deps-pkgcache-${{ hashFiles('deps/+**/*.cmake', 'deps/cmake/**/*.cmake', 'deps/CMakeLists.txt', 'deps/CMakePresets.json') }}
+              restore-keys: |
+                  deps-pkgcache-
+
+        # Per-target install prefix cache. Exact-key only — autobuild.cmake's
+        # recipe-hash marker is the safety net against a wrong destdir
+        # slipping through.
+        - name: Cache deps install prefix
+          if: inputs.destdir-path != ''
+          uses: actions/cache@v4
+          with:
+              path: ${{ inputs.destdir-path }}
+              key: deps-destdir-${{ inputs.key-suffix }}-${{ hashFiles('deps/+**', 'deps/cmake/**', 'deps/CMakeLists.txt', 'deps/CMakePresets.json', 'cmake/sdrpp_collect_required_deps.cmake', 'cmake/sdrpp_dep_list_helpers.cmake', inputs.extra-hash-file) }}
