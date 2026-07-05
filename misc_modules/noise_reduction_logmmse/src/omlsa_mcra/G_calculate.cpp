@@ -1,15 +1,17 @@
+#ifdef _WIN32
+#ifndef _WINSOCKAPI_
+#define _WINSOCKAPI_    // stops windows.h including winsock.h
+#endif
+#endif
+
+#include <core.h>
 #include "G_calculate.h"
 #include<iostream>
 #include"SearchChart.h"
 #include"time.h"
 #include<algorithm>
-#include <core.h>
 
 using namespace std;
-
-#ifdef _WIN32
-#define _WINSOCKAPI_    // stops windows.h including winsock.h
-#endif
 
 G_calculate::G_calculate()
 {
