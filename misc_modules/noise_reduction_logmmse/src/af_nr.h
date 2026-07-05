@@ -72,7 +72,6 @@ namespace dsp {
         std::vector<stereo_t> buffer;
         bool allowed = false;
         bool allowed2 = true;       // just convenient for various conditions
-        float preAmpGain = 0.0f;
         int instanceCount = 0;
 //        FILE *dumpIn = nullptr;
 
@@ -115,12 +114,7 @@ namespace dsp {
         float scaled = 32767.0;      // amplitude shaper
 
         void process(stereo_t *readBuf, int count, stereo_t *writeBuf, int &wrote) {
-            auto mult = pow(10, preAmpGain/20);
-            for(int q=0; q<count; q++) {
-                readBuf[q].l *= mult;
-                readBuf[q].l *= mult;
-            }
-            if (!allowed | !allowed2) {
+            if (!allowed || !allowed2 || failed) {
                 std::copy(readBuf, readBuf+count, writeBuf);
                 wrote = count;
                 buffer.clear();
@@ -157,8 +151,11 @@ namespace dsp {
                     processedOk = omlsa_mcra.process((short*)processIn.data(), blockSize, (short*)processOut.data(), wrote);
 //                    ctm = currentTimeNanos() - ctm;
                     if (!processedOk) {
-                        flog::warn("OMLSA !processedOk");
-                        omlsa_mcra.reset();
+                        // Init/alloc failure (e.g. missing res/cty/oomlsa_gcra_gvalue2.pcm
+                        // gain table) - not transient, so disable permanently instead of
+                        // re-initializing and failing on every block.
+                        flog::error("OMLSA processing failed, disabling Audio NR2 (is res/cty/oomlsa_gcra_gvalue2.pcm present?)");
+                        failed = true;
                         std::copy(buffer.begin(), buffer.end(), writeBuf);
                         wrote = buffer.size();
                         buffer.clear();

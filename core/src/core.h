@@ -18,8 +18,8 @@ namespace core {
     // is set — in which case the bundled paths inside the AppImage mount
     // are returned. The accessor pattern keeps the FUSE mount point out
     // of the persisted config file.
-    SDRPP_EXPORT std::string getModulesDirectory();
-    SDRPP_EXPORT std::string getResourcesDirectory();
+    SDRPP_CPP_EXPORT std::string getModulesDirectory();
+    SDRPP_CPP_EXPORT std::string getResourcesDirectory();
 };
 
 int sdrpp_main(int argc, char* argv[]);

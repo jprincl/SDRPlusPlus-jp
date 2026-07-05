@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16...3.24)
 project(noise_reduction_logmmse)
 
 file(GLOB SRC "src/*.cpp" "src/omlsa_mcra/*.cpp")
+# Original OMLSA file-based test harness, not part of the plugin
+list(FILTER SRC EXCLUDE REGEX "omlsa_mcra/main\\.cpp$")
 
 include(${SDRPP_MODULE_CMAKE})
 

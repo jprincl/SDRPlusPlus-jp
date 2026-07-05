@@ -51,6 +51,7 @@ public:
     }
 
     ~NRModule() {
+        disable(); // detach from IQ chain, radios and events before dying
         gui::menu.removeEntry(name);
     }
 
@@ -100,7 +101,7 @@ private:
 
     void detachAFFromRadio(const std::string& instanceName) {
         if (afnrProcessors2.find(instanceName) != afnrProcessors2.end()) {
-            core::modComManager.callInterface(name, RADIO_IFACE_CMD_REMOVE_FROM_AFCHAIN,
+            core::modComManager.callInterface(instanceName, RADIO_IFACE_CMD_REMOVE_FROM_AFCHAIN,
                                               afnrProcessors2[instanceName].get(), NULL);
             afnrProcessors2.erase(instanceName);
         }
@@ -112,18 +113,17 @@ private:
 
             sigpath::iqFrontEnd.addPreprocessor(&ifnrProcessor, false);
 
-            sigpath::sourceManager.onRetune.bindHandler(&currentFrequencyChangedHandler);
             currentFrequencyChangedHandler.ctx = this;
             currentFrequencyChangedHandler.handler = [](double v, void* ctx) {
                 auto _this = (NRModule*)ctx;
                 _this->ifnrProcessor.reset(); // reset noise profile
             };
+            sigpath::sourceManager.onRetune.bindHandler(&currentFrequencyChangedHandler);
 
             auto names = core::modComManager.findInterfaces("radio");
             for (auto& name : names) {
                 attachAFToRadio(name);
             }
-            core::moduleManager.onInstanceCreated.bindHandler(&instanceCreatedHandler);
             instanceCreatedHandler.ctx = this;
             instanceCreatedHandler.handler = [](std::string v, void* ctx) {
                 auto _this = (NRModule*)ctx;
@@ -131,11 +131,21 @@ private:
                 if (modname == "radio") {
                     // radio created after the NR module.
                     _this->attachAFToRadio(v);
-                    // on detach: module will remove pointer to AF NR from its chain, shared ptr will remain in the map until it gets replaced by a new one (maybe)
                 }
             };
+            core::moduleManager.onInstanceCreated.bindHandler(&instanceCreatedHandler);
         }
         else {
+            core::moduleManager.onInstanceCreated.unbindHandler(&instanceCreatedHandler);
+            sigpath::sourceManager.onRetune.unbindHandler(&currentFrequencyChangedHandler);
+
+            // Detach OMLSA processors from the radios' AF chains. Without this,
+            // re-enabling would attach fresh processors while the old (freed)
+            // ones are still wired into the chains.
+            std::vector<std::string> attached;
+            for (auto& [k, v] : afnrProcessors2) { attached.push_back(k); }
+            for (auto& k : attached) { detachAFFromRadio(k); }
+
             sigpath::iqFrontEnd.removePreprocessor(&ifnrProcessor);
         }
     }
@@ -155,21 +165,22 @@ private:
             config.conf["IFNR"] = ifnr;
             config.release(true);
             if (ifnr) { // toggled on - attempt to run.
-                ifnrProcessor.stopReason = "";
+                ifnrProcessor.stopReason = nullptr;
             }
             actuateIFNR();
         }
         ImGui::SameLine();
-        if (ifnrProcessor.stopReason != "" && ifnr) { // wants to stop -> stop it.
+        const char* stopReason = ifnrProcessor.stopReason;
+        if (stopReason && ifnr) { // wants to stop -> stop it.
             ifnr = false;
             config.acquire();
             config.conf["IFNR"] = ifnr;
             config.release(true);
             actuateIFNR();
         }
-        if (ifnrProcessor.stopReason != "") { // stopped because reason -> show it.
+        if (stopReason) { // stopped because reason -> show it.
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0, 0, 1.0f));
-            ImGui::Text("%s", ifnrProcessor.stopReason.c_str());
+            ImGui::Text("%s", stopReason);
             ImGui::PopStyleColor(1);
         }
         else {

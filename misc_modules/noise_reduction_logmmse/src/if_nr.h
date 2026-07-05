@@ -6,6 +6,7 @@
 #include "utils/arrays.h"
 #include <utils/flog.h>
 #include <signal_path/signal_path.h>
+#include <atomic>
 #include "logmmse.h"
 
 namespace dsp {
@@ -177,7 +178,9 @@ namespace dsp {
         }
 
         bool bypass = true;
-        std::string stopReason = "";
+        // Written by the DSP thread, read by the UI thread every frame; points
+        // to a string literal (or nullptr) so the load is a single atomic read.
+        std::atomic<const char*> stopReason { nullptr };
         bool disableCpuDeactivation = false;
         EventHandler<bool> txHandler;
     };

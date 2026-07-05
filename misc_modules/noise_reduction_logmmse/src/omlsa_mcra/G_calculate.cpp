@@ -178,7 +178,11 @@ short G_calculate::Initialize(int wlen) {
 #endif
 
 	m_G_value = file_read<int>(full.c_str());
-	//cout << sizeof(m_G_value) << sizeof(m_G_value) / sizeof(m_G_value[0]);
+	if (!m_G_value) {
+		// Gain lookup table missing - without it Gvalue_solution() would
+		// dereference null. Follow this file's negative-error convention.
+		return -20;
+	}
 	return 0;
 }
 

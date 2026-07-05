@@ -7,11 +7,14 @@
 #ifdef _WIN32
 #ifdef SDRPP_IS_CORE
 #define SDRPP_EXPORT extern "C" __declspec(dllexport)
+#define SDRPP_CPP_EXPORT __declspec(dllexport)
 #else
 #define SDRPP_EXPORT extern "C" __declspec(dllimport)
+#define SDRPP_CPP_EXPORT __declspec(dllimport)
 #endif
 #else
 #define SDRPP_EXPORT extern
+#define SDRPP_CPP_EXPORT extern
 #endif
 
 #ifdef _WIN32
