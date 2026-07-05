@@ -12,6 +12,5 @@ target_include_directories(noise_reduction_logmmse PRIVATE "src/omlsa_mcra")
 target_include_directories(noise_reduction_logmmse PRIVATE "../../decoder_modules/radio/src")
 
 if (MSVC)
-    # logmmse.h uses M_PI; make it available regardless of include order.
-    target_compile_definitions(noise_reduction_logmmse PRIVATE _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(noise_reduction_logmmse PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif ()

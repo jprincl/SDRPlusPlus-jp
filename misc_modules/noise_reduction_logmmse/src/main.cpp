@@ -14,7 +14,7 @@
 // Ported from SDR++Brown (https://github.com/sannysanoff/SDRPlusPlusBrown),
 // misc_modules/noise_reduction_logmmse. Trimmed relative to the original:
 //  - SNR chart widget removed (needs Brown-only SNR meter extension points).
-//  - Per-VFO IF-chain LogMMSE (AFNRLogMMSE) not attached: dead code upstream,
+//  - Per-VFO IF-chain LogMMSE (AFNRLogMMSE) removed: dead code upstream,
 //    its radio IFCHAIN interface commands are intentionally not ported.
 // Kept: wideband baseband NR (LogMMSE IQ preprocessor) and per-radio
 // OMLSA-MCRA audio NR ("Audio NR2").
@@ -159,7 +159,6 @@ private:
     }
 
     void menuHandler() {
-        float menuWidth = ImGui::GetContentRegionAvail().x;
         if (ImGui::Checkbox("Baseband NR##_sdrpp_if_nr", &ifnr)) {
             config.acquire();
             config.conf["IFNR"] = ifnr;

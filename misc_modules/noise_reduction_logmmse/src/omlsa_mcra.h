@@ -1,10 +1,6 @@
 #pragma once
 
-#include "utils/arrays.h"
-#include "math.h"
-#include "bgnoise.h"
-#include <array>
-#include <list>
+#include <memory>
 
 class Datablock_Read;
 
