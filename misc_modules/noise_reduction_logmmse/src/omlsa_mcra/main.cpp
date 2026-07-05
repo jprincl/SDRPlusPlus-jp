@@ -1,4 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
 #include<iostream>
 #include"Datablock_Read.h"
 #include<vector>
@@ -8,13 +7,13 @@
 using namespace std;
 void procese(const char *szFileIn, const char *szFileOut,int sample_rate)
 {
-	FILE *fpIn=fopen(szFileIn, "rb");
+	FILE *fpIn=omlsa_fopen(szFileIn, "rb");
 	if (NULL == fpIn)
 	{
 		printf("open src file err1 \n");
 	}
 	fseek(fpIn, 44, 0);
-	FILE *fpOut=fopen(szFileOut, "wb"); 
+	FILE *fpOut=omlsa_fopen(szFileOut, "wb");
 	if (NULL == fpOut)
 	{
 		printf("open out file err2! \n");

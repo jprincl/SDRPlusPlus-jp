@@ -1,4 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
 #include <math.h>
 #include "Datablock_Read.h"
 #include "head.h"
@@ -196,6 +195,4 @@ Datablock_Read::~Datablock_Read()
 		m_data_out = NULL;
 	}
 }
-
-
 

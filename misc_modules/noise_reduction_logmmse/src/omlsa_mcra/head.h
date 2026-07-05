@@ -1,6 +1,7 @@
 #pragma once
 #include <math.h>
 #include <algorithm>
+#include <stdio.h>
 
 //#define max(a,b)            (((a) > (b)) ? (a) : (b))
 //#define min(a,b)            (((a) < (b)) ? (a) : (b))
@@ -9,7 +10,12 @@
 
 #define section_max 10000
 
-#define fopen_s(a,b,c) *(a)=fopen(b,c)
-
-
-
+inline FILE* omlsa_fopen(const char* filename, const char* mode) {
+#ifdef _MSC_VER
+    FILE* file = nullptr;
+    if (fopen_s(&file, filename, mode) != 0) { return nullptr; }
+    return file;
+#else
+    return fopen(filename, mode);
+#endif
+}

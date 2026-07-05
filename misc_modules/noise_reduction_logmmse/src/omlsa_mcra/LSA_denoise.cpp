@@ -1,4 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
 #include "LSA_denoise.h"
 #include<iostream>
 #include"time.h"
@@ -101,4 +100,3 @@ LSA_denoise::~LSA_denoise()
 //	bb[k] = m_cosen_global[k] / 1.6384;
 //	cc[k] = m_cosen[k] / 1.6384;
 //}
-

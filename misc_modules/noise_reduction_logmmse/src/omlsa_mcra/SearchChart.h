@@ -1,5 +1,4 @@
 #pragma once
-#define _CRT_SECURE_NO_WARNINGS
 #include "head.h"
 #include<iostream>
 #include "G_calculate.h"
@@ -8,8 +7,7 @@ using namespace std;
 
 template<class T>
 T* G_calculate::file_read(const char* Filename) {
-	FILE* ff;
-	fopen_s(&ff,Filename, "rb");
+	FILE* ff = omlsa_fopen(Filename, "rb");
 	if (NULL == ff) {
 		printf("open out file err4! \n");
         return nullptr;
