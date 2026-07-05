@@ -3,7 +3,7 @@
 #include <dsp/stream.h>
 #include <dsp/types.h>
 #include <dsp/processor.h>
-#include "utils/arrays.h"
+#include "arrays.h"
 #include <utils/flog.h>
 #include <signal_path/signal_path.h>
 #include <atomic>

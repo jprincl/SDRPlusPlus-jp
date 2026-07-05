@@ -4,14 +4,51 @@
 #endif
 #endif
 
-#include <core.h>
 #include "G_calculate.h"
 #include<iostream>
 #include"SearchChart.h"
 #include"time.h"
 #include<algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <vector>
 
 using namespace std;
+
+namespace {
+constexpr int kGainQ14 = 16384;
+constexpr int kPpBins = 100;
+constexpr int kGh1Bins = 7000;
+constexpr int kExpectedGValueEntries = kPpBins * kGh1Bins;
+constexpr double kGainMin = 0.003;
+
+std::vector<int> build_g_value_table()
+{
+	static_assert(sizeof(int) == sizeof(std::int32_t), "OMLSA gain table requires 32-bit int storage");
+
+	std::vector<int> table(kExpectedGValueEntries);
+	for (int gh1_bin = 0; gh1_bin < kGh1Bins; ++gh1_bin) {
+		const double gh1 = static_cast<double>(gh1_bin + 1) / 100.0;
+		const double step = std::exp(0.01 * std::log(gh1 / kGainMin));
+
+		// Keep the recurrence in double precision. Float produced tens of
+		// thousands of Q14 rounding mismatches across the full table, while
+		// double remained bit-identical to the direct exp/log formula.
+		double gain = kGainMin;
+		for (int pp_bin = 0; pp_bin < kPpBins; ++pp_bin) {
+			gain *= step;
+			const double scaled_gain = std::round(kGainQ14 * gain);
+			const int index = pp_bin * kGh1Bins + gh1_bin;
+			table[index] = static_cast<int>(std::clamp(
+				scaled_gain,
+				0.0,
+				static_cast<double>(std::numeric_limits<int>::max())));
+		}
+	}
+	return table;
+}
+}
 
 G_calculate::G_calculate()
 {
@@ -163,28 +200,7 @@ short G_calculate::Initialize(int wlen) {
 	memset(m_dataBuf, 0, sizeof(short) * m_lwlen);
 	memset(m_ns_storage, 0, sizeof(short)*m_lwlen);
 
-	//??????new??????????????????????
-	//const char* Fileexpint = "D:/exppow3.pcm";
-	//m_int_value = file_read<int>(Fileexpint);  
-   //const char* Fileexpsub = "D:/expsub1.pcm";
-   //m_expsub_value = file_read<int>(Fileexpsub);
-
-    std::string full = core::getResourcesDirectory() + "/cty/oomlsa_gcra_gvalue2.pcm";
-#ifdef _WIN32
-    std::replace(full.begin(), full.end(), '/', '\\');
-    std::string::size_type pos = 0;
-    while ((pos = full.find("\\\\", pos)) != std::string::npos) {
-        full.replace(pos, 2, "\\");
-        pos += 1; // Move to the next position after the replaced slash
-    }
-#endif
-
-	m_G_value = file_read<int>(full.c_str());
-	if (!m_G_value) {
-		// Gain lookup table missing - without it Gvalue_solution() would
-		// dereference null. Follow this file's negative-error convention.
-		return -20;
-	}
+	m_G_value = build_g_value_table();
 	return 0;
 }
 
@@ -471,10 +487,6 @@ G_calculate::~G_calculate()
 	if (!m_expsub_value) {
 		delete[] m_expsub_value;
 		m_expsub_value = NULL;
-	}
-	if (!m_G_value) {
-		delete[] m_G_value;
-		m_G_value = NULL;
 	}
 	if (!m_lamda_d) {
 		delete[] m_lamda_d;

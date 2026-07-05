@@ -91,10 +91,10 @@ namespace dsp {
                     }
                     processedOk = omlsa_mcra.process((short*)processIn.data(), blockSize, (short*)processOut.data(), wrote);
                     if (!processedOk) {
-                        // Init/alloc failure (e.g. missing res/cty/oomlsa_gcra_gvalue2.pcm
-                        // gain table) - not transient, so disable permanently instead of
+                        // Init/alloc failure while preparing the in-memory OM-LSA gain
+                        // table - not transient, so disable permanently instead of
                         // re-initializing and failing on every block.
-                        flog::error("OMLSA processing failed, disabling Audio NR2 (is res/cty/oomlsa_gcra_gvalue2.pcm present?)");
+                        flog::error("OMLSA processing failed, disabling Audio NR2");
                         failed = true;
                         std::copy(buffer.begin(), buffer.end(), writeBuf);
                         wrote = buffer.size();
