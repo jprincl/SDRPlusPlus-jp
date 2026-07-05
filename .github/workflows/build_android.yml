@@ -6,6 +6,10 @@ on:
             version_full:
                 required: true
                 type: string
+            include_debug:
+                required: false
+                type: boolean
+                default: false
         secrets:
             ANDROID_KEYSTORE_BASE64:
                 required: false
@@ -15,6 +19,17 @@ on:
                 required: false
             ANDROID_KEY_PASSWORD:
                 required: false
+    workflow_dispatch:
+        inputs:
+            version_full:
+                description: Optional artifact version override. Defaults to version.h.
+                required: false
+                type: string
+            include_debug:
+                description: Build Debug APKs in addition to signed Release APKs.
+                required: false
+                type: boolean
+                default: true
 
 env:
     FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -32,30 +47,44 @@ jobs:
                 # own parallel job, dropping the wall-clock from sum(per-cell)
                 # to max(per-cell). flavor maps to the productFlavors{} block
                 # in android/app/build.gradle ('arm' = armeabi-v7a + arm64-v8a,
-                # 'x86' = x86 + x86_64). flavor_caps / build_type_caps are
-                # CamelCase variants for the assemble<Flavor><BuildType>
-                # gradle task name — flavor / build_type stay lowercase
-                # because they appear in apk output paths and artifact names.
-                include:
-                  - flavor: arm
-                    flavor_caps: Arm
-                    build_type: debug
-                    build_type_caps: Debug
-                  - flavor: x86
-                    flavor_caps: X86
-                    build_type: debug
-                    build_type_caps: Debug
-                  - flavor: arm
-                    flavor_caps: Arm
-                    build_type: release
-                    build_type_caps: Release
-                  - flavor: x86
-                    flavor_caps: X86
-                    build_type: release
-                    build_type_caps: Release
+                # 'x86' = x86 + x86_64). Debug cells are opt-in: manual runs
+                # default to including them, build_all calls stay Release-only.
+                flavor: [arm, x86]
+                build_type: ${{ inputs.include_debug && fromJSON('["debug", "release"]') || fromJSON('["release"]') }}
 
         steps:
+        # Full history: get_version.sh needs the release tags to derive the
+        # version suffix when a manual run doesn't pass version_full.
         - uses: actions/checkout@v5
+          with:
+              fetch-depth: 0
+
+        # Derive the values later steps need from this matrix cell. flavor /
+        # build_type stay lowercase because they appear in apk output paths;
+        # the capitalized variants form the assemble<Flavor><BuildType> gradle
+        # task name. Release APKs are published without a build-type suffix,
+        # Debug APKs get -debug.
+        - name: Resolve version and artifact name
+          id: names
+          env:
+              INPUT_VERSION_FULL: ${{ inputs.version_full }}
+              FLAVOR: ${{ matrix.flavor }}
+              BUILD_TYPE: ${{ matrix.build_type }}
+          run: |
+            VERSION_FULL="$INPUT_VERSION_FULL"
+            if [ -z "$VERSION_FULL" ]; then
+              eval "$(scripts/get_version.sh "$GITHUB_WORKSPACE")"
+            fi
+            if [ "$BUILD_TYPE" = "debug" ]; then
+              ARTIFACT_SUFFIX="-debug"
+            else
+              ARTIFACT_SUFFIX=""
+            fi
+            {
+              echo "build_type_caps=${BUILD_TYPE^}"
+              echo "assemble_task=assemble${FLAVOR^}${BUILD_TYPE^}"
+              echo "artifact=sdrpp-iak-${VERSION_FULL}-android-${FLAVOR}${ARTIFACT_SUFFIX}"
+            } >> "$GITHUB_OUTPUT"
 
         - name: Install build tools
           run: |
@@ -78,8 +107,8 @@ jobs:
         - name: Cache deps
           uses: ./.github/actions/deps-cache
           with:
-              destdir-path: deps/build-android-${{ matrix.flavor }}*-${{ matrix.build_type_caps }}/destdir
-              key-suffix: android-${{ matrix.flavor }}-${{ matrix.build_type_caps }}
+              destdir-path: deps/build-android-${{ matrix.flavor }}*-${{ steps.names.outputs.build_type_caps }}/destdir
+              key-suffix: android-${{ matrix.flavor }}-${{ steps.names.outputs.build_type_caps }}
               extra-hash-file: android/app/build.gradle
 
         - name: Install Android development environment
@@ -88,7 +117,8 @@ jobs:
         # Release-only: decode the signing keystore if the secret is present.
         # has_keystore controls whether the Release build / upload steps run
         # — repos without the secret (forks, PRs) skip the release path
-        # cleanly while still producing the matching Debug APK.
+        # cleanly. Manual runs with include_debug=true still produce Debug APKs
+        # without signing.
         - name: Decode keystore
           id: check_signing
           if: matrix.build_type == 'release'
@@ -102,7 +132,7 @@ jobs:
           env:
             ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
-        - name: Build ${{ matrix.flavor_caps }} ${{ matrix.build_type_caps }} APK
+        - name: Build ${{ matrix.flavor }} ${{ matrix.build_type }} APK
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           working-directory: ${{ github.workspace }}/android
           env:
@@ -110,18 +140,18 @@ jobs:
             ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
             ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
             ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
-          run: gradle --info -PoptBuildDeps=ON assemble${{ matrix.flavor_caps }}${{ matrix.build_type_caps }}
+          run: gradle --info -PoptBuildDeps=ON ${{ steps.names.outputs.assemble_task }}
 
         # Renamed to the artifact name here (rather than in create_full_archive)
         # so the file inside the artifact already has its final published name.
-        - name: Rename ${{ matrix.flavor_caps }} ${{ matrix.build_type_caps }} APK
+        - name: Rename ${{ matrix.flavor }} ${{ matrix.build_type }} APK
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           working-directory: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}
-          run: mv sdrpp-iak-${{ matrix.flavor }}-${{ matrix.build_type }}.apk sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}.apk
+          run: mv sdrpp-iak-${{ matrix.flavor }}-${{ matrix.build_type }}.apk ${{ steps.names.outputs.artifact }}.apk
 
-        - name: Save ${{ matrix.flavor_caps }} ${{ matrix.build_type_caps }} APK
+        - name: Save ${{ matrix.flavor }} ${{ matrix.build_type }} APK
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v6
           with:
-              name: sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}/sdrpp-iak-${{ inputs.version_full }}-android-${{ matrix.flavor }}-${{ matrix.build_type }}.apk
+              name: ${{ steps.names.outputs.artifact }}
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}/${{ steps.names.outputs.artifact }}.apk
