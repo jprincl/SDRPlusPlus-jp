@@ -31,6 +31,12 @@ public:
     void setInvertIQ(bool enabled);
     void setDCBlocking(bool enabled);
 
+    // Runtime insertion of external blocks (e.g. wideband noise reduction)
+    // into the pre-processing chain, ahead of the FFT and all VFOs.
+    void addPreprocessor(dsp::Processor<dsp::complex_t, dsp::complex_t>* processor, bool enabled);
+    void removePreprocessor(dsp::Processor<dsp::complex_t, dsp::complex_t>* processor);
+    void togglePreprocessor(dsp::Processor<dsp::complex_t, dsp::complex_t>* processor, bool enabled);
+
     void bindIQStream(dsp::stream<dsp::complex_t>* stream);
     void unbindIQStream(dsp::stream<dsp::complex_t>* stream);
 

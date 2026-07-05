@@ -80,6 +80,7 @@ option(OPT_BUILD_WEATHER_SAT_DECODER "Build the HRPT decoder module (no dependen
 option(OPT_BUILD_DISCORD_PRESENCE "Build the Discord Rich Presence module" ON)
 option(OPT_BUILD_FREQUENCY_MANAGER "Build the Frequency Manager module" ON)
 option(OPT_BUILD_IQ_EXPORTER "Build the IQ Exporter module" ON)
+option(OPT_BUILD_NOISE_REDUCTION_LOGMMSE "Build the LogMMSE/OMLSA noise reduction module" ON)
 option(OPT_BUILD_RECORDER "Audio and baseband recorder" ON)
 option(OPT_BUILD_RIGCTL_CLIENT "Rigctl client to make SDR++ act as a panadapter" ON)
 option(OPT_BUILD_RIGCTL_SERVER "Rigctl backend for controlling SDR++ with software like gpredict" ON)
@@ -268,6 +269,7 @@ sdrpp_add_optional_modules(
     DISCORD_PRESENCE:misc_modules/discord_integration
     FREQUENCY_MANAGER:misc_modules/frequency_manager
     IQ_EXPORTER:misc_modules/iq_exporter
+    NOISE_REDUCTION_LOGMMSE:misc_modules/noise_reduction_logmmse
     RECORDER:misc_modules/recorder
     RIGCTL_CLIENT:misc_modules/rigctl_client
     RIGCTL_SERVER:misc_modules/rigctl_server

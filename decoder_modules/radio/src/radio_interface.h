@@ -9,6 +9,15 @@ enum {
     RADIO_IFACE_CMD_SET_SQUELCH_ENABLED,
     RADIO_IFACE_CMD_GET_SQUELCH_LEVEL,
     RADIO_IFACE_CMD_SET_SQUELCH_LEVEL,
+
+    // Runtime injection of external processors into the audio (AF) chain.
+    // `in` is a dsp::Processor<dsp::stereo_t, dsp::stereo_t>*. Appended after
+    // the upstream commands so existing numeric values stay stable.
+    // Introduced in SDRPPBrown for baseband noise suppression.
+    RADIO_IFACE_CMD_ADD_TO_AFCHAIN,
+    RADIO_IFACE_CMD_REMOVE_FROM_AFCHAIN,
+    RADIO_IFACE_CMD_ENABLE_IN_AFCHAIN,
+    RADIO_IFACE_CMD_DISABLE_IN_AFCHAIN,
 };
 
 enum {

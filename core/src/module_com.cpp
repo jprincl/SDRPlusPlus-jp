@@ -31,6 +31,17 @@ bool ModuleComManager::interfaceExists(std::string name) {
     return true;
 }
 
+std::vector<std::string> ModuleComManager::findInterfaces(std::string moduleName) {
+    std::lock_guard<std::recursive_mutex> lck(mtx);
+    std::vector<std::string> result;
+    for (auto& [name, iface] : interfaces) {
+        if (iface.moduleName == moduleName) {
+            result.push_back(name);
+        }
+    }
+    return result;
+}
+
 std::string ModuleComManager::getModuleName(std::string name) {
     std::lock_guard<std::recursive_mutex> lck(mtx);
     if (interfaces.find(name) == interfaces.end()) {

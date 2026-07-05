@@ -166,6 +166,12 @@ else()
         target_link_libraries(sdrpp_core PUBLIC stdc++fs)
     endif ()
 
+    if (APPLE)
+        # utils/arrays.cpp optionally uses vDSP for FFTs
+        # Introduced in SDRPPBrown for baseband noise suppression.
+        target_link_libraries(sdrpp_core PUBLIC "-framework Accelerate")
+    endif ()
+
 endif ()
 
 # Install directives

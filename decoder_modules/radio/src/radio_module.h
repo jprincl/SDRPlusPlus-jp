@@ -603,6 +603,25 @@ private:
     static void moduleInterfaceHandler(int code, void* in, void* out, void* ctx) {
         RadioModule* _this = (RadioModule*)ctx;
 
+        // AF chain injection commands don't require a selected demodulator.
+        // Introduced in SDRPPBrown for baseband noise suppression.
+        if (in) {
+            switch (code) {
+            case RADIO_IFACE_CMD_ADD_TO_AFCHAIN:
+                _this->afChain.addBlock((dsp::Processor<dsp::stereo_t, dsp::stereo_t>*)in, false);
+                return;
+            case RADIO_IFACE_CMD_REMOVE_FROM_AFCHAIN:
+                _this->afChain.removeBlock((dsp::Processor<dsp::stereo_t, dsp::stereo_t>*)in, [=](dsp::stream<dsp::stereo_t>* out) { _this->stream.setInput(out); });
+                return;
+            case RADIO_IFACE_CMD_ENABLE_IN_AFCHAIN:
+                _this->afChain.setBlockEnabled((dsp::Processor<dsp::stereo_t, dsp::stereo_t>*)in, true, [=](dsp::stream<dsp::stereo_t>* out) { _this->stream.setInput(out); });
+                return;
+            case RADIO_IFACE_CMD_DISABLE_IN_AFCHAIN:
+                _this->afChain.setBlockEnabled((dsp::Processor<dsp::stereo_t, dsp::stereo_t>*)in, false, [=](dsp::stream<dsp::stereo_t>* out) { _this->stream.setInput(out); });
+                return;
+            }
+        }
+
         // If no demod is selected, reject the command
         if (!_this->selectedDemod) { return; }
 

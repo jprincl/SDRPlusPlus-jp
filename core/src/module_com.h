@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <string>
+#include <vector>
 #include <mutex>
 
 struct ModuleComInterface {
@@ -15,6 +16,7 @@ public:
     bool unregisterInterface(std::string name);
     bool interfaceExists(std::string name);
     std::string getModuleName(std::string name);
+    std::vector<std::string> findInterfaces(std::string moduleName);
     bool callInterface(std::string name, int code, void* in, void* out);
 
 private:
