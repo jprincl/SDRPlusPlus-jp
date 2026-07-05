@@ -4,31 +4,31 @@
 
 namespace dsp {
     struct complex_t {
-        complex_t operator*(const float b) {
+        complex_t operator*(const float b) const {
             return complex_t{ re * b, im * b };
         }
 
-        complex_t operator*(const double b) {
+        complex_t operator*(const double b) const {
             return complex_t{ re * (float)b, im * (float)b };
         }
 
-        complex_t operator/(const float b) {
+        complex_t operator/(const float b) const {
             return complex_t{ re / b, im / b };
         }
 
-        complex_t operator/(const double b) {
+        complex_t operator/(const double b) const {
             return complex_t{ re / (float)b, im / (float)b };
         }
 
-        complex_t operator*(const complex_t& b) {
+        complex_t operator*(const complex_t& b) const {
             return complex_t{ (re * b.re) - (im * b.im), (im * b.re) + (re * b.im) };
         }
 
-        complex_t operator+(const complex_t& b) {
+        complex_t operator+(const complex_t& b) const {
             return complex_t{ re + b.re, im + b.im };
         }
 
-        complex_t operator-(const complex_t& b) {
+        complex_t operator-(const complex_t& b) const {
             return complex_t{ re - b.re, im - b.im };
         }
 
@@ -50,15 +50,15 @@ namespace dsp {
             return *this;
         }
 
-        inline complex_t conj() {
+        inline complex_t conj() const {
             return complex_t{ re, -im };
         }
 
-        inline float phase() {
+        inline float phase() const {
             return atan2f(im, re);
         }
 
-        inline float fastPhase() {
+        inline float fastPhase() const {
             float abs_im = fabsf(im);
             float r, angle;
             if (re == 0.0f && im == 0.0f) { return 0.0f; }
@@ -76,11 +76,11 @@ namespace dsp {
             return angle;
         }
 
-        inline float amplitude() {
+        inline float amplitude() const {
             return sqrt((re * re) + (im * im));
         }
 
-        inline float fastAmplitude() {
+        inline float fastAmplitude() const {
             float re_abs = fabsf(re);
             float im_abs = fabsf(im);
             if (re_abs > im_abs) { return re_abs + 0.4f * im_abs; }
@@ -92,15 +92,15 @@ namespace dsp {
     };
 
     struct stereo_t {
-        stereo_t operator*(const float b) {
+        stereo_t operator*(const float b) const {
             return stereo_t{ l * b, r * b };
         }
 
-        stereo_t operator+(const stereo_t& b) {
+        stereo_t operator+(const stereo_t& b) const {
             return stereo_t{ l + b.l, r + b.r };
         }
 
-        stereo_t operator-(const stereo_t& b) {
+        stereo_t operator-(const stereo_t& b) const {
             return stereo_t{ l - b.l, r - b.r };
         }
 
