@@ -36,6 +36,16 @@ namespace dsp {
         typedef std::shared_ptr<std::vector<float>> FloatArray;
         typedef std::shared_ptr<std::vector<dsp::complex_t>> ComplexArray;
 
+        // Pooled buffer allocation. The DSP hot paths (LogMMSE etc.) allocate a
+        // handful of fixed sizes thousands of times per second; the shared_ptr
+        // deleter parks the backing vector in a size-keyed pool for reuse
+        // instead of freeing it. alloc* returns a vector of the requested size
+        // with UNSPECIFIED contents; the *Zero variants clear it.
+        FloatArray allocFloatArray(size_t size);
+        FloatArray allocFloatArrayZero(size_t size);
+        ComplexArray allocComplexArray(size_t size);
+        ComplexArray allocComplexArrayZero(size_t size);
+
         std::string dumpArr(const float *x, int limit);
         std::string dumpArr(const ComplexArray& x);
         std::string dumpArr(const FloatArray &x);

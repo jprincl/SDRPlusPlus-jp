@@ -281,7 +281,7 @@ private:
         if (self->running)
             return;
 
-        self->catTransmitActive.store(false, std::memory_order_relaxed);
+        if (self->catTransmitActive.exchange(false, std::memory_order_relaxed)) { sigpath::txState.emit(false); }
 
         qmx::StartOptions options;
 #ifndef __ANDROID__
@@ -327,7 +327,7 @@ private:
             return;
 
         self->running = false;
-        self->catTransmitActive.store(false, std::memory_order_relaxed);
+        if (self->catTransmitActive.exchange(false, std::memory_order_relaxed)) { sigpath::txState.emit(false); }
         self->stream.stopWriter();
         self->device.stop();
         self->stream.clearWriteStop();
@@ -544,8 +544,12 @@ private:
 
     static void statusHandler(const qmx::QmxStatus& status, void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
-        if (status.hasTransmit())
-            self->catTransmitActive.store(status.transmit, std::memory_order_relaxed);
+        if (status.hasTransmit()) {
+            bool wasActive = self->catTransmitActive.exchange(status.transmit, std::memory_order_relaxed);
+            // Notify listeners (e.g. noise reduction freezes its noise profile
+            // during TX) on transitions only.
+            if (wasActive != status.transmit) { sigpath::txState.emit(status.transmit); }
+        }
         self->sync.onStatusReceived(status);
     }
 

@@ -253,7 +253,8 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["moduleInstances"]["Frequency Manager"] = "frequency_manager";
     defConfig["moduleInstances"]["Recorder"] = "recorder";
     defConfig["moduleInstances"]["Rigctl Server"] = "rigctl_server";
-    defConfig["moduleInstances"]["Noise Reduction logmmse"]["module"] = "noise_reduction_logmmse";
+    defConfig["moduleInstances"]["Noise Reduction"]["module"] = "noise_reduction_logmmse";
+    defConfig["moduleInstances"]["Noise Reduction"]["enabled"] = false;
     defConfig["moduleInstances"]["Spots"]["module"] = "spots";
     defConfig["moduleInstances"]["Spots"]["enabled"] = false;
     defConfig["moduleInstances"]["WebSDR View"]["module"] = "websdr_view";
@@ -262,7 +263,6 @@ int sdrpp_main(int argc, char* argv[]) {
     // TODO: Enable rigctl_client when ready
     // defConfig["moduleInstances"]["Scanner"] = "scanner";
     // TODO: Enable scanner when ready
-
 
     // Themes
     defConfig["theme"] = "Dark";

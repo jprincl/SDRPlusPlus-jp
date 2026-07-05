@@ -5,7 +5,7 @@
 #include "bgnoise.h"
 #include <utils/flog.h>
 #include <array>
-#include <list>
+#include <deque>
 
 namespace dsp {
 
@@ -27,8 +27,8 @@ namespace dsp {
                     }
                 }
 
-                std::list<FloatArray> noise_history;      // chunks of nFFT*float
-                std::list<FloatArray> dev_history;
+                std::deque<FloatArray> noise_history;      // chunks of nFFT*float
+                std::deque<FloatArray> dev_history;
                 FloatArray sums;      // sliding sum of last N noise_history
                 FloatArray devs;      // sliding sum of dev_history
                 ComplexArray Xn_prev; // remaining noise
@@ -67,8 +67,7 @@ namespace dsp {
                     x_old.reset();
                     generation = 0;
                     stable = false;
-                    backgroundNoiseCaltulator.reset();
-
+                    backgroundNoiseCalculator.reset();
                 }
 
                 void add_noise_history(const FloatArray &noise) {
@@ -92,16 +91,17 @@ namespace dsp {
                     diff = muleach(diff, diff);
                     dev_history.emplace_back(diff);
 
-                    devs = addeach(devs, diff);
+                    // devs is private to this struct: accumulate in place
+                    volk_32f_x2_add_32f(devs->data(), devs->data(), diff->data(), nFFT);
 
                     while (dev_history.size() > noise_history_len()) {
-                        devs = subeach(devs, dev_history.front());
+                        volk_32f_x2_subtract_32f(devs->data(), devs->data(), dev_history.front()->data(), nFFT);
                         dev_history.pop_front();
                     }
 
                 }
 
-                BackgroundNoiseCaltulator backgroundNoiseCaltulator;
+                BackgroundNoiseCalculator backgroundNoiseCalculator;
 
                 void update_noise_mu2(const ComplexArray &x) {
                     auto nframes = noise_history.size();
@@ -114,7 +114,8 @@ namespace dsp {
 
                             // recalculate noise floor
                             if (generation > 0) {
-                                std::vector<float> lower(nFFT, 0);
+                                auto tnm = npzeros(nFFT);
+                                auto lower = tnm->data();
                                 const int nlower = 12;
                                 int ix = 0;
                                 for(auto &it: noise_history) {
@@ -130,7 +131,6 @@ namespace dsp {
                                     lower[w] /= nlower;
                                     lower[w] *= lower[w];
                                 }
-                                auto tnm = std::make_shared<std::vector<float>>(lower);
                                 auto tnoise_mu2 = npmavg(tnm, 6);
                                 auto tmindb = *std::min_element(tnoise_mu2->begin(), tnoise_mu2->end());
                                 auto tmaxdb = *std::max_element(tnoise_mu2->begin(), tnoise_mu2->end());
@@ -168,17 +168,16 @@ namespace dsp {
                                 if (abs(z - nFFT/2) < nFFT * 15 / 100) {
                                     // after fft, rightmost and leftmost sides of real frequencies range are at the center of the resulting table.
                                     // We exclude middle of the table from lookup
-                                    devSquareD[z] = BackgroundNoiseCaltulator::ERASED_SAMPLE;
+                                    devSquareD[z] = BackgroundNoiseCalculator::ERASED_SAMPLE;
                                 }
                             }
                             memset(noise_mu2->data(), 0, nFFT*sizeof(noise_mu2->at(0)));
-                            std::vector<float> devs(devSquareD, devSquareD +nFFT);
-                            float detectedNoise = backgroundNoiseCaltulator.addFrame(devs);
+                            float detectedNoise = backgroundNoiseCalculator.addFrame(*devSquare);
                             auto acceptible_stdev = detectedNoise;
                             auto nmu2 = noise_mu2->data();
                             auto navg =  noiseAvg->data();
                             for(int q=0; q < nFFT; q++) {
-                                if (devs[q] < acceptible_stdev) {
+                                if (devSquareD[q] < acceptible_stdev) {
                                     nmu2[q] = navg[q] * navg[q];
                                 }
                             }

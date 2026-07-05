@@ -5,6 +5,7 @@
 #include <dsp/processor.h>
 #include <utils/flog.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <vector>
 #include "omlsa_mcra.h"
@@ -32,12 +33,21 @@ namespace dsp {
         }
 
         void start() override {
-            omlsa_mcra.setSampleRate(48000);
             block::start();
         }
 
         void stop() override {
             block::stop();
+        }
+
+        // Audio rate of the AF chain this block sits in. Written by the UI
+        // thread (from SinkManager), applied lazily in the DSP thread so the
+        // OMLSA state is never re-initialized while a block is processed.
+        std::atomic<int> targetSampleRate { 48000 };
+        int appliedSampleRate = 0;
+
+        void setAudioSampleRate(int sampleRate) {
+            if (sampleRate > 0) { targetSampleRate = sampleRate; }
         }
 
         float scaled = 32767.0;      // amplitude shaper
@@ -49,6 +59,12 @@ namespace dsp {
                 buffer.clear();
                 return;
             } else {
+                int rate = targetSampleRate.load(std::memory_order_relaxed);
+                if (rate != appliedSampleRate) {
+                    omlsa_mcra.setSampleRate(rate);
+                    appliedSampleRate = rate;
+                    buffer.clear();
+                }
                 buffer.reserve(buffer.size() + count);
                 buffer.insert(buffer.end(), readBuf, readBuf + count);
                 int blockSize = omlsa_mcra.blockSize();

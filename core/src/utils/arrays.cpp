@@ -10,6 +10,9 @@
 #endif
 
 #include <chrono>
+#include <cstring>
+#include <mutex>
+#include <unordered_map>
 #include <utils/flog.h>
 
 static long long currentTimeMillis() {
@@ -477,6 +480,81 @@ namespace dsp {
 
     namespace arrays {
 
+        // Recycles vector backing storage through the shared_ptr deleter: on
+        // release the vector is parked in a bucket keyed by its capacity, and
+        // a matching-size request pops it back out. In steady state the DSP
+        // hot loops cycle through a few fixed sizes, so nearly every request
+        // is a pool hit and the vector is returned at the requested size
+        // without touching its contents (no realloc, no zero-fill).
+        template <class T>
+        class VectorPool {
+            std::mutex mtx;
+            std::unordered_map<size_t, std::vector<std::vector<T>*>> buckets;
+            static constexpr size_t MAX_PER_BUCKET = 32;
+
+        public:
+            std::shared_ptr<std::vector<T>> get(size_t size) {
+                std::vector<T>* buf = nullptr;
+                {
+                    std::lock_guard<std::mutex> lck(mtx);
+                    auto it = buckets.find(size);
+                    if (it != buckets.end() && !it->second.empty()) {
+                        buf = it->second.back();
+                        it->second.pop_back();
+                    }
+                }
+                if (!buf) {
+                    buf = new std::vector<T>();
+                    buf->reserve(size);
+                }
+                buf->resize(size);
+                return std::shared_ptr<std::vector<T>>(buf, [this](std::vector<T>* p) { put(p); });
+            }
+
+        private:
+            void put(std::vector<T>* p) {
+                std::unique_lock<std::mutex> lck(mtx);
+                auto& bucket = buckets[p->capacity()];
+                if (bucket.size() >= MAX_PER_BUCKET) {
+                    lck.unlock();
+                    delete p;
+                    return;
+                }
+                bucket.push_back(p);
+            }
+        };
+
+        // Leaked singletons: outstanding shared_ptr deleters may run during
+        // static destruction, so the pools must never be destroyed.
+        static VectorPool<float>& floatPool() {
+            static VectorPool<float>* pool = new VectorPool<float>();
+            return *pool;
+        }
+        static VectorPool<dsp::complex_t>& complexPool() {
+            static VectorPool<dsp::complex_t>* pool = new VectorPool<dsp::complex_t>();
+            return *pool;
+        }
+
+        FloatArray allocFloatArray(size_t size) {
+            return floatPool().get(size);
+        }
+
+        FloatArray allocFloatArrayZero(size_t size) {
+            auto r = floatPool().get(size);
+            memset(r->data(), 0, size * sizeof(float));
+            return r;
+        }
+
+        ComplexArray allocComplexArray(size_t size) {
+            return complexPool().get(size);
+        }
+
+        ComplexArray allocComplexArrayZero(size_t size) {
+            auto r = complexPool().get(size);
+            memset(r->data(), 0, size * sizeof(dsp::complex_t));
+            return r;
+        }
+
         FloatArray centeredSma(FloatArray in, int winsize) {
             int limit = in->size();
             auto rv = npzeros(limit);
@@ -733,7 +811,7 @@ namespace dsp {
 
         // hanning window
         FloatArray nphanning(int len) {
-            auto retval = std::make_shared<std::vector<float>>(len);
+            auto retval = allocFloatArray(len);
             for (int i = 0; i < len; i++) {
                 retval->at(i) = (0.5 - 0.5 * cos(2.0 * M_PI * i / (len - 1)));
             }
@@ -751,15 +829,14 @@ namespace dsp {
 
         // multiply by scalar
         FloatArray mul(const FloatArray& v, float e) {
-            auto retval = std::make_shared<std::vector<float>>();
-            retval->resize(v->size());
+            auto retval = allocFloatArray(v->size());
             volk_32f_s32f_multiply_32f(retval->data(), v->data(), e, v->size());
             return retval;
         }
 
         // add scalar to all items
         FloatArray add(const FloatArray& v, float e) {
-            auto retval = std::make_shared<std::vector<float>>(v->size(), 0);
+            auto retval = allocFloatArray(v->size());
             int limit = (int)v->size();
             auto* src = v->data();
             auto* dst = retval->data();
@@ -771,24 +848,14 @@ namespace dsp {
 
         // add two arrays
         FloatArray addeach(const FloatArray& v, const FloatArray& w) {
-            auto retval = std::make_shared<std::vector<float>>();
-            if (false) {
-                retval->reserve(v->size());
-                for (int q = 0; q < v->size(); q++) {
-                    retval->emplace_back(v->at(q) + w->at(q));
-                }
-            }
-            else {
-                retval->resize(v->size());
-                volk_32f_x2_add_32f(retval->data(), v->data(), w->data(), v->size());
-            }
+            auto retval = allocFloatArray(v->size());
+            volk_32f_x2_add_32f(retval->data(), v->data(), w->data(), v->size());
             return retval;
         }
 
         // subtract two arrays
         FloatArray subeach(const FloatArray& v, const FloatArray& w) {
-            auto retval = std::make_shared<std::vector<float>>();
-            retval->resize(v->size());
+            auto retval = allocFloatArray(v->size());
             volk_32f_x2_subtract_32f(retval->data(), v->data(), w->data(), v->size());
             return retval;
         }
@@ -796,14 +863,13 @@ namespace dsp {
 
         // add two arrays
         ComplexArray addeach(const ComplexArray& v, const ComplexArray& w) {
-            auto retval = std::make_shared<std::vector<dsp::complex_t>>();
+            auto retval = allocComplexArray(v->size());
 #ifndef VOLK_VERSION
-            retval->reserve(v->size());
+            auto rD = retval->data();
             for (int q = 0; q < v->size(); q++) {
-                retval->emplace_back(v->at(q) + w->at(q));
+                rD[q] = v->at(q) + w->at(q);
             }
 #else
-            retval->resize(v->size());
             volk_32fc_x2_add_32fc((lv_32fc_t*)retval->data(), (lv_32fc_t*)v->data(), (lv_32fc_t*)w->data(), v->size());
 #endif
             return retval;
@@ -811,16 +877,14 @@ namespace dsp {
 
         // multiply two arrays
         FloatArray muleach(const FloatArray& v, const FloatArray& w) {
-            auto retval = std::make_shared<std::vector<float>>();
-            retval->resize(v->size());
+            auto retval = allocFloatArray(v->size());
             volk_32f_x2_multiply_32f(retval->data(), v->data(), w->data(), v->size());
             return retval;
         }
 
         // multiply two arrays
         ComplexArray muleach(const FloatArray& v, const ComplexArray& w) {
-            auto retval = std::make_shared<std::vector<dsp::complex_t>>();
-            retval->resize(v->size());
+            auto retval = allocComplexArray(v->size());
             auto rD = retval->data();
             auto wD = w->data();
             auto vD = v->data();
@@ -831,17 +895,8 @@ namespace dsp {
         }
 
         FloatArray diveach(const FloatArray& v, const FloatArray& w) {
-            auto retval = std::make_shared<std::vector<float>>();
-            if (false) {
-                retval->reserve(v->size());
-                for (int q = 0; q < v->size(); q++) {
-                    retval->emplace_back(v->at(q) / w->at(q));
-                }
-            }
-            else {
-                retval->resize(v->size());
-                volk_32f_x2_divide_32f(retval->data(), v->data(), w->data(), v->size());
-            }
+            auto retval = allocFloatArray(v->size());
+            volk_32f_x2_divide_32f(retval->data(), v->data(), w->data(), v->size());
             return retval;
         }
 
@@ -866,17 +921,8 @@ namespace dsp {
         }
 
         FloatArray div(const FloatArray& v, float e) {
-            auto retval = std::make_shared<std::vector<float>>();
-            if (false) {
-                retval->reserve(v->size());
-                for (auto d : *v) {
-                    retval->emplace_back(d / e);
-                }
-            }
-            else {
-                retval->resize(v->size());
-                volk_32f_s32f_multiply_32f(retval->data(), v->data(), 1.0 / e, v->size());
-            }
+            auto retval = allocFloatArray(v->size());
+            volk_32f_s32f_multiply_32f(retval->data(), v->data(), 1.0 / e, v->size());
             return retval;
         }
 
@@ -915,7 +961,8 @@ namespace dsp {
         }
 
         FloatArray npminimum_(const FloatArray& v, float lim) {
-            auto retval = std::make_shared<std::vector<float>>(v->data(), v->data() + v->size());
+            auto retval = allocFloatArray(v->size());
+            memcpy(retval->data(), v->data(), v->size() * sizeof(float));
             auto rvD = retval->data();
             for (int q = 0; q < retval->size(); q++) {
                 if (rvD[q] > lim) {
@@ -927,17 +974,8 @@ namespace dsp {
 
 
         ComplexArray div(const ComplexArray& v, float val) {
-            auto retval = std::make_shared<std::vector<dsp::complex_t>>();
-            if (false) {
-                retval->reserve(v->size());
-                for (auto d : *v) {
-                    retval->emplace_back(d / val);
-                }
-            }
-            else {
-                retval->resize(v->size());
-                volk_32fc_s32fc_multiply_32fc((lv_32fc_t*)retval->data(), (lv_32fc_t*)v->data(), lv_32fc_t(1.0f / val, 0.0f), v->size());
-            }
+            auto retval = allocComplexArray(v->size());
+            volk_32fc_s32fc_multiply_32fc((lv_32fc_t*)retval->data(), (lv_32fc_t*)v->data(), lv_32fc_t(1.0f / val, 0.0f), v->size());
             return retval;
         }
 
@@ -968,7 +1006,8 @@ namespace dsp {
         }
 
         FloatArray npmaximum(const FloatArray& v, float lim) {
-            auto retval = std::make_shared<std::vector<float>>(v->data(), v->data() + v->size());
+            auto retval = allocFloatArray(v->size());
+            memcpy(retval->data(), v->data(), v->size() * sizeof(float));
             auto rvD = retval->data();
             for (int q = 0; q < retval->size(); q++) {
                 if (rvD[q] < lim) {
@@ -993,16 +1032,14 @@ namespace dsp {
             if (end == -1) {
                 end = v->size();
             }
-            auto retval = std::make_shared<std::vector<float>>();
-            retval->reserve(end - begin);
-            for (int i = begin; i < end; i++) {
-                retval->emplace_back(v->at(i));
-            }
+            auto retval = allocFloatArray(end - begin);
+            memcpy(retval->data(), v->data() + begin, (end - begin) * sizeof(float));
             return retval;
         }
 
         ComplexArray nparange(const Arg<std::vector<dsp::complex_t>>& v, int begin, int end) {
-            auto retval = std::make_shared<std::vector<dsp::complex_t>>(v->begin() + begin, v->begin() + end);
+            auto retval = allocComplexArray(end - begin);
+            memcpy(retval->data(), v->data() + begin, (end - begin) * sizeof(dsp::complex_t));
             return retval;
         }
 
@@ -1030,17 +1067,8 @@ namespace dsp {
         }
 
         FloatArray npexp(const FloatArray& v) {
-            auto retval = std::make_shared<std::vector<float>>();
-            if (false) {
-                retval->reserve(v->size());
-                for (auto d : *v) {
-                    retval->emplace_back(::exp(d));
-                }
-            }
-            else {
-                retval->resize(v->size());
-                volk_32f_expfast_32f(retval->data(), v->data(), v->size());
-            }
+            auto retval = allocFloatArray(v->size());
+            volk_32f_expfast_32f(retval->data(), v->data(), v->size());
             return retval;
         }
 
@@ -1072,8 +1100,9 @@ namespace dsp {
 
         // only even window sizes
         FloatArray npmavg(const FloatArray& v, int windowSize) {
-            auto retval = std::make_shared<std::vector<float>>();
-            retval->reserve(v->size());
+            auto retval = allocFloatArray(v->size());
+            auto rvD = retval->data();
+            size_t written = 0;
             float sum = 0;
             float count = 0;
             auto ws2 = windowSize / 2;
@@ -1087,11 +1116,11 @@ namespace dsp {
                     sum -= v->at(ix - count);
                 }
                 if (ix >= ws2) {
-                    retval->emplace_back(sum / count);
+                    rvD[written++] = sum / count;
                 }
             }
-            if (retval->size() != v->size()) {
-                flog::info("FloatArray npmavg: retval->size() != v->size() {} {}\n", (int)retval->size(), (int)v->size());
+            if (written != v->size()) {
+                flog::info("FloatArray npmavg: written != v->size() {} {}\n", (int)written, (int)v->size());
                 abort();
             }
             return retval;
@@ -1107,8 +1136,7 @@ namespace dsp {
         }
 
         FloatArray npzeros(int size) {
-            auto retval = std::make_shared<std::vector<float>>(size, 0.0);
-            return retval;
+            return allocFloatArrayZero(size);
         }
 
         FloatArray hamming(int N) {
@@ -1140,8 +1168,7 @@ namespace dsp {
         }
 
         ComplexArray npzeros_c(int size) {
-            auto retval = std::make_shared<std::vector<dsp::complex_t>>(size, dsp::complex_t{ 0.0f, 0.0f });
-            return retval;
+            return allocComplexArrayZero(size);
         }
 
         ComplexArray resize(const ComplexArray& in, int nsize) {
@@ -1158,7 +1185,7 @@ namespace dsp {
         }
 
         FloatArray scipyspecialexpn(const FloatArray& in) {
-            auto retval = std::make_shared<std::vector<float>>(in->size());
+            auto retval = allocFloatArray(in->size());
             auto rvD = retval->data();
             auto inD = in->data();
             for (auto q = 0; q < in->size(); q++) {
@@ -1168,7 +1195,7 @@ namespace dsp {
         }
 
         FloatArray maximum(const FloatArray& in, float value) {
-            auto retval = std::make_shared<std::vector<float>>(in->size());
+            auto retval = allocFloatArray(in->size());
             auto rvD = retval->data();
             auto inD = in->data();
             for (auto q = 0; q < in->size(); q++) {
@@ -1178,25 +1205,20 @@ namespace dsp {
         }
 
         FloatArray clone(const FloatArray& in) {
-            return std::make_shared<std::vector<float>>(*in);
+            auto retval = allocFloatArray(in->size());
+            memcpy(retval->data(), in->data(), in->size() * sizeof(float));
+            return retval;
         }
 
         ComplexArray clone(const ComplexArray& in) {
-            return std::make_shared<std::vector<dsp::complex_t>>(*in);
+            auto retval = allocComplexArray(in->size());
+            memcpy(retval->data(), in->data(), in->size() * sizeof(dsp::complex_t));
+            return retval;
         }
 
         FloatArray npabsolute(const ComplexArray& in) {
-            auto retval = std::make_shared<std::vector<float>>();
-            if (false) {
-                retval->reserve(in->size());
-                for (auto& v : *in) {
-                    retval->emplace_back(v.amplitude());
-                }
-            }
-            else {
-                retval->resize(in->size());
-                volk_32fc_magnitude_32f(retval->data(), (const lv_32fc_t*)in->data(), in->size());
-            }
+            auto retval = allocFloatArray(in->size());
+            volk_32fc_magnitude_32f(retval->data(), (const lv_32fc_t*)in->data(), in->size());
             return retval;
         }
 

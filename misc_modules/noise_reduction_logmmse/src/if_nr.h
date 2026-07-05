@@ -15,8 +15,9 @@ namespace dsp {
     using namespace ::dsp::arrays;
     using namespace ::dsp::logmmse;
 
+    // Monotonic: feeds the CPU-usage watchdog, which must not trip on wall-clock jumps.
     inline long long currentTimeMillis() {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 
     class IFNRLogMMSE : public Processor<complex_t, complex_t> {
@@ -65,16 +66,15 @@ namespace dsp {
         }
 
         void process(complex_t* in, int count, complex_t* out, int& outCount) {
+            // Detect sample rate / decimation changes: the noise profile is
+            // only valid for the rate it was sampled at.
+            int curFreq = (params.forceSampleRate != 0) ? params.forceSampleRate : (int)sigpath::iqFrontEnd.getSampleRate();
+            if (curFreq != freq) { shouldReset = true; }
             if (shouldReset) {
                 flog::debug("Resetting IF NR LogMMSE");
                 shouldReset = false;
                 worker1c.reset();
-                if (params.forceSampleRate != 0) {
-                    freq = params.forceSampleRate;
-                }
-                else {
-                    freq = (int)sigpath::iqFrontEnd.getSampleRate();
-                }
+                freq = curFreq;
             }
             if (!worker1c) {
                 worker1c = npzeros_c(0);

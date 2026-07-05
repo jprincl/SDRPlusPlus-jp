@@ -11,6 +11,30 @@ namespace bandplanmenu {
 
     const char* bandPlanPosTxt = "Bottom\0Top\0";
 
+    // The band plan is a core menu, not a module instance, but this adapter
+    // lets the menu widget draw the standard enable checkbox on its header.
+    // It is not registered with the module manager, so it persists through
+    // the existing "bandPlanEnabled" config key instead of "moduleInstances".
+    class BandPlanToggle : public ModuleManager::Instance {
+        void postInit() {}
+        void enable() { setEnabled(true); }
+        void disable() { setEnabled(false); }
+        bool isEnabled() { return bandPlanEnabled; }
+
+        void setEnabled(bool en) {
+            bandPlanEnabled = en;
+            bandPlanEnabled ? gui::waterfall.showBandplan() : gui::waterfall.hideBandplan();
+            core::configManager.acquire();
+            core::configManager.conf["bandPlanEnabled"] = bandPlanEnabled;
+            core::configManager.release(true);
+        }
+    };
+    BandPlanToggle toggle;
+
+    ModuleManager::Instance* getInstance() {
+        return &toggle;
+    }
+
     void init() {
         // todo: check if the bandplan wasn't removed
         if (bandplan::bandplanNames.size() == 0) {
@@ -54,12 +78,6 @@ namespace bandplanmenu {
             core::configManager.release(true);
         }
 
-        if (ImGui::Checkbox("Enabled", &bandPlanEnabled)) {
-            bandPlanEnabled ? gui::waterfall.showBandplan() : gui::waterfall.hideBandplan();
-            core::configManager.acquire();
-            core::configManager.conf["bandPlanEnabled"] = bandPlanEnabled;
-            core::configManager.release(true);
-        }
         bandplan::BandPlan_t plan = bandplan::bandplans[bandplan::bandplanNames[bandplanId]];
         ImGui::Text("Country: %s (%s)", plan.countryName.c_str(), plan.countryCode.c_str());
         ImGui::Text("Author: %s", plan.authorName.c_str());

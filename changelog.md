@@ -8,7 +8,7 @@
 - Native Windows on ARM64 builds.
 - Linux AppImage builds, with isolated config root.
 - Radiosonde decoder plugin, merged directly into the `iak` fork from `sdrpp_radiosonde` by @dbdexter-dev (Davide Belloli), built on his `sondedump` decoding library.
-- Spots module, merged from `sdrpp-spots` by @gerner.
+- Spots module, merged from [`sdrpp-spots`](https://github.com/gerner/sdrpp-spots) by @gerner.
 - WebSDR view module, based on the KiwiSDR map and waterfall code from SDRPlusPlusBrown by @sannysanoff.
 - libcurl integration for HTTPS and secure WebSockets, statically bundled and exported through `sdrpp_core`.
 - KiwiSDR improvements merged from the `qrp73`/`sdr73` forks by @qrp73: server selection by address and port, server band parsing, and map improvements (day/night terminator, country colors, hover tooltips, and a runtime-toggleable marker style).

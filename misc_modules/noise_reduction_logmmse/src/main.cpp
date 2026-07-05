@@ -1,6 +1,7 @@
 #include <imgui.h>
 #include <module.h>
 #include <gui/gui.h>
+#include <gui/style.h>
 #include <config.h>
 #include <core.h>
 #include <vector>
@@ -45,7 +46,7 @@ public:
 
         ifnrProcessor.setDisableCpuDeactivation(disableCpuDeactivation);
 
-        gui::menu.registerEntry(name, menuHandler, this, NULL);
+        gui::menu.registerEntry(name, menuHandler, this, this);
         updateBindings();
         actuateIFNR();
     }
@@ -87,16 +88,20 @@ private:
         const std::shared_ptr<dsp::AFNR_OMLSA_MCRA> afnromlsa = std::make_shared<dsp::AFNR_OMLSA_MCRA>();
         afnromlsa->init(nullptr);
         afnrProcessors2[instanceName] = afnromlsa;
-        core::modComManager.callInterface(instanceName, RADIO_IFACE_CMD_ADD_TO_AFCHAIN, afnromlsa.get(), NULL);
-        core::modComManager.callInterface(instanceName, RADIO_IFACE_CMD_ENABLE_IN_AFCHAIN, afnromlsa.get(), NULL);
-        config.acquire();
+        afnromlsa->setAudioSampleRate((int)sigpath::sinkManager.getStreamSampleRate(instanceName));
 
+        config.acquire();
         bool afnr2 = false;
         if (config.conf.contains("AF_NR2_" + instanceName)) afnr2 = config.conf["AF_NR2_" + instanceName];
-
         config.release(true);
-
         afnromlsa->allowed = afnr2;
+
+        // Only splice the block into the running AF chain when the feature is
+        // on; a merely added block costs nothing. Toggled live by the checkbox.
+        core::modComManager.callInterface(instanceName, RADIO_IFACE_CMD_ADD_TO_AFCHAIN, afnromlsa.get(), NULL);
+        if (afnr2) {
+            core::modComManager.callInterface(instanceName, RADIO_IFACE_CMD_ENABLE_IN_AFCHAIN, afnromlsa.get(), NULL);
+        }
     }
 
     void detachAFFromRadio(const std::string& instanceName) {
@@ -159,6 +164,8 @@ private:
     }
 
     void menuHandler() {
+        if (!enabled) { style::beginDisabled(); }
+
         if (ImGui::Checkbox("Baseband NR##_sdrpp_if_nr", &ifnr)) {
             config.acquire();
             config.conf["IFNR"] = ifnr;
@@ -167,6 +174,12 @@ private:
                 ifnrProcessor.stopReason = nullptr;
             }
             actuateIFNR();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("LogMMSE noise reduction on the whole IQ stream, before the\n"
+                              "FFT and all demodulators: cleans the waterfall and every VFO.\n"
+                              "Adapts continuously, no silence training needed.\n"
+                              "CPU-intensive at high sample rates.");
         }
         ImGui::SameLine();
         const char* stopReason = ifnrProcessor.stopReason;
@@ -191,6 +204,11 @@ private:
                 std::string cpuText = std::to_string((int)ifnrProcessor.percentUsage) + "% cpu";
                 ImVec2 textSize = ImGui::CalcTextSize(cpuText.c_str());
                 bool clicked = ImGui::Selectable(cpuText.c_str(), false, ImGuiSelectableFlags_None, textSize);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Baseband NR processing load. Above ~95%% the NR shuts off\n"
+                                      "automatically; click to disable that safeguard (strikethrough\n"
+                                      "= safeguard off).");
+                }
                 if (clicked) {
                     disableCpuDeactivation = !disableCpuDeactivation;
                     ifnrProcessor.setDisableCpuDeactivation(disableCpuDeactivation);
@@ -210,15 +228,33 @@ private:
             }
         }
 
-        for (auto [k, v] : afnrProcessors2) {
-            if (ImGui::Checkbox(("Audio NR2 " + k + "##_radio_omlsa_nr_" + k).c_str(), &v->allowed)) {
+        for (auto& [k, v] : afnrProcessors2) {
+            // Track the sink's audio rate (cheap; applied by the DSP thread only on change)
+            v->setAudioSampleRate((int)sigpath::sinkManager.getStreamSampleRate(k));
+            if (ImGui::Checkbox(("Audio NR (OMLSA) " + k + "##_radio_omlsa_nr_" + k).c_str(), &v->allowed)) {
+                core::modComManager.callInterface(k, v->allowed ? RADIO_IFACE_CMD_ENABLE_IN_AFCHAIN : RADIO_IFACE_CMD_DISABLE_IN_AFCHAIN, v.get(), NULL);
+                // Disabling joins the block's worker thread, so the buffer can
+                // be cleared here; otherwise stale audio would flush on re-enable.
+                if (!v->allowed) { v->buffer.clear(); }
                 config.acquire();
                 config.conf["AF_NR2_" + k] = v->allowed;
                 config.release(true);
             }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("OMLSA-MCRA speech denoiser on this radio's audio output.\n"
+                                  "Best on SSB/AM voice; degrades digital modes and music.\n"
+                                  "Output is mono. Adds roughly one block (~32 ms) of latency.");
+            }
             ImGui::SameLine();
             ImGui::Text("%0.01f", 32767.0 / v->scaled);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Recent peak audio level into the denoiser (1.0 = full scale).\n"
+                                  "The NR processes in 16-bit fixed point and auto-scales to\n"
+                                  "this level to preserve headroom.");
+            }
         }
+
+        if (!enabled) { style::endDisabled(); }
     }
 
     static void menuHandler(void* ctx) {

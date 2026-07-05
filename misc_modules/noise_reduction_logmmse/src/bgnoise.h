@@ -7,8 +7,9 @@
 #include <algorithm>
 #include <cstring>
 #include <cmath>
+#include <cassert>
 
-class BackgroundNoiseCaltulator {
+class BackgroundNoiseCalculator {
 
     double lastNoise = ERASED_SAMPLE;
     static constexpr auto NBUCKETS = 1000;
@@ -44,12 +45,21 @@ public:
                 logFrame.push_back(q);
             }
         }
+        if (logFrame.empty()) {
+            // All samples erased; keep the previous noise estimate.
+            return lastNoise;
+        }
         auto width = maxx - minn;
         buckets.resize(NBUCKETS);
         memset(buckets.data(), 0, sizeof(int) * NBUCKETS);
-        for(auto f : logFrame) {
-            int bucket = (int) (NBUCKETS * ((f - minn) / width));
-            buckets[bucket]++;
+        if (width > 0) {
+            for(auto f : logFrame) {
+                int bucket = std::min((int) (NBUCKETS * ((f - minn) / width)), NBUCKETS - 1);
+                buckets[bucket]++;
+            }
+        } else {
+            // All samples equal (width == 0 would divide 0/0 = NaN); the peak is trivially minn.
+            buckets[0] = (int) logFrame.size();
         }
         auto ix = std::max_element(buckets.begin(), buckets.end()) - buckets.begin();
         double maxf = pow(10, ((((double)ix)/NBUCKETS) * width + minn));
