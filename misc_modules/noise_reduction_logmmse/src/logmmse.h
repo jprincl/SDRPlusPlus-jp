@@ -237,8 +237,14 @@ namespace dsp {
                 params->ksi_min = ::pow(10, -25.0 / 10.0);
             }
 
-            static ComplexArray logmmse_all(const ComplexArray &x, int Srate, float eta, SavedParamsC *params) {
-                auto Nframes = floor(x->size() / params->len2) - floor(params->Slen / params->len2);
+            // maxInput caps how much of x is consumed in one pass (-1 = all of it),
+            // so a large backlog can be drained in bounded chunks without copying.
+            static ComplexArray logmmse_all(const ComplexArray &x, int Srate, float eta, SavedParamsC *params, int maxInput = -1) {
+                int inputLen = (int)x->size();
+                if (maxInput >= 0 && maxInput < inputLen) {
+                    inputLen = maxInput;
+                }
+                auto Nframes = floor(inputLen / params->len2) - floor(params->Slen / params->len2);
                 params->update_noise_mu2(x);
                 auto xfinal = npzeros_c(Nframes * params->len2);
                 for (int k = 0; k < Nframes * params->len2; k += params->len2) {

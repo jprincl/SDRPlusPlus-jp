@@ -98,7 +98,12 @@ namespace dsp {
                 flog::debug("IF NR LogMMSE: sampling noise profile");
                 LogMMSE::logmmse_sample(worker1c, freq, 0.15f, &params, noiseFrames);
             }
-            auto rv = LogMMSE::logmmse_all(worker1c, freq, 0.15f, &params);
+
+            // logmmse_all() can flush a large startup/backlog burst. Bound one
+            // pass so we never write past the fixed stream buffer: with
+            // Slen >= fram * 2 the output is at most maxInput - Slen samples.
+            int maxProcessInput = STREAM_BUFFER_SIZE + (fram * 2);
+            auto rv = LogMMSE::logmmse_all(worker1c, freq, 0.15f, &params, maxProcessInput);
             freqMutex.unlock();
 
             int limit = rv->size();
