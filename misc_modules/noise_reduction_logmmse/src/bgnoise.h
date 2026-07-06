@@ -27,7 +27,11 @@ public:
         frameCount = 0;
     }
 
-    float addFrame(const std::vector<float> &fftFrame) {
+    // Any float container with size() and range-for (accepts both
+    // std::vector<float> and dsp::arrays::FloatArray, which uses a
+    // custom allocator and is therefore a distinct type).
+    template <class Vec>
+    float addFrame(const Vec &fftFrame) {
         if (frameCount > 0 && frameCount % SKIP_FRAMES != 0) {
             frameCount++;
             return lastNoise;

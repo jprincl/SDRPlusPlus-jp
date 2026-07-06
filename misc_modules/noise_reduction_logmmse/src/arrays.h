@@ -27,26 +27,72 @@ namespace dsp {
      * limited to what that algorithm needs, and write new in-place/streaming
      * code with raw VOLK instead (see add_noise_history in logmmse.h).
      *
-     * Convention: a trailing underscore (npmaximum_, npminimum_, div_) means
-     * the function mutates its first argument in place and returns it; all
-     * other functions allocate their result.
+     * Arrays are std::vector values: functions take const references and
+     * return fresh vectors; clamp-style ops (npminimum, npmaximum) take
+     * their argument by value and reuse its storage, so pass a temporary or
+     * std::move an lvalue you no longer need.
      */
     namespace arrays {
 
-        template <class X>
-        using Arg = std::shared_ptr<X>;
-        typedef std::shared_ptr<std::vector<float>> FloatArray;
-        typedef std::shared_ptr<std::vector<dsp::complex_t>> ComplexArray;
+        // Storage backend for FloatArray/ComplexArray:
+        //   0 (default) - each array is a plain heap allocation
+        //   1           - allocations are recycled through a size-class pool
+        //                 (see arrays.cpp); trades a few MB of retained RSS
+        //                 for less allocator churn on slow allocators
+        //                 (Android scudo). Pooled memory is invisible to
+        //                 ASan/leak tools; keep 0 for debugging.
+        // Must be set identically for every TU of this module (via
+        // target_compile_definitions in CMakeLists.txt, not per-file).
+#ifndef SDRPP_NR_RECYCLE_ARRAYS
+#define SDRPP_NR_RECYCLE_ARRAYS 0
+#endif
 
-        // Pooled buffer allocation. The DSP hot paths (LogMMSE etc.) allocate a
-        // handful of fixed sizes thousands of times per second; the shared_ptr
-        // deleter parks the backing vector in a size-keyed pool for reuse
-        // instead of freeing it. alloc* returns a vector of the requested size
-        // with UNSPECIFIED contents; the *Zero variants clear it.
-        FloatArray allocFloatArray(size_t size);
-        FloatArray allocFloatArrayZero(size_t size);
-        ComplexArray allocComplexArray(size_t size);
-        ComplexArray allocComplexArrayZero(size_t size);
+#if SDRPP_NR_RECYCLE_ARRAYS
+        namespace detail {
+            void* poolAlloc(size_t bytes);
+            void poolFree(void* p, size_t bytes) noexcept;
+        }
+#endif
+
+        // Allocator for the array types. Regardless of the storage backend
+        // it default-initializes instead of value-initializing, so
+        // FloatArray(n) / resize(n) skip the zero-fill (a no-op for float /
+        // complex_t) and return UNSPECIFIED contents. Every arrays.cpp op
+        // overwrites its result in full before returning; npzeros /
+        // npzeros_c zero explicitly. Copy/fill construction is unaffected
+        // (construct(p, args...) falls back to plain placement new).
+        template <class T>
+        struct dsp_allocator {
+            using value_type = T;
+            template <class U> struct rebind { using other = dsp_allocator<U>; };
+            dsp_allocator() = default;
+            template <class U> dsp_allocator(const dsp_allocator<U>&) noexcept {}
+
+            T* allocate(size_t n) {
+#if SDRPP_NR_RECYCLE_ARRAYS
+                return (T*)detail::poolAlloc(n * sizeof(T));
+#else
+                return (T*)::operator new(n * sizeof(T));
+#endif
+            }
+
+            void deallocate(T* p, size_t n) noexcept {
+#if SDRPP_NR_RECYCLE_ARRAYS
+                detail::poolFree(p, n * sizeof(T));
+#else
+                (void)n;
+                ::operator delete(p);
+#endif
+            }
+
+            template <class U> void construct(U* p) { ::new ((void*)p) U; }
+
+            template <class U> bool operator==(const dsp_allocator<U>&) const noexcept { return true; }
+            template <class U> bool operator!=(const dsp_allocator<U>&) const noexcept { return false; }
+        };
+
+        typedef std::vector<float, dsp_allocator<float>> FloatArray;
+        typedef std::vector<dsp::complex_t, dsp_allocator<dsp::complex_t>> ComplexArray;
 
         FloatArray npzeros(int size);
         ComplexArray npzeros_c(int size);
@@ -74,16 +120,14 @@ namespace dsp {
         ComplexArray addeach(const ComplexArray& v, const ComplexArray& w);
         ComplexArray muleach(const FloatArray& v, const ComplexArray& w);
 
-        // in place: clamp v to at most / at least lim, return v
-        FloatArray npminimum_(const FloatArray& v, float lim);
-        FloatArray npmaximum_(const FloatArray& v, float lim);
-        // in place: divide all elements of v by val
-        void div_(const ComplexArray& v, float val);
+        // clamp to at most / at least lim; reuses v's storage
+        FloatArray npminimum(FloatArray v, float lim);
+        FloatArray npmaximum(FloatArray v, float lim);
 
         // copy of v[begin..end)
         ComplexArray nparange(const ComplexArray& v, int begin, int end);
         // copy part into v starting at begin
-        void nparangeset(const ComplexArray& v, int begin, const ComplexArray& part);
+        void nparangeset(ComplexArray& v, int begin, const ComplexArray& part);
 
         // elementwise exp (VOLK expfast: ~1e-4 relative error)
         FloatArray npexp(const FloatArray& v);
@@ -95,20 +139,19 @@ namespace dsp {
         // centered moving average, only even window sizes
         FloatArray npmavg(const FloatArray& v, int windowSize);
 
-        // zero-padded / truncated copy (returns in unchanged if size matches)
-        ComplexArray resize(const ComplexArray& in, int nsize);
-
         struct FFTPlan {
-            virtual ComplexArray getInput() = 0;
-            virtual ComplexArray getOutput() = 0;
-            virtual ComplexArray npfftfft(const ComplexArray& in) = 0;
+            // Runs the transform on in (zero-padded / truncated to the plan
+            // size) and returns the plan's internal output buffer; the
+            // reference stays valid but is overwritten by the next call.
+            virtual const ComplexArray& npfftfft(const ComplexArray& in) = 0;
+            virtual const ComplexArray& getOutput() = 0;
             virtual ~FFTPlan() {
 
             }
         };
 
-        Arg<FFTPlan> allocateFFTWPlan(bool backward, int buckets);
+        std::shared_ptr<FFTPlan> allocateFFTWPlan(bool backward, int buckets);
 
-        void npfftfft(const ComplexArray& in, const Arg<FFTPlan>& plan);
+        void npfftfft(const ComplexArray& in, const std::shared_ptr<FFTPlan>& plan);
     }
 }

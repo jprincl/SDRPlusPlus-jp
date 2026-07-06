@@ -11,7 +11,11 @@ target_include_directories(noise_reduction_logmmse PRIVATE "src/")
 target_include_directories(noise_reduction_logmmse PRIVATE "src/omlsa_mcra")
 target_include_directories(noise_reduction_logmmse PRIVATE "../../decoder_modules/radio/src")
 
-if (APPLE)
-    # arrays.cpp optionally uses vDSP for FFTs
-    target_link_libraries(noise_reduction_logmmse PRIVATE "-framework Accelerate")
+# Recycle DSP buffers through a size-class pool instead of plain heap
+# allocation (see dsp_allocator in src/arrays.h). Must be set here so every
+# TU agrees. Enabled on Android, where the hardened scudo allocator makes
+# per-frame heap churn expensive; elsewhere plain allocation measures on par
+# with pooling and keeps ASan/leak tooling useful.
+if (ANDROID)
+    target_compile_definitions(noise_reduction_logmmse PRIVATE SDRPP_NR_RECYCLE_ARRAYS=1)
 endif ()

@@ -73,28 +73,23 @@ namespace dsp {
             if (shouldReset) {
                 flog::debug("Resetting IF NR LogMMSE");
                 shouldReset = false;
-                worker1c.reset();
+                worker1c.clear();
+                params.reset();
                 freq = curFreq;
             }
-            if (!worker1c) {
-                worker1c = npzeros_c(0);
-                params.reset();
-            }
-            for (int i = 0; i < count; i++) {
-                worker1c->emplace_back(in[i]);
-            }
+            worker1c.insert(worker1c.end(), in, in + count);
             int noiseFrames = 12;
             int fram = freq / 100;
             int initialDemand = fram * 2;
-            if (!params.Xk_prev) {
+            if (params.Xk_prev.empty()) {
                 initialDemand = fram * (noiseFrames + 2) * 2;
             }
-            if (worker1c->size() < initialDemand) {
+            if (worker1c.size() < initialDemand) {
                 outCount = 0;
                 return;
             }
             freqMutex.lock();
-            if (!params.Xk_prev) {
+            if (params.Xk_prev.empty()) {
                 flog::debug("IF NR LogMMSE: sampling noise profile");
                 LogMMSE::logmmse_sample(worker1c, freq, 0.15f, &params, noiseFrames);
             }
@@ -106,14 +101,13 @@ namespace dsp {
             auto rv = LogMMSE::logmmse_all(worker1c, freq, 0.15f, &params, maxProcessInput);
             freqMutex.unlock();
 
-            int limit = rv->size();
-            auto dta = rv->data();
+            int limit = (int)rv.size();
+            auto dta = rv.data();
             for (int i = 0; i < limit; i++) {
                 auto lp = dta[i];
                 out[i] = lp * 4.0;
             }
-            memmove(worker1c->data(), ((complex_t*)worker1c->data()) + rv->size(), sizeof(complex_t) * (worker1c->size() - rv->size()));
-            worker1c->resize(worker1c->size() - rv->size());
+            worker1c.erase(worker1c.begin(), worker1c.begin() + limit);
             outCount = limit;
         }
 
