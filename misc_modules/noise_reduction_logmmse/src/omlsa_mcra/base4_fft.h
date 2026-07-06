@@ -1,5 +1,4 @@
 #pragma once
-#include "head.h"
 #include "Cordic.h"
 #include <string.h>
 
@@ -20,10 +19,6 @@ public:
 	~MY_B4_FFT();
 	short initial(int N);
 	short base4_fft(Complex_num *x, int sign);
-	/*static MY_B4_FFT* getInstance() {
-		return NSingleton;
-	}*/
-	void fftfix(Complex_num *x, int sign);
 private:
 	Cordic coc;
 	int* m_Buffer_cos, *m_Buffer_sin;
@@ -39,6 +34,4 @@ private:
 	int m_ifft_move_bit ;
 	int m_value_limit;
 	void Base4_Sort();
-
-	//static MY_B4_FFT* NSingleton;
 };

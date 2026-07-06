@@ -5,9 +5,7 @@
 #endif
 
 #include "G_calculate.h"
-#include<iostream>
 #include"SearchChart.h"
-#include"time.h"
 #include<algorithm>
 #include <cmath>
 #include <cstdint>
@@ -61,13 +59,12 @@ short G_calculate::Initialize(int wlen) {
 	m_num_mag = 128;       // 2^7
 	m_num_mag_pow = 16384; // 2^14
 	m_num_mag_pow2 = 268435456; //2^28
-	m_amp_para = 7, m_amp_para_double = 14, m_amp_para_three = 21;  
+	m_amp_para_double = 14;
 	m_snpramin = 0.03*m_num_mag_pow;
-	beta = 0.7*m_num_mag_pow;
 	m_cosen_max = 0.8*m_num_mag_pow;  // %:0.1 : 10
 	m_cosen_min = 0.1*m_num_mag_pow;  // :0.1:10  
-	m_cosen_pmax = 5 * m_num_mag_pow;			// %??????????????????????????????1.3??????????????????????
-	m_cosen_pmin = 1 * m_num_mag_pow;			// %1.0~1.1?????????????????
+	m_cosen_pmax = 5 * m_num_mag_pow;			// experiments show it must exceed 1.3; no definite upper bound
+	m_cosen_pmin = 1 * m_num_mag_pow;			// best between 1.0 and 1.1
 	m_cosen_max_min = log(8) *m_num_mag_pow;
 	m_w_global = 8; m_wt_global = 17;
 
@@ -75,17 +72,9 @@ short G_calculate::Initialize(int wlen) {
 	if (!m_arr_temp) {
 		return -19;
 	}
-	m_S_f = new int[m_lwlen];
-	if (!m_S_f) {
-		return -20;
-	}
 	m_abs_Y = new unsigned int[m_lwlen];
 	if (!m_abs_Y) {
 		return -21;
-	}
-	m_dataBuf = new short[m_lwlen];
-	if (!m_dataBuf) {
-		return -22;
 	}
 	m_init_S = new int[m_lwlen];
 	if (!m_init_S) {
@@ -112,10 +101,6 @@ short G_calculate::Initialize(int wlen) {
 		return -28;
 	}
 
-	m_ns_storage = new short[m_lwlen];
-	if (!m_ns_storage) {
-		return -30;
-	}
 	m_cosen_local = new int[m_lwlen];
 	if (!m_cosen_local) {
 		return -31;
@@ -190,15 +175,13 @@ short G_calculate::Initialize(int wlen) {
 	}
 	
 	for (int i = 1; i < (m_wt_global + 1); ++i)  //2^28=268435456 
-		m_h_global[i - 1] = (0.5 - 0.5 * cos(2.0 * Pi*(i) / (m_wt_global + 1))) * 16384;//2^14=16384
+		m_h_global[i - 1] = (0.5 - 0.5 * cos(2.0 * M_PI*(i) / (m_wt_global + 1))) * 16384;//2^14=16384
 
 	for (int i = 0; i < m_lwlen; i++) 
 		m_pr_SNR[i] = 0.98*m_num_mag_pow;
 
 	memset(m_old_cosen, 0, sizeof(int)*m_lwlen);
 	memset(m_cosen, 0, sizeof(int)*m_lwlen);
-	memset(m_dataBuf, 0, sizeof(short) * m_lwlen);
-	memset(m_ns_storage, 0, sizeof(short)*m_lwlen);
 
 	m_G_value = build_g_value_table();
 	return 0;
@@ -208,7 +191,7 @@ void G_calculate::NoiseEstimation(int blockInd)
 {
 	int p;
 	int L;
-	//??????????????10????????????????????????????L???????????????????????????????????????????????
+	// for the first 10 frames use a smaller L to speed up noise tracking
 	if (blockInd >= 10) {
 		L = 50;
 	}
@@ -216,7 +199,7 @@ void G_calculate::NoiseEstimation(int blockInd)
 		L = 1;
 		if (blockInd == 0) {
 			for (int i = 0; i <= m_linc; i++) {
-				m_init_S[i] = m_abs_Y[i];  //?????????????????????????????????????????
+				m_init_S[i] = m_abs_Y[i];  // initialize from the first frame magnitudes
 				m_init_S_min[i] = m_init_S[i];
 				m_init_S_tmp[i] = m_init_S[i];
 				m_lamda_d[i] = m_init_S[i];
@@ -235,7 +218,7 @@ void G_calculate::NoiseEstimation(int blockInd)
 	for (int k = 0; k <= m_linc; k++)
 	{
 		m_init_S[k] = (m_init_S[k] >> 1) + (m_init_S[k] >> 2) + (m_init_S[k] >> 4) + (m_abs_Y[k] >> 3) + (m_abs_Y[k] >> 4);
-		m_init_S_min[k] = min(m_init_S_min[k], m_init_S[k]);   // ????????????L??????????????????????????????????????????????????????????
+		m_init_S_min[k] = min(m_init_S_min[k], m_init_S[k]);   // parameter L sets the resolution of the local-minimum search
 		m_init_S_tmp[k] = min(m_init_S_tmp[k], m_init_S[k]);
 
 		if (m_init_S[k] > (m_init_S_min[k] >> 2) + (m_init_S_min[k] << 1))
@@ -255,12 +238,12 @@ void G_calculate::SpeechAbsenceEstm()
 	int p_frame, mu, cosen_peak;
 	short old_cosen_frame = 0, cosen_frame = 0;
 
-	for (int k = 0; k <= (m_linc + m_w_global); k++) {   //??????????????????????????????????
+	for (int k = 0; k <= (m_linc + m_w_global); k++) {   // needed by the calculations below
 		m_cosen[k] = (m_old_cosen[k] >> 1) + (m_old_cosen[k] >> 2) + (m_E_pr_SNR[k] >> 2);
 	}
 
 	for (int k = 0; k <= m_linc; k++) {
-		if (k <= m_w_global - 1) {  // ??????????????????????????????????
+		if (k <= m_w_global - 1) {  // special-case the frame edge bins (head and tail)
 			m_cosen_global[k] = m_cosen[k];
 			if (k == 0)
 				m_cosen_local[k] = m_cosen[k];
@@ -278,7 +261,7 @@ void G_calculate::SpeechAbsenceEstm()
 		if (m_cosen_local[k] <= m_cosen_min)   //% (25)
 			m_plocal[k] = 0;
 		else if (m_cosen_local[k] >= m_cosen_max)
-			m_plocal[k] = m_num_mag_pow; //????????????????10000??????
+			m_plocal[k] = m_num_mag_pow; // scaled by the fixed-point factor (nominally 10000x)
 		else
 			m_plocal[k] = m_num_mag_pow2 * (log(m_cosen_local[k]) - log(m_cosen_min)) / m_cosen_max_min;
 
@@ -308,7 +291,7 @@ void G_calculate::SpeechAbsenceEstm()
 			p_frame = m_num_mag_pow;
 		else
 		{
-			p_frame = mu;  //????????????????????  ????????????????????????????????????????????????????????????
+			p_frame = mu;  // rarely taken; for extremely poor SNR conditions
 		}
 	}
 	else
@@ -328,7 +311,7 @@ short G_calculate::G_calculate_process(Complex_num* winData, int blockInd) {  //
 
 	int post_temp, w = 8;
 	for (int i = 0; i <= m_linc + w; i++) {
-		m_abs_Y[i] = sqrt(pow(winData[i].real, 2) + pow(winData[i].imag, 2));  //m_abs_Y????????????2^6??????
+		m_abs_Y[i] = sqrt(pow(winData[i].real, 2) + pow(winData[i].imag, 2));  // m_abs_Y is scaled up by 2^6
 		m_EN_cos[i] = ((__int64)winData[i].real << 12) / (1 > m_abs_Y[i] ? 1 : m_abs_Y[i]);
 		m_EN_sin[i] = ((__int64)winData[i].imag << 12) / (1 > m_abs_Y[i] ? 1 : m_abs_Y[i]);
 	}
@@ -339,7 +322,7 @@ short G_calculate::G_calculate_process(Complex_num* winData, int blockInd) {  //
 		m_E_pr_SNR[i] = min<int>(max<int>((m_pr_SNR[i] >> 1) + (m_pr_SNR[i] >> 2) + (m_pr_SNR[i] >> 3) + (post_temp >> 3), m_snpramin), 4096 << m_amp_para_double);
 		m_E_pr_SNR[m_lwlen - i] = m_E_pr_SNR[i];                                                // 0.0001 * (2^24=16777216) =1678  167772 
 		m_v[i] = max<__int64>(min<__int64>((__int64)((__int64)m_E_pr_SNR[i] * m_post_SNR[i] << 10) / (m_num_mag_pow + m_E_pr_SNR[i]), 15 << 24), 1678);
-		m_integra[i] = expintpow_solution(m_v[i]);  // ??????????????????????14??????  =exp(expint(v)/2)
+		m_integra[i] = expintpow_solution(m_v[i]);  // return value in Q14, = exp(expint(v)/2)
 		m_Gh1[i] = min<int>((__int64)m_E_pr_SNR[i] * m_integra[i] / (m_num_mag_pow + m_E_pr_SNR[i]), 70 << 14);
 	}
 	SpeechAbsenceEstm();
@@ -351,15 +334,14 @@ short G_calculate::G_calculate_process(Complex_num* winData, int blockInd) {  //
 			/ (m_num_mag_pow - m_q[i]));*/
 		m_pp[i] = min(m_num_mag_pow2 / m_arr_temp[i], 1 << 14);
 		m_G[i] = Gvalue_solution(m_Gh1[i], m_pp[i]); // Gh1^pp * 0.003^(1-pp)<<14
-		//m_G[i] = pow((double)m_Gh1[i] / 16384, (double)m_pp[i] / 16384) * 16384* pow(0.003, (1 - (double)m_pp[i] / 16384));  //??????16??????14
+		//m_G[i] = pow((double)m_Gh1[i] / 16384, (double)m_pp[i] / 16384) * 16384* pow(0.003, (1 - (double)m_pp[i] / 16384));  // (eq. 16), Q14
 
-		m_M[i] = ((__int64)m_G[i] * m_abs_Y[i]) >> m_amp_para_double;  //????????
+		m_M[i] = ((__int64)m_G[i] * m_abs_Y[i]) >> m_amp_para_double;  // magnitude
 		winData[i].real = ((__int64)m_M[i] * m_EN_cos[i]) >> 12; 
 		winData[i].imag = ((__int64)m_M[i] * m_EN_sin[i]) >> 12;
 		m_pr_SNR[i] = min<int>(pow((__int64)m_M[i] * m_num_mag / (1 > m_lamda_d[i] ? 1 : m_lamda_d[i]), 2), 4096 << m_amp_para_double);  // 10000
 		winData[m_lwlen - i].real = winData[i].real;
 		winData[m_lwlen - i].imag = -winData[i].imag;
-		aa[i] = m_G[i];
 	}
 	
 	return 0;
@@ -372,18 +354,9 @@ G_calculate::~G_calculate()
 		delete[] m_arr_temp;
 		m_arr_temp = NULL;
 	}
-	if (!m_S_f) {
-		delete[] m_S_f;
-		m_S_f = NULL;
-	}
-
 	if (!m_abs_Y) {
 		delete[] m_abs_Y;
 		m_abs_Y = NULL;
-	}
-	if (!m_dataBuf) {
-		delete[] m_dataBuf;
-		m_dataBuf = NULL;
 	}
 	if (!m_init_S) {
 		delete[] m_init_S;
@@ -448,10 +421,6 @@ G_calculate::~G_calculate()
 		m_M = NULL;
 	}
 
-	if (!m_ns_storage) {
-		delete[] m_ns_storage;
-		m_ns_storage = NULL;
-	}
 	if (!m_cosen_local) {
 		delete[] m_cosen_local;
 		m_cosen_local = NULL;
@@ -479,14 +448,6 @@ G_calculate::~G_calculate()
 	if (!m_old_cosen) {
 		delete[] m_old_cosen;
 		m_old_cosen = NULL;
-	}
-	if (!m_int_value) {
-		delete[] m_int_value;
-		m_int_value = NULL;
-	}
-	if (!m_expsub_value) {
-		delete[] m_expsub_value;
-		m_expsub_value = NULL;
 	}
 	if (!m_lamda_d) {
 		delete[] m_lamda_d;

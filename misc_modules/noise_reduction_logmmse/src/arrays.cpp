@@ -1,5 +1,3 @@
-#define _USE_MATH_DEFINES
-
 #include "arrays.h"
 #include <fftw3.h>
 

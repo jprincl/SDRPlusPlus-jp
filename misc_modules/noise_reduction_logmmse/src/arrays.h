@@ -1,11 +1,7 @@
 #pragma once
 #include <memory>
 #include <vector>
-
-#ifdef WIN32
-#define _USE_MATH_DEFINES
 #include <math.h>
-#endif
 
 #include "dsp/block.h"
 

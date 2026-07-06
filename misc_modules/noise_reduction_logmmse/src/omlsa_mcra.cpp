@@ -7,7 +7,7 @@
 namespace dsp {
 
     void omlsa_mcra::reset() {
-        dtr = std::make_shared<Datablock_Read>(sampleRate, 1, 10000);
+        dtr = std::make_shared<Datablock_Read>(sampleRate, 10000);
     }
 
     int omlsa_mcra::blockSize() {

@@ -1,28 +1,25 @@
 #include <math.h>
 #include "Datablock_Read.h"
-#include "head.h"
 using namespace std;
 
-Datablock_Read::Datablock_Read(int sample_rate,short channels,int MaxDataLen)
+Datablock_Read::Datablock_Read(int sample_rate,int MaxDataLen)
 {
-	m_channels = channels;
 	m_sample_rate = sample_rate;
 	m_derr_code=Initial(MaxDataLen);
 }
 
 short Datablock_Read::Initial(int MaxDataLen) {
 	m_maxdata = MaxDataLen;
-	if (m_sample_rate < 23000)	//??????????23K
+	if (m_sample_rate < 23000)	// sample rate below 23 kHz
 	{
 		m_wlen = 256;
-		m_inc = 128;  //??????4??????
+		m_inc = 128;  // frame length is a power of 4
 	}
 	else {
 		m_wlen = 1024;
 		m_inc = 512;
 	}
 	m_wlen15 = m_wlen +(m_wlen>>1);
-	m_inc2 = m_inc <<1;
 
 	m_inc_move = log(m_inc) / log(2);
 
@@ -42,10 +39,6 @@ short Datablock_Read::Initial(int MaxDataLen) {
 	if (!m_process_storage) {
 		return -55;
 	}
-	m_buffer = new short[m_wlen15];
-	if (!m_buffer) {
-		return -56;
-	}
 	m_data_out = new short[m_wlen15];
 	if (!m_data_out) {
 		return -57;
@@ -61,7 +54,6 @@ short Datablock_Read::Initial(int MaxDataLen) {
 	m_blockInd = 0;
 	short m_ierr_code = LSA.Initialize(m_wlen15); //15--49
 	if (m_ierr_code < 0)return m_ierr_code;
-	//My_fft->initial(m_wlen); //	FFT??????  ????????
 	return 0;
 }
 
@@ -70,51 +62,37 @@ short Datablock_Read::Data_procese(short* pInBuffer, short* pOutBuffer,int read_
 	if (pInBuffer == NULL)return -50;
 	if (pOutBuffer == NULL)return -51;
 
-	if (m_channels == 2)
-		read_length = (read_length >> 1);
-	int current_total_data = read_length + m_data_rest_length;  // ????????????????
+	int current_total_data = read_length + m_data_rest_length;  // total samples after prepending the carry-over
 
-	if (current_total_data < m_wlen15) {	//  ????????????
-		if(m_channels==1)
+	if (current_total_data < m_wlen15) {	// less than one full frame of data
 		memcpy(m_data_storage + m_data_rest_length, pInBuffer, (read_length) * sizeof(short));
-		else if (m_channels == 2) {
-			for (int i = 0; i < read_length; i++) 
-				m_data_storage[i + m_data_rest_length] = (pInBuffer[i << 1] + pInBuffer[(i << 1) + 1]) >> 1;
-		}
 
 		Out_Length = 0;
 		m_data_rest_length = current_total_data;
 	}
 	else {
-	// ????????  ????????????????????
-	// ??????????????????
+	// merge the data, accounting for the stored first-frame carry-over
+	// first copy in the carried-over samples
 	memcpy(m_data_resize, m_data_storage, (m_data_rest_length) * sizeof(short));
-	// ????????????????
-	if (m_channels == 1){
-		memcpy(m_data_resize + m_data_rest_length, pInBuffer, read_length * sizeof(short));
-	}
-	else if (m_channels == 2) {
-		for (int i = 0; i < read_length; i++) {
-			m_data_resize[i + m_data_rest_length] = (pInBuffer[i << 1] + pInBuffer[(i << 1) + 1]) >> 1;   //2^15
-		}
-	}
+	// then append the newly read samples
+	memcpy(m_data_resize + m_data_rest_length, pInBuffer, read_length * sizeof(short));
 
- 	int data_use = 0;				 // ????????????????????????????????-??????????
-	int current_frame = ((current_total_data - m_wlen) >> m_inc_move) + 1;  // ??????????????????????
-	//????????????????  ??????????????????
+ 	int data_use = 0;				 // samples already consumed, counted at frame starts
+	int current_frame = ((current_total_data - m_wlen) >> m_inc_move) + 1;  // number of frames the current data can form
+	// round the frame count down to even; the odd remainder is carried over
 	current_frame = (current_frame | 1) - 1;
 
-	m_data_rest_length = current_total_data -( current_frame*m_inc);  // ???????????? ??????????
-	Out_Length = current_frame * m_inc;	  // ????????????
+	m_data_rest_length = current_total_data -( current_frame*m_inc);  // update the carry-over: samples past the last frame
+	Out_Length = current_frame * m_inc;	  // output length of this segment
 
 	for (int k = 0; k < current_frame-1; k+=2, m_blockInd+=2){
-		memcpy(m_data_in, m_data_resize + data_use, m_wlen15 * sizeof(short)); //????
+		memcpy(m_data_in, m_data_resize + data_use, m_wlen15 * sizeof(short)); // split into frames
 		memset(m_data_out, 0, sizeof(short)*m_wlen15);
 		m_derr_code=LSA.Denoise_process(m_data_in, m_data_out, m_blockInd);
 
 		if (m_derr_code < 0) return m_derr_code;
-		//??????????????????????
- 		int block_inc = k * m_inc;  //????????????
+		// output: the two overlap-added frames
+ 		int block_inc = k * m_inc;  // current position within the segment
 		if (current_frame == 2) {   
 			for (int i = 0; i < m_inc; i++) {
 				m_DoubDataBuffer[block_inc + i] += m_data_out[i];
@@ -139,28 +117,18 @@ short Datablock_Read::Data_procese(short* pInBuffer, short* pOutBuffer,int read_
 					m_process_storage[i] = m_data_out[i + m_wlen];
 				}
 			}
-			else {   //????????
+			else {   // middle frames of the segment
 				for (int i = 0; i < m_wlen15; i++) {
 					m_DoubDataBuffer[block_inc + i] += m_data_out[i];
 				}
 			}
 		}
-		if (m_channels == 1) {
-			for (int i = 0; i < Out_Length; i++) {
-				pOutBuffer[i] = m_DoubDataBuffer[i];
-			}
-		}
-		else if (m_channels == 2){
-			for (int i = 0; i < Out_Length; i++) {
-				pOutBuffer[i << 1] = m_DoubDataBuffer[i];
-				pOutBuffer[(i << 1) + 1] = m_DoubDataBuffer[i];  //?????????? 
-			}
+		for (int i = 0; i < Out_Length; i++) {
+			pOutBuffer[i] = m_DoubDataBuffer[i];
 		}
 		data_use += m_wlen;
 	}
-	if (m_channels == 2)
-		Out_Length = Out_Length << 1;  
-	//????????????   
+	// store the residual samples
 	memcpy(m_data_storage, m_data_resize + data_use, (m_data_rest_length) * sizeof(short));
 	memset(m_DoubDataBuffer, 0, (m_maxdata + m_wlen) * sizeof(short));
 	}
@@ -181,10 +149,6 @@ Datablock_Read::~Datablock_Read()
 	if (!m_data_resize) {
 		delete[] m_data_resize;
 		m_data_resize = NULL;
-	}
-	if (!m_buffer) {
-		delete[] m_buffer;
-		m_buffer = NULL;
 	}
 	if (!m_DoubDataBuffer) {
 		delete[] m_DoubDataBuffer;

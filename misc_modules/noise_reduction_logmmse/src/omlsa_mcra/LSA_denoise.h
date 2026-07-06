@@ -1,9 +1,5 @@
 #pragma once
 #include "base4_fft.h"
-#include "head.h"
-#include <iostream>
-#include <fstream>
-#include "Cordic.h"
 #include "G_calculate.h"
 
 using namespace std;
