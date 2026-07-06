@@ -27,9 +27,6 @@ https://github.com/chiaraberti13/SDRPlusPlus
 Chinese version BG5JRE, localization?
 https://github.com/nkxingxh/SDRPlusPlus-CHS
 
-Windows Arm64EC build
-https://github.com/fluid41/SDRPlusPlus
-
 IMGUI update to support OpenGL 3.0 correctly https://github.com/AlexandreRouma/SDRPlusPlus/issues/1430
 https://github.com/sdekrijger/SDRPlusPlus
 
@@ -41,9 +38,6 @@ https://github.com/cariboulabs/SDRPlusPlus
 
 Baseband sink
 https://github.com/SatDump/SDRPlusPlus
-
-Radiosonde
-https://github.com/jethrocarr/SDRPlusPlus
 
 PlutoSDR tweaks, 17 stars
 https://github.com/F5OEO/SDRPlusPlus
@@ -96,11 +90,10 @@ https://github.com/cropinghigh/sdrpp-dvbs-demodulator
 https://github.com/d3cker/sdrppcontroller
 https://github.com/OttoPattemore/shortwave-station-list-sdrpp
 https://github.com/gerner/sdrpp-rigsync
-https://github.com/gerner/sdrpp-spots
 https://github.com/F4JTV/sdrpp_cospas_sarsat
 https://github.com/BlackDuke07/sdrpp-spyglass
 https://github.com/comparchitect/sdrpp-pico-panel
-https://github.com/pwnderpants/sdrpp-noise-reduction
+https://github.com/pwnderpants/sdrpp-noise-reduction uses https://github.com/pwnderpants/sdrpp-noise-reduction/tree/main/src/sdrpp_noise_reduction over UDP
 https://github.com/srgkmv/sdrpp-micron-source
 https://github.com/srgkmv/sdrpp-libresdr-source
 
@@ -122,9 +115,10 @@ https://github.com/AlexandreRouma/SDRPlusPlus/issues/1752
 https://github.com/rickmark/SDRPlusPlus/commit/348e2b157fa5b8be21103d23360164c88b47031e
 
 
-Windows ARM64 (partial) support, integrated
-https://github.com/fluid41/SDRPlusPlus/commit/19e31e03c06df8aa95ad0ec23c06ff3d79e015e7
-
+integrated:
+Windows ARM64 https://github.com/fluid41/SDRPlusPlus/commit/19e31e03c06df8aa95ad0ec23c06ff3d79e015e7
+Radiosonde https://github.com/jethrocarr/SDRPlusPlus
+Spots https://github.com/gerner/sdrpp-spots
 
 ===========================================================================
 libcurl integration

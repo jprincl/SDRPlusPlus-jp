@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.2.2-beta - 2026-07-06
+
+### Added
+
+- Frequency manager: merged the improvements from [`bookmark_manager`](https://github.com/darauble/bookmark_manager) by @darauble (Darau Ble), with contributions by @daviderud (Davide Rovelli), directly into the stock frequency manager module (the config format stays backward compatible): waterfall labels arranged in up to 10 rows with overlap avoidance, per-list colors, text-only and flag-style label options, UTC start/end times and week days per bookmark with off-air greying (UTC helpers from `shortwave-station-list-sdrpp` by Otto Pattemore), notes and geo info fields, a sortable bookmark table, click-to-select of waterfall labels, and moving bookmarks between lists. Several issues found in the original were fixed during the merge (crash on malformed list color, buffer overflows on long imported strings and malformed `days` arrays, stale label hit-testing, new bookmarks ignoring the selected target list, and a crash on malformed import files).
+- IF noise reduction (LogMMSE/OMLSA) module, ported from SDRPlusPlusBrown by @sannysanoff.
+
+### Changed
+
+- IF noise reduction hardening and refactoring after the port: crash safety and correct attach/detach to the IF chain, TX and samplerate awareness, removal of debug scaffolding and dead code, value-semantics arrays with a trimmed API and opt-in buffer recycling, a generated `expn()` lookup table replacing the hardcoded one, and UI polish.
+- Const correctness fixes of `dsp::complex_t`.
+- CI: Android Debug APKs are now opt-in and the Build Android workflow can be triggered manually (`workflow_dispatch`).
+
+### Fixed
+
+- IF noise reduction: fixed a buffer overflow in `logmmse_all()` output with large IF bandwidths and an out-of-bounds read in the `expn()` lookup.
+
 ## v1.2.2-alpha4 - 2026-07-04
 
 ### Added
