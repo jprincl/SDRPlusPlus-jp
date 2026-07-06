@@ -24,14 +24,6 @@ namespace dsp {
         using base_type = Processor<complex_t, complex_t>;
 
     public:
-        IFNRLogMMSE() {
-            params.forceWideband = true;
-        }
-
-        void init(stream<complex_t>* in) override {
-            base_type::init(in);
-        }
-
         void setInput(stream<complex_t>* in) override {
             if (!_block_init) {
                 init(in);
@@ -45,15 +37,10 @@ namespace dsp {
         ComplexArray worker1c;
         int freq = 192000;
         LogMMSE::SavedParamsC params;
-        std::mutex freqMutex;
 
         void doStart() override {
             base_type::doStart();
             shouldReset = true;
-        }
-
-        void setHold(bool hold) {
-            params.hold = hold;
         }
 
         void setDisableCpuDeactivation(bool disable) {
@@ -68,7 +55,7 @@ namespace dsp {
         void process(complex_t* in, int count, complex_t* out, int& outCount) {
             // Detect sample rate / decimation changes: the noise profile is
             // only valid for the rate it was sampled at.
-            int curFreq = (params.forceSampleRate != 0) ? params.forceSampleRate : (int)sigpath::iqFrontEnd.getSampleRate();
+            int curFreq = (int)sigpath::iqFrontEnd.getSampleRate();
             if (curFreq != freq) { shouldReset = true; }
             if (shouldReset) {
                 flog::debug("Resetting IF NR LogMMSE");
@@ -88,18 +75,16 @@ namespace dsp {
                 outCount = 0;
                 return;
             }
-            freqMutex.lock();
             if (params.Xk_prev.empty()) {
                 flog::debug("IF NR LogMMSE: sampling noise profile");
-                LogMMSE::logmmse_sample(worker1c, freq, 0.15f, &params, noiseFrames);
+                LogMMSE::logmmse_sample(worker1c, freq, &params, noiseFrames);
             }
 
             // logmmse_all() can flush a large startup/backlog burst. Bound one
             // pass so we never write past the fixed stream buffer: with
             // Slen >= fram * 2 the output is at most maxInput - Slen samples.
             int maxProcessInput = STREAM_BUFFER_SIZE + (fram * 2);
-            auto rv = LogMMSE::logmmse_all(worker1c, freq, 0.15f, &params, maxProcessInput);
-            freqMutex.unlock();
+            auto rv = LogMMSE::logmmse_all(worker1c, &params, maxProcessInput);
 
             int limit = (int)rv.size();
             auto dta = rv.data();

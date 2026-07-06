@@ -17,28 +17,10 @@ namespace dsp {
     // outputs mono (L copied to R). Passthrough while `allowed` is off, while
     // accumulating less than one OMLSA block, or after a fatal init failure.
     struct AFNR_OMLSA_MCRA : public Processor<stereo_t, stereo_t> {
-        using base_type = Processor<stereo_t, stereo_t>;
         bool failed = false;
         dsp::omlsa_mcra omlsa_mcra;
         std::vector<stereo_t> buffer;
         bool allowed = false;
-        bool allowed2 = true;       // just convenient for various conditions
-
-        void init(stream<stereo_t>* in) override {
-            base_type::init(in);
-        }
-
-        void setInput(stream<stereo_t>* in) override {
-            base_type::setInput(in);
-        }
-
-        void start() override {
-            block::start();
-        }
-
-        void stop() override {
-            block::stop();
-        }
 
         // Audio rate of the AF chain this block sits in. Written by the UI
         // thread (from SinkManager), applied lazily in the DSP thread so the
@@ -53,7 +35,7 @@ namespace dsp {
         float scaled = 32767.0;      // amplitude shaper
 
         void process(stereo_t *readBuf, int count, stereo_t *writeBuf, int &wrote) {
-            if (!allowed || !allowed2 || failed) {
+            if (!allowed || failed) {
                 std::copy(readBuf, readBuf+count, writeBuf);
                 wrote = count;
                 buffer.clear();

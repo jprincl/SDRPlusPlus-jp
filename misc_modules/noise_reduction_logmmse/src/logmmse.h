@@ -4,8 +4,7 @@
 #include "math.h"
 #include "bgnoise.h"
 #include <utils/flog.h>
-#include <algorithm>
-#include <array>
+#include <cstring>
 #include <deque>
 #include <utility>
 
@@ -37,10 +36,6 @@ namespace dsp {
                 FloatArray noise_mu2;
                 FloatArray Xk_prev;   // empty until logmmse_sample() has run
                 ComplexArray x_old;
-                bool forceAudio = false;
-                bool forceWideband = false;
-                int forceSampleRate = 0;
-
 
                 int Slen;
                 int PERC;
@@ -51,13 +46,8 @@ namespace dsp {
                 std::shared_ptr<FFTPlan> forwardPlan;
                 std::shared_ptr<FFTPlan> reversePlan;
                 float aa = 0.98;
-                float mu = 0.98;
                 float ksi_min;
                 bool hold = false;
-                long long generation = 0;
-                float mindb = 0;
-                float maxdb = 0;
-                bool stable = false;
 
                 void reset() {
                     noise_history.clear();
@@ -65,8 +55,6 @@ namespace dsp {
                     Xk_prev.clear();
                     noise_mu2.clear();
                     x_old.clear();
-                    generation = 0;
-                    stable = false;
                     backgroundNoiseCalculator.reset();
                 }
 
@@ -108,96 +96,42 @@ namespace dsp {
 
                 BackgroundNoiseCalculator backgroundNoiseCalculator;
 
-                void update_noise_mu2(const ComplexArray &x) {
+                void update_noise_mu2() {
                     auto nframes = noise_history.size();
-                    bool audioFrequency = nFFT < 1200;
-                    if (forceAudio) audioFrequency = true;
-                    if (forceWideband) audioFrequency = false;
-
                     if (nframes > 100 && !hold) {
-                        if (audioFrequency) {
+                        auto noise_mu2_copy = noise_mu2;
 
-                            // recalculate noise floor
-                            if (generation > 0) {
-                                auto tnm = npzeros(nFFT);
-                                auto lower = tnm.data();
-                                const int nlower = 12;
-                                int ix = 0;
-                                for(auto &it: noise_history) {
-                                    if (ix >= nframes - nlower) {
-                                        auto nhFrame = it.data();
-                                        for (auto w = 0; w < nFFT; w++) {
-                                            lower[w] += nhFrame[w];
-                                        }
-                                    }
-                                    ix++;
-                                }
-                                for (auto w = 0; w < nFFT; w++) {
-                                    lower[w] /= nlower;
-                                    lower[w] *= lower[w];
-                                }
-                                auto tnoise_mu2 = npmavg(tnm, 6);
-                                auto tmindb = *std::min_element(tnoise_mu2.begin(), tnoise_mu2.end());
-                                auto tmaxdb = *std::max_element(tnoise_mu2.begin(), tnoise_mu2.end());
-                                if (tmindb + tmaxdb < mindb + maxdb) {
-                                    mindb = tmindb;
-                                    maxdb = tmaxdb;
-                                    noise_mu2 = std::move(tnm);
-                                    stable = true;
-                                }
+                        auto noiseAvg = mul(sums, 1 / (float)nframes);
+
+                        auto hi = mul(devs, 1 / (float)nframes);
+                        auto devSquare = muleach(hi, hi);
+                        auto devSquareD = devSquare.data();
+                        for (int z = 0; z < nFFT; z++) {
+                            if (abs(z - nFFT/2) < nFFT * 15 / 100) {
+                                // after fft, rightmost and leftmost sides of real frequencies range are at the center of the resulting table.
+                                // We exclude middle of the table from lookup
+                                devSquareD[z] = BackgroundNoiseCalculator::ERASED_SAMPLE;
                             }
-
-                            if (!stable) {
-
-                                // scale the noise figure
-                                if (generation == 0) {
-                                    auto tnoise_mu2 = npmavg(noise_mu2, 6);
-                                    mindb = *std::min_element(tnoise_mu2.begin(), tnoise_mu2.end());
-                                    maxdb = *std::max_element(tnoise_mu2.begin(), tnoise_mu2.end());
-                                    flog::debug("logmmse: inited noise floor: {}", mindb);
-                                }
-
+                        }
+                        memset(noise_mu2.data(), 0, nFFT*sizeof(float));
+                        float detectedNoise = backgroundNoiseCalculator.addFrame(devSquare);
+                        auto acceptible_stdev = detectedNoise;
+                        auto nmu2 = noise_mu2.data();
+                        auto navg =  noiseAvg.data();
+                        for(int q=0; q < nFFT; q++) {
+                            if (devSquareD[q] < acceptible_stdev) {
+                                nmu2[q] = navg[q] * navg[q];
                             }
-                            generation++;
-                        } else {
+                        }
 
-                            auto noise_mu2_copy = noise_mu2;
-
-                            auto noiseAvg = mul(sums, 1 / (float)nframes);
-
-
-                            auto hi = mul(devs, 1 / (float)nframes);
-                            auto devSquare = muleach(hi, hi);
-                            auto devSquareD = devSquare.data();
-                            for (int z = 0; z < nFFT; z++) {
-                                if (abs(z - nFFT/2) < nFFT * 15 / 100) {
-                                    // after fft, rightmost and leftmost sides of real frequencies range are at the center of the resulting table.
-                                    // We exclude middle of the table from lookup
-                                    devSquareD[z] = BackgroundNoiseCalculator::ERASED_SAMPLE;
-                                }
-                            }
-                            memset(noise_mu2.data(), 0, nFFT*sizeof(float));
-                            float detectedNoise = backgroundNoiseCalculator.addFrame(devSquare);
-                            auto acceptible_stdev = detectedNoise;
-                            auto nmu2 = noise_mu2.data();
-                            auto navg =  noiseAvg.data();
-                            for(int q=0; q < nFFT; q++) {
-                                if (devSquareD[q] < acceptible_stdev) {
-                                    nmu2[q] = navg[q] * navg[q];
-                                }
-                            }
-
-                            if (!linearInterpolateHoles(nmu2, nFFT)) {
-                                noise_mu2 = std::move(noise_mu2_copy);
-                            }
-
-
-                        }  // end if audio frequency
+                        if (!linearInterpolateHoles(nmu2, nFFT)) {
+                            noise_mu2 = std::move(noise_mu2_copy);
+                        }
                     }
                 }
             };
 
-            static void logmmse_sample(const ComplexArray &x, int Srate, float eta, SavedParamsC *params, int noise_frames) {
+            static void logmmse_sample(const ComplexArray &x, int Srate, SavedParamsC *params, int noise_frames) {
                 params->Slen = floor(0.02 * Srate);
                 if (params->Slen % 2 == 1) params->Slen++;
                 params->PERC = 50;
@@ -205,9 +139,6 @@ namespace dsp {
                 params->noise_history.clear();
                 params->dev_history.clear();
                 params->len2 = params->Slen - params->len1;         // len1+len2
-                auto audioFrequency = Srate <= 24000;
-                if (params->forceAudio) audioFrequency = true;
-                if (params->forceWideband) audioFrequency = false;
                 params->win = nphanning(params->Slen);
                 params->win = div(mul(params->win, params->len2), npsum(params->win));
                 params->nFFT = 2 * params->Slen;
@@ -225,9 +156,7 @@ namespace dsp {
                     params->add_noise_history(std::move(noise));
                 }
                 params->noise_mu2 = div(noise_mean, noise_frames);
-                if (!audioFrequency) {
-                    params->noise_mu2 = npmavg(params->noise_mu2, 120);
-                }
+                params->noise_mu2 = npmavg(params->noise_mu2, 120);
                 params->noise_mu2 = muleach(params->noise_mu2, params->noise_mu2);
                 params->Xk_prev = npzeros(params->len1);
                 params->x_old = npzeros_c(params->len1);
@@ -236,13 +165,13 @@ namespace dsp {
 
             // maxInput caps how much of x is consumed in one pass (-1 = all of it),
             // so a large backlog can be drained in bounded chunks without copying.
-            static ComplexArray logmmse_all(const ComplexArray &x, int Srate, float eta, SavedParamsC *params, int maxInput = -1) {
+            static ComplexArray logmmse_all(const ComplexArray &x, SavedParamsC *params, int maxInput = -1) {
                 int inputLen = (int)x.size();
                 if (maxInput >= 0 && maxInput < inputLen) {
                     inputLen = maxInput;
                 }
                 auto Nframes = floor(inputLen / params->len2) - floor(params->Slen / params->len2);
-                params->update_noise_mu2(x);
+                params->update_noise_mu2();
                 auto xfinal = npzeros_c(Nframes * params->len2);
                 for (int k = 0; k < Nframes * params->len2; k += params->len2) {
                     auto insign = muleach(params->win, nparange(x, k, k + params->Slen));
