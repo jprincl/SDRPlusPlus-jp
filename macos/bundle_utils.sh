@@ -22,6 +22,7 @@ bundle_is_not_to_be_installed() {
     if [ "$1" = "CoreAudio" ]; then echo 1; fi
     if [ "$1" = "AudioToolbox" ]; then echo 1; fi
     if [ "$1" = "AudioUnit" ]; then echo 1; fi
+    if [ "$1" = "AVFoundation" ]; then echo 1; fi
     if [ "$1" = "libobjc.A.dylib" ]; then echo 1; fi
     if [ "$1" = "CFNetwork" ]; then echo 1; fi
     if [ "$1" = "SystemConfiguration" ]; then echo 1; fi
@@ -217,15 +218,31 @@ bundle_create_plist() {
     echo '        <key>CFBundleSignature</key><string>'$5'</string>' >> $8
     echo '        <key>CFBundleExecutable</key><string>'$6'</string>' >> $8
     echo '        <key>CFBundleIconFile</key><string>'$7'</string>' >> $8
+    # macOS 10.14+ gates ALL audio input (including sound-card sources like the
+    # QMX/QDX IQ stream) behind the microphone TCC permission. Without this
+    # usage string macOS cannot present the consent prompt, so the input stream
+    # silently delivers zeros (empty waterfall). Applies to any audio-input
+    # capture in this bundle, not just QMX.
+    echo '        <key>NSMicrophoneUsageDescription</key><string>SDR++ needs microphone access to capture the IQ audio stream from sound-card SDR devices such as the QMX/QDX.</string>' >> $8
     echo '    </dict>' >> $8
     echo '</plist>' >> $8
 }
 
 bundle_sign() {
-    if [ $# -ne 1 ]; then
-        echo "bundle_sign [bundle_dir]";
+    if [ $# -lt 1 ]; then
+        echo "bundle_sign [bundle_dir] [entitlements_plist]";
         return
     fi
 
-    codesign --force --deep -s - $1
+    BUNDLE_DIR=$1
+    ENTITLEMENTS=$2
+
+    # When an entitlements file is supplied, sign with the hardened runtime so
+    # the microphone (audio-input) entitlement is honored by TCC. Otherwise
+    # fall back to the previous plain ad-hoc signature.
+    if [ -n "$ENTITLEMENTS" ] && [ -f "$ENTITLEMENTS" ]; then
+        codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" -s - "$BUNDLE_DIR"
+    else
+        codesign --force --deep -s - "$BUNDLE_DIR"
+    fi
 }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Grants the hardened runtime the right to open audio-input devices.
+         Required so the microphone (sound-card IQ) capture used by the QMX
+         source is not blocked once the runtime hardening is enabled. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- The bundle ships its own third-party dylibs that are only ad-hoc
+         signed, not signed by the same team identifier as the main binary.
+         Without this exception the hardened runtime would refuse to load
+         them and the app would fail to launch. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

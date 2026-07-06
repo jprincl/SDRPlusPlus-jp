@@ -1,6 +1,7 @@
 #if defined(__APPLE__)
 
 #include "QmxDevice_internal.h"
+#include "MacOSPermissions.h"
 #include "SerialCat.h"
 
 #include <algorithm>
@@ -162,6 +163,25 @@ namespace qmx::detail {
             }
             if (!callback) {
                 error = "No IQ callback supplied";
+                return false;
+            }
+
+            // macOS gates audio input behind the microphone TCC permission.
+            // A HAL input unit opens and starts fine without it, but
+            // AudioUnitRender then only ever yields silence (empty waterfall),
+            // so verify/obtain consent up front and fail loudly otherwise.
+            switch (requestMicrophonePermission()) {
+            case MicrophonePermission::Granted:
+                break;
+            case MicrophonePermission::Denied:
+                error = "Microphone access denied. Allow it for SDR++ under "
+                        "System Settings > Privacy & Security > Microphone, then start the stream again.";
+                return false;
+            case MicrophonePermission::Restricted:
+                error = "Microphone access is restricted by system policy, so the QMX IQ stream cannot be captured.";
+                return false;
+            case MicrophonePermission::NotDetermined:
+                error = "Microphone permission was not granted. Approve the access prompt, then start the stream again.";
                 return false;
             }
 
