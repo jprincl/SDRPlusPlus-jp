@@ -67,39 +67,46 @@ bundle_get_exec_rpaths() {
 
 # bundle_find_full_path [dep_path] [exec_rpaths]
 bundle_find_full_path() {
-    # If path is relative to rpath, find the full path
-    local IS_RPATH_RELATIVE=$(echo $1 | grep @rpath/)
-    if [ "$IS_RPATH_RELATIVE" = "" ]; then
-        echo $1
-        return
-    fi
+    # Absolute (non-@rpath) reference: use it as-is.
+    case "$1" in
+        @rpath/*) ;;
+        *) echo "$1"; return ;;
+    esac
 
-    local RPATH_NEXT=$(echo $1 | cut -c 8-)
+    local RPATH_NEXT=${1#@rpath/}
 
-    # Search in the exec's RPATH
-    echo "$2" | while read -r RPATH; do
-        # If not found, skip
-        if [ ! -f $RPATH/$RPATH_NEXT ]; then
-            continue
+    # Search the binary's own rpaths. NOTE: this must NOT be a
+    # `echo "$2" | while read` pipeline — the pipe runs the loop in a
+    # subshell, so `return` there only exits the subshell and the function
+    # falls through to the final `echo "$1"` below, emitting a second
+    # (spurious) line. Callers capture the output unquoted, so that extra
+    # line word-splits into an extra argument and breaks bundle_install_binary's
+    # `[ $# -ne 3 ]` guard, silently dropping every @rpath dependency from the
+    # bundle. Iterate with a plain `for` over newline-split rpaths instead.
+    local OLDIFS=$IFS
+    IFS='
+'
+    for RPATH in $2; do
+        if [ -f "$RPATH/$RPATH_NEXT" ]; then
+            IFS=$OLDIFS
+            echo "$RPATH/$RPATH_NEXT"
+            return
         fi
-
-        # Correct dep path
-        echo $RPATH/$RPATH_NEXT
-        return -1
     done
+    IFS=$OLDIFS
 
     # Search other common paths
-    if [ -f /usr/local/lib/$RPATH_NEXT ]; then
-        echo /usr/local/lib/$RPATH_NEXT 
+    if [ -f "/usr/local/lib/$RPATH_NEXT" ]; then
+        echo "/usr/local/lib/$RPATH_NEXT"
         return
     fi
-    if [ -f /Library/Frameworks/$RPATH_NEXT ]; then
-        echo /Library/Frameworks/$RPATH_NEXT 
+    if [ -f "/Library/Frameworks/$RPATH_NEXT" ]; then
+        echo "/Library/Frameworks/$RPATH_NEXT"
         return
     fi
 
     # Not found, give up
-    echo $1
+    echo "$1"
 }
 
 # ========================= Public Functions =========================
@@ -157,11 +164,11 @@ bundle_install_binary() {
             continue
         fi
 
-        local DEP_PATH=$(bundle_find_full_path $DEP $RPATHS)
+        local DEP_PATH=$(bundle_find_full_path "$DEP" "$RPATHS")
 
         # If the dependency is not installed, install it
-        if [ ! -f $1/Contents/Frameworks/$DEP_NAME ]; then
-            bundle_install_binary $1 $1/Contents/Frameworks $DEP_PATH
+        if [ ! -f "$1/Contents/Frameworks/$DEP_NAME" ]; then
+            bundle_install_binary "$1" "$1/Contents/Frameworks" "$DEP_PATH"
         fi
 
         # Fix path
