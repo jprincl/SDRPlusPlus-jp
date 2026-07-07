@@ -12,6 +12,7 @@ namespace dsp::demod {
         using base_type = Processor<dsp::complex_t, T>;
     public:
         enum AGCMode {
+            OFF,
             CARRIER,
             AUDIO,
         };
@@ -37,6 +38,8 @@ namespace dsp::demod {
             lpfTaps = taps::lowPass(bandwidth / 2.0, (bandwidth / 2.0) * 0.1, samplerate);
             lpf.init(NULL, lpfTaps);
 
+            audioAgc.setEnabled(_agcMode == AGCMode::AUDIO);
+
             if constexpr (std::is_same_v<T, float>) {
                 audioAgc.out.free();
             }
@@ -50,9 +53,23 @@ namespace dsp::demod {
             assert(base_type::_block_init);
             std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
             base_type::tempStop();
+            // Carry the current gain over so the audio level doesn't jump on a mode switch
+            float gain = (_agcMode == AGCMode::CARRIER) ? carrierAgc.getGain() : audioAgc.getGain();
             _agcMode = agcMode;
-            reset();
+            audioAgc.setEnabled(agcMode == AGCMode::AUDIO);
+            audioAgc.setGain(gain);
             base_type::tempStart();
+        }
+
+        void setAGCGain(float gain) {
+            assert(base_type::_block_init);
+            std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
+            audioAgc.setGain(gain);
+        }
+
+        float getAGCGain() {
+            assert(base_type::_block_init);
+            return (_agcMode == AGCMode::CARRIER) ? carrierAgc.getGain() : audioAgc.getGain();
         }
 
         void setBandwidth(double bandwidth) {
@@ -108,7 +125,7 @@ namespace dsp::demod {
             if constexpr (std::is_same_v<T, float>) {
                 volk_32fc_magnitude_32f(out, (lv_32fc_t*)in, count);
                 dcBlock.process(count, out, out);
-                if (_agcMode == AGCMode::AUDIO) {
+                if (_agcMode != AGCMode::CARRIER) {
                     audioAgc.process(count, out, out);
                 }
                 {
@@ -119,7 +136,7 @@ namespace dsp::demod {
             if constexpr (std::is_same_v<T, stereo_t>) {
                 volk_32fc_magnitude_32f(audioAgc.out.writeBuf, (lv_32fc_t*)in, count);
                 dcBlock.process(count, audioAgc.out.writeBuf, audioAgc.out.writeBuf);
-                if (_agcMode == AGCMode::AUDIO) {
+                if (_agcMode != AGCMode::CARRIER) {
                     audioAgc.process(count, audioAgc.out.writeBuf, audioAgc.out.writeBuf);
                 }
                 {

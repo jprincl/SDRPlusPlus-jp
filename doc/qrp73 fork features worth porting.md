@@ -27,12 +27,20 @@ Port notes: counter made a per-instance member; the hold is sample-count based
 signal reads twice the dB value, so previously saved squelch levels trigger
 differently and need re-adjusting (slider range -100..0 dB still covers it).
 
-### 2. Manual/auto AGC switch for CW/SSB/AM/DSB — small, very relevant to QMX/ham use
+### 2. Manual/auto AGC switch for CW/SSB/AM/DSB — small, very relevant to QMX/ham use — **PORTED 2026-07-07**
 Each demodulator gets an AGC on/off checkbox plus a gain slider in dB; in auto mode the
 slider displays the live AGC gain, in manual mode it sets fixed gain. Clean
 implementation: `dsp::demod::SSB/AM/CW` gain `setEnabled`/`setAGCGain`/`getAGCGain`,
 plus ~40 lines of UI per demod header (see their
 `decoder_modules/radio/src/demodulators/usb.h`). Ours only has attack/decay sliders.
+
+Port notes: covers USB/LSB/DSB/CW/CW-R (checkbox + gain slider) and AM
+(Off/Carrier/Audio AGC mode combo, replacing the "Carrier AGC" checkbox; the legacy
+`carrierAgc` config key is migrated to `agcMode`). Unlike qrp73, the
+`dsp::demod::SSB/AM/CW::init()` signatures were kept unchanged (AGC state is applied
+via setters after init) so third-party callers and `vor_receiver` don't break. Attack/
+decay sliders are greyed out in manual mode, the gain slider shows live AGC gain in
+auto mode, and the last AGC gain carries over when switching to manual.
 
 ### 3. file_source format support — self-contained, high interop value
 Their `source_modules/file_source/src/wavreader.h` (252 lines, drop-in replacement

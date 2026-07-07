@@ -2,6 +2,10 @@
 
 ## v1.2.2-beta1 - 2026-07-07
 
+### Added
+
+- Manual/auto AGC switch for the SSB (USB/LSB/DSB), CW/CW-R and AM demodulators, adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: an AGC checkbox with a gain slider in dB (for AM an Off/Carrier/Audio AGC mode selector). In auto mode the slider shows the live AGC gain; in manual mode it sets a fixed gain, with the last AGC gain carried over so the audio level doesn't jump. Manual gain is still clipped to the maximum output amplitude to protect ears and speakers.
+
 ### Changed
 
 - Squelch improvements adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: 1 dB hysteresis when closing and a 100 ms above-threshold hold before unmuting, so the squelch no longer chatters at the threshold or pops open on short noise spikes. The hold is sample-count based in this port, exact at any IF sample rate.

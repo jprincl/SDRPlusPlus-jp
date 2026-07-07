@@ -20,7 +20,25 @@ namespace dsp::loop {
             _maxOutputAmp = maxOutputAmp;
             _initGain = initGain;
             amp = _setPoint / _initGain;
+            _gain = std::min<float>(_initGain, _maxGain);
+            _enabled = true;
             base_type::init(in);
+        }
+
+        float getGain() {
+            return _gain;
+        }
+
+        void setGain(float gain) {
+            assert(base_type::_block_init);
+            std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
+            _gain = gain;
+        }
+
+        void setEnabled(bool enabled) {
+            assert(base_type::_block_init);
+            std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
+            _enabled = enabled;
         }
 
         void setSetPoint(double setPoint) {
@@ -65,12 +83,13 @@ namespace dsp::loop {
             assert(base_type::_block_init);
             std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
             amp = _setPoint / _initGain;
+            _gain = std::min<float>(_initGain, _maxGain);
         }
 
         inline int process(int count, T* in, T* out) {
             for (int i = 0; i < count; i++) {
                 // Get signal amplitude
-                float inAmp, gain;
+                float inAmp;
                 if constexpr (std::is_same_v<T, complex_t>) {
                     inAmp = in[i].amplitude();
                 }
@@ -78,33 +97,40 @@ namespace dsp::loop {
                     inAmp = fabsf(in[i]);
                 }
 
-                // Update average amplitude
-                if (inAmp != 0.0f) {
-                    amp = (inAmp > amp) ? ((amp * _invAttack) + (inAmp * _attack)) : ((amp * _invDecay) + (inAmp * _decay));
-                    gain = std::min<float>(_setPoint / amp, _maxGain);
+                if (_enabled) {
+                    // Update average amplitude
+                    if (inAmp != 0.0f) {
+                        amp = (inAmp > amp) ? ((amp * _invAttack) + (inAmp * _attack)) : ((amp * _invDecay) + (inAmp * _decay));
+                        _gain = std::min<float>(_setPoint / amp, _maxGain);
+                    }
+                    else {
+                        _gain = 1.0f;
+                    }
+
+                    // If clipping is detected look ahead and correct
+                    if (inAmp*_gain > _maxOutputAmp) {
+                        float maxAmp = 0;
+                        for (int j = i; j < count; j++) {
+                            float lookAmp;
+                            if constexpr (std::is_same_v<T, complex_t>) {
+                                lookAmp = in[j].amplitude();
+                            }
+                            if constexpr (std::is_same_v<T, float>) {
+                                lookAmp = fabsf(in[j]);
+                            }
+                            if (lookAmp > maxAmp) { maxAmp = lookAmp; }
+                        }
+                        amp = maxAmp;
+                        _gain = std::min<float>(_setPoint / amp, _maxGain);
+                    }
+
+                    // Scale output by gain
+                    out[i] = in[i] * _gain;
                 }
                 else {
-                    gain = 1.0f;
+                    // Manual mode: fixed gain, clipped to the max output amplitude
+                    out[i] = in[i] * ((inAmp * _gain > _maxOutputAmp) ? (_maxOutputAmp / inAmp) : _gain);
                 }
-
-                // If clipping is detected look ahead and correct
-                if (inAmp*gain > _maxOutputAmp) {
-                    float maxAmp = 0;
-                    for (int j = i; j < count; j++) {
-                        if constexpr (std::is_same_v<T, complex_t>) {
-                            inAmp = in[j].amplitude();
-                        }
-                        if constexpr (std::is_same_v<T, float>) {
-                            inAmp = fabsf(in[j]);
-                        }
-                        if (inAmp > maxAmp) { maxAmp = inAmp; }
-                    }
-                    amp = maxAmp;
-                    gain = std::min<float>(_setPoint / amp, _maxGain);
-                }
-                
-                // Scale output by gain
-                out[i] = in[i] * gain;
             }
             return count;
         }
@@ -129,6 +155,8 @@ namespace dsp::loop {
         float _maxGain;
         float _maxOutputAmp;
         float _initGain;
+        float _gain = 1.0f;
+        bool _enabled = true;
 
         float amp = 1.0;
 

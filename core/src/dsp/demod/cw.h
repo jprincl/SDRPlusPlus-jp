@@ -35,6 +35,23 @@ namespace dsp::demod {
             xlator.setOffset(_tone, _samplerate);
         }
 
+        void setAGCEnabled(bool enabled) {
+            assert(base_type::_block_init);
+            std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
+            agc.setEnabled(enabled);
+        }
+
+        void setAGCGain(float gain) {
+            assert(base_type::_block_init);
+            std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
+            agc.setGain(gain);
+        }
+
+        float getAGCGain() {
+            assert(base_type::_block_init);
+            return agc.getGain();
+        }
+
         void setAGCAttack(double attack) {
             assert(base_type::_block_init);
             std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
