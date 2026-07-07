@@ -25,6 +25,20 @@ sdrpp_register_dep(flac
     DEFAULT_LINKAGE portable:static distro:shared android:static
     USAGE core)
 
+# libopus + libogg are consumed by core's utils/wav writer (recorder Opus
+# audio container: Opus packets framed in Ogg, RFC 7845). Static when bundled,
+# same as flac; distro builds use libopus-dev / libogg-dev (CMake config or
+# opus.pc/ogg.pc pkg-config fallback).
+sdrpp_register_dep(opus
+    DEFAULT_SOURCE  portable:bundled distro:system android:bundled
+    DEFAULT_LINKAGE portable:static distro:shared android:static
+    USAGE core)
+
+sdrpp_register_dep(libogg
+    DEFAULT_SOURCE  portable:bundled distro:system android:bundled
+    DEFAULT_LINKAGE portable:static distro:shared android:static
+    USAGE core)
+
 sdrpp_register_dep(glfw3
     DEFAULT_SOURCE  portable:bundled distro:system android:bundled
     DEFAULT_LINKAGE portable:static distro:shared android:static

@@ -5,7 +5,7 @@ if (COMMAND sdrpp_collect_required_dep_roots)
 endif ()
 
 function(sdrpp_collect_required_dep_roots out_var)
-    set(_deps fftw3 flac libcurl volk zstd)
+    set(_deps fftw3 flac libcurl libogg opus volk zstd)
 
     if (OPT_BACKEND_GLFW)
         list(APPEND _deps glfw3)

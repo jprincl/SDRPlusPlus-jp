@@ -20,7 +20,8 @@ namespace wav {
     enum Format {
         FORMAT_WAV,
         FORMAT_RF64,
-        FORMAT_FLAC
+        FORMAT_FLAC,
+        FORMAT_OPUS
     };
 
     // The recorder persists these as their integer value — append new entries
@@ -51,8 +52,13 @@ namespace wav {
         void setSamplerate(uint64_t samplerate);
         void setFormat(Format format);
         void setSampleType(SampleType type);
+        void setOpusBitrate(int bitrate);
 
         std::string getFileExtension();
+
+        // Opus only accepts these input sample rates (Hz). Other formats
+        // accept any rate.
+        static bool isOpusSamplerateSupported(uint64_t samplerate);
 
         size_t getSamplesWritten() { return samplesWritten; }
 
@@ -73,10 +79,16 @@ namespace wav {
         // into sdrpp_core.
         void* flacEnc = NULL;
 
+        // Ogg-Opus muxer state (opaque OggOpusEncoder defined in wav.cpp).
+        // Keeps the opus/ogg headers out of this header, same reasoning as
+        // flacEnc above.
+        void* opusState = NULL;
+
         int _channels;
         uint64_t _samplerate;
         Format _format;
         SampleType _type;
+        int _opusBitrate = 128000;
         size_t bytesPerSamp;
         double intScale;
 

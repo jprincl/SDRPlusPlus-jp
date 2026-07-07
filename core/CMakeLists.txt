@@ -142,6 +142,18 @@ sdrpp_link_dep(sdrpp_core flac PRIVATE
     PC_NAME      flac
     TARGETS      FLAC::FLAC)
 
+# libopus + libogg back the utils/wav writer's Opus audio recorder (Ogg-Opus
+# container). Same as FLAC: implementation detail of wav::Writer, headers kept
+# out of wav.h, linked PRIVATE.
+sdrpp_link_dep(sdrpp_core opus PRIVATE
+    PACKAGE_NAME Opus
+    PC_NAME      opus
+    TARGETS      Opus::opus)
+sdrpp_link_dep(sdrpp_core libogg PRIVATE
+    PACKAGE_NAME Ogg
+    PC_NAME      ogg
+    TARGETS      Ogg::ogg)
+
 if (NOT ANDROID)
     find_package(OpenGL REQUIRED)
     target_link_libraries(sdrpp_core PUBLIC OpenGL::GL)

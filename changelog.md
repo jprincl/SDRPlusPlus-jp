@@ -10,6 +10,7 @@
 - FFT windows extended from 3 to 7, adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: Rectangular, Hamming, Hann, Blackman, Nuttall, Blackman-Harris 4-term (−92 dB sidelobes) and Blackman-Harris 7-term (−180 dB sidelobes, for spur hunting next to strong carriers).
 
 - Recorder: FLAC container and 24-bit PCM sample type, adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73. FLAC compresses baseband IQ losslessly to roughly half the size (integer sample types only; sample rates up to 1.048 MHz — a libFLAC format limit — with higher rates failing cleanly at record start). Recording uses libFLAC 1.5.0, statically bundled on Windows/Android/macOS/AppImage and the distro package on Linux .deb builds. The MP3 (LAME) recording option from the same fork was not adopted.
+- Recorder: Opus lossy audio recording (`.opus`, Ogg-Opus container), in the spirit of the MP3 option from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73 but using the royalty-free Opus codec instead of MP3. Available for demodulated audio at 8/12/16/24/48 kHz (Opus's native rates), with a bitrate slider (16–256 kbps, default 128). Uses libopus 1.5.2 + libogg 1.3.6, statically bundled on Windows/Android/macOS/AppImage and distro packages on Linux .deb builds.
 
 ### Changed
 

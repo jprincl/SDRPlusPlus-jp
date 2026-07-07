@@ -51,6 +51,9 @@ https://github.com/F5OEO/SDRPlusPlus
 Fobos Agile RX support (RigExpert)
 https://github.com/stenn930/SDRPlusPlus
 
+SDR++++
+https://github.com/Bas-W/SDR4P/branches
+
 Docking layout, updated ImGUI, 1 star
 https://github.com/Zaryob/SDRPlusPlus
 https://github.com/AlexandreRouma/SDRPlusPlus/compare/master...Zaryob:SDRPlusPlus:master

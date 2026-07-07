@@ -48,6 +48,7 @@ public:
         containers.define("WAV", wav::FORMAT_WAV);
         // containers.define("RF64", wav::FORMAT_RF64); // Disabled for now
         containers.define("FLAC", wav::FORMAT_FLAC);
+        containers.define("Opus", wav::FORMAT_OPUS);
 
         // Load default config for option lists
         containerId = containers.valueId(wav::FORMAT_WAV);
@@ -66,6 +67,10 @@ public:
         refreshSampleTypes();
         if (config.conf[name].contains("sampleType") && sampleTypes.keyExists(config.conf[name]["sampleType"])) {
             sampleTypeId = sampleTypes.keyId(config.conf[name]["sampleType"]);
+        }
+        if (config.conf[name].contains("opusBitrate")) {
+            opusBitrate = config.conf[name]["opusBitrate"];
+            opusBitrate = std::clamp<int>(opusBitrate, 16, 256);
         }
         if (config.conf[name].contains("audioStream")) {
             selectedStreamName = config.conf[name]["audioStream"];
@@ -159,10 +164,26 @@ public:
         else {
             samplerate = sigpath::iqFrontEnd.getSampleRate();
         }
+
+        // Opus is a lossy audio codec: baseband IQ (and any non-Opus sample
+        // rate) is unsupported, so reject early with a clear message instead
+        // of failing later in the encoder.
+        if (containers[containerId] == wav::FORMAT_OPUS) {
+            if (recMode != RECORDER_MODE_AUDIO) {
+                flog::error("Opus recording is only available in audio mode");
+                return;
+            }
+            if (!wav::Writer::isOpusSamplerateSupported(samplerate)) {
+                flog::error("Opus needs an 8/12/16/24/48 kHz audio stream (this stream is {} Hz)", samplerate);
+                return;
+            }
+        }
+
         writer.setFormat(containers[containerId]);
         writer.setChannels((recMode == RECORDER_MODE_AUDIO && !stereo) ? 1 : 2);
         writer.setSampleType(sampleTypes[sampleTypeId]);
         writer.setSamplerate(samplerate);
+        writer.setOpusBitrate(opusBitrate * 1000);
 
         // Open file
         std::string vfoName = (recMode == RECORDER_MODE_AUDIO) ? selectedStreamName : "";
@@ -275,12 +296,25 @@ private:
             config.release(true);
         }
 
-        ImGui::LeftLabel("Sample type");
-        ImGui::FillWidth();
-        if (ImGui::Combo(CONCAT("##_recorder_st_", _this->name), &_this->sampleTypeId, _this->sampleTypes.txt)) {
-            config.acquire();
-            config.conf[_this->name]["sampleType"] = _this->sampleTypes.key(_this->sampleTypeId);
-            config.release(true);
+        // Opus quality is set by bitrate, not sample type — swap the control.
+        if (_this->containers[_this->containerId] == wav::FORMAT_OPUS) {
+            ImGui::LeftLabel("Bitrate");
+            ImGui::FillWidth();
+            if (ImGui::SliderInt(CONCAT("##_recorder_opus_br_", _this->name), &_this->opusBitrate, 16, 256, "%d kbps")) {
+                _this->opusBitrate = std::clamp<int>(_this->opusBitrate, 16, 256);
+                config.acquire();
+                config.conf[_this->name]["opusBitrate"] = _this->opusBitrate;
+                config.release(true);
+            }
+        }
+        else {
+            ImGui::LeftLabel("Sample type");
+            ImGui::FillWidth();
+            if (ImGui::Combo(CONCAT("##_recorder_st_", _this->name), &_this->sampleTypeId, _this->sampleTypes.txt)) {
+                config.acquire();
+                config.conf[_this->name]["sampleType"] = _this->sampleTypes.key(_this->sampleTypeId);
+                config.release(true);
+            }
         }
 
         if (_this->recording) { style::endDisabled(); }
@@ -330,6 +364,21 @@ private:
         // Record button
         bool canRecord = _this->folderSelect.pathIsValid();
         if (_this->recMode == RECORDER_MODE_AUDIO) { canRecord &= !_this->selectedStreamName.empty(); }
+
+        // Opus is audio-only and needs an Opus-native sample rate; block the
+        // record button (with a reason) rather than let start() fail.
+        if (_this->containers[_this->containerId] == wav::FORMAT_OPUS && !_this->recording) {
+            if (_this->recMode != RECORDER_MODE_AUDIO) {
+                canRecord = false;
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Opus records audio only");
+            }
+            else if (!_this->selectedStreamName.empty() &&
+                     !wav::Writer::isOpusSamplerateSupported(sigpath::sinkManager.getStreamSampleRate(_this->selectedStreamName))) {
+                canRecord = false;
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Opus needs 8/12/16/24/48 kHz audio");
+            }
+        }
+
         if (!_this->recording) {
             if (!canRecord) { style::beginDisabled(); }
             if (ImGui::Button(CONCAT("Record##_recorder_rec_", _this->name), ImVec2(menuWidth, 0))) {
@@ -594,6 +643,7 @@ private:
     int recMode = RECORDER_MODE_AUDIO;
     int containerId;
     int sampleTypeId;
+    int opusBitrate = 128; // kbps, Opus container only
     bool stereo = true;
     std::string selectedStreamName = "";
     float audioVolume = 1.0f;

@@ -116,13 +116,32 @@ Limits: FLAC caps at 1048575 Hz sample rate (libFLAC ≥ 1.4; 655350 on 1.3.x =
 Debian bullseye / Ubuntu focal+jammy) and 32-bit samples need libFLAC ≥ 1.4 —
 `open()` fails cleanly with a logged error, recorder stays idle.
 
-MP3/LAME deferred (separate follow-up if wanted): LAME 3.100 has no CMake build
-and Debian's `libmp3lame-dev` ships no pkg-config or CMake config, so it must be
-`distro:bundled` (mbedtls precedent) with a PATCH_COMMAND-injected CMakeLists
-(vcpkg's mp3lame port, MIT, is a good base) + `sdrpp_emit_imported_config`.
-LGPL-2+, MP3 patents expired 2017 — no licensing blocker, just work; it's ~80% of
-the total dependency effort for maybe 20% of the value (MP3 only compresses
-demodulated audio; FLAC covers IQ).
+MP3/LAME not adopted — Opus used instead (2026-07-07). Rather than port qrp73's
+MP3/LAME option (LAME 3.100 has no CMake build and Debian's `libmp3lame-dev`
+ships no pkg-config/CMake config, so it would need a PATCH_COMMAND-injected
+CMakeLists), the lossy-audio recorder uses the royalty-free Opus codec. Both
+libopus 1.5.2 and libogg 1.3.6 have clean upstream CMake builds that install
+config packages (`Opus::opus`, `Ogg::ogg`) — no recipe patching needed, unlike
+FLAC. Registered `portable:bundled/static distro:system android:bundled/static`
+(USAGE core), added to the root dep set, linked PRIVATE into `sdrpp_core`,
+`libopus-dev`/`libogg-dev` added to the deb docker apt list.
+
+Opus code port (2026-07-07): `wav::Writer` gained `FORMAT_OPUS` — a from-scratch
+Ogg-Opus muxer (RFC 7845) in wav.cpp (opus/ogg headers kept out of wav.h behind
+an opaque `void* opusState`, same PRIVATE-linkage reasoning as FLAC). We write
+the Ogg framing directly against libogg rather than adding libopusenc (which has
+no CMake build): OpusHead/OpusTags header packets, `opus_encode_float` on 20 ms
+frames, granule/pre-skip bookkeeping in 48 kHz samples, and a one-frame
+hold-back so the true last frame carries the EOS flag and a trimmed granule
+position (drops encoder delay + final-frame zero padding for sample-accurate
+length). Constraints that differ from FLAC/PCM and shape the recorder UI: Opus
+only accepts 8/12/16/24/48 kHz and 1–2 channels, so it is **audio-mode only**
+(baseband IQ rates are rejected in `open()` and the record button is blocked
+with a reason); quality is set by a bitrate slider (16–256 kbps, default 128,
+persisted as `opusBitrate`) shown in place of the sample-type combo. Not done:
+resampling arbitrary audio rates (e.g. 44.1 kHz) to 48 kHz — unsupported rates
+are rejected rather than resampled; and file_source can't play `.opus` back
+(neither could it play FLAC) — recordings open in external players.
 
 ### 5. Level meter replacing SNR meter — small-medium — **PORTED 2026-07-07**
 `ImGui::LevelMeter(level, levelMax, snr, …)` (their
