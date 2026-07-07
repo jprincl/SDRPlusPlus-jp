@@ -19,23 +19,18 @@ namespace demod {
 
             // Load config
             config->acquire();
-            if (config->conf[name][getName()].contains("agcAttack")) {
-                agcAttack = config->conf[name][getName()]["agcAttack"];
+            auto& cfg = config->conf[name][getName()];
+            if (cfg.contains("agcMode")) {
+                agcMode = std::clamp<int>(cfg["agcMode"], 0, 2);
             }
-            if (config->conf[name][getName()].contains("agcDecay")) {
-                agcDecay = config->conf[name][getName()]["agcDecay"];
-            }
-            if (config->conf[name][getName()].contains("agcMode")) {
-                agcMode = std::clamp<int>(config->conf[name][getName()]["agcMode"], 0, 2);
-            }
-            else if (config->conf[name][getName()].contains("carrierAgc")) {
+            else if (cfg.contains("carrierAgc")) {
                 // Legacy config format with a carrier AGC on/off flag
-                bool carrierAgc = config->conf[name][getName()]["carrierAgc"];
+                bool carrierAgc = cfg["carrierAgc"];
                 agcMode = carrierAgc ? dsp::demod::AM<dsp::stereo_t>::AGCMode::CARRIER : dsp::demod::AM<dsp::stereo_t>::AGCMode::AUDIO;
             }
-            if (config->conf[name][getName()].contains("agcGain")) {
-                agcGain = config->conf[name][getName()]["agcGain"];
-            }
+            loadConf(cfg, "agcGain", agcGain);
+            loadConf(cfg, "agcAttack", agcAttack);
+            loadConf(cfg, "agcDecay", agcDecay);
             config->release();
 
             // Define structure
@@ -54,13 +49,11 @@ namespace demod {
             if (ImGui::Combo(("##_radio_am_agc_mode_" + name).c_str(), &agcMode, "Off\0Carrier\0Audio\0")) {
                 demod.setAGCMode((dsp::demod::AM<dsp::stereo_t>::AGCMode)agcMode);
                 agcGain = std::clamp<float>(20.0f * log10f(demod.getAGCGain()), -10.0f, 90.0f);
-                _config->acquire();
-                _config->conf[name][getName()]["agcMode"] = agcMode;
+                saveConf("agcMode", agcMode);
                 if (agcMode == dsp::demod::AM<dsp::stereo_t>::AGCMode::OFF) {
                     // Keep the last AGC gain as the manual gain
-                    _config->conf[name][getName()]["agcGain"] = agcGain;
+                    saveConf("agcGain", agcGain);
                 }
-                _config->release(true);
             }
             bool agcEnabled = (agcMode != dsp::demod::AM<dsp::stereo_t>::AGCMode::OFF);
             if (agcEnabled) {
@@ -71,9 +64,7 @@ namespace demod {
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
             if (ImGui::SliderFloat(("##_radio_am_gain_" + name).c_str(), &agcGain, -10.0f, 90.0f, "%.0f dB")) {
                 demod.setAGCGain(powf(10.0f, agcGain / 20.0f));
-                _config->acquire();
-                _config->conf[name][getName()]["agcGain"] = agcGain;
-                _config->release(true);
+                saveConf("agcGain", agcGain);
             }
             if (agcEnabled) { ImGui::EndDisabled(); }
             else { ImGui::BeginDisabled(); }
@@ -81,17 +72,13 @@ namespace demod {
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
             if (ImGui::SliderFloat(("##_radio_am_agc_attack_" + name).c_str(), &agcAttack, 1.0f, 200.0f)) {
                 demod.setAGCAttack(agcAttack / getIFSampleRate());
-                _config->acquire();
-                _config->conf[name][getName()]["agcAttack"] = agcAttack;
-                _config->release(true);
+                saveConf("agcAttack", agcAttack);
             }
             ImGui::LeftLabel("AGC Decay");
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
             if (ImGui::SliderFloat(("##_radio_am_agc_decay_" + name).c_str(), &agcDecay, 1.0f, 20.0f)) {
                 demod.setAGCDecay(agcDecay / getIFSampleRate());
-                _config->acquire();
-                _config->conf[name][getName()]["agcDecay"] = agcDecay;
-                _config->release(true);
+                saveConf("agcDecay", agcDecay);
             }
             if (!agcEnabled) { ImGui::EndDisabled(); }
         }
@@ -123,13 +110,9 @@ namespace demod {
     private:
         dsp::demod::AM<dsp::stereo_t> demod;
 
-        ConfigManager* _config = NULL;
-
         int agcMode = dsp::demod::AM<dsp::stereo_t>::AGCMode::AUDIO;
         float agcGain = 0.0f;
         float agcAttack = 50.0f;
         float agcDecay = 5.0f;
-
-        std::string name;
     };
 }

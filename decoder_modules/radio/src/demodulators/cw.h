@@ -22,27 +22,13 @@ namespace demod {
 
             // Load config
             config->acquire();
-            if (config->conf[name][getName()].contains("agcEnabled")) {
-                agcEnabled = config->conf[name][getName()]["agcEnabled"];
-            }
-            if (config->conf[name][getName()].contains("agcGain")) {
-                agcGain = config->conf[name][getName()]["agcGain"];
-            }
-            if (config->conf[name][getName()].contains("agcAttack")) {
-                agcAttack = config->conf[name][getName()]["agcAttack"];
-            }
-            if (config->conf[name][getName()].contains("agcDecay")) {
-                agcDecay = config->conf[name][getName()]["agcDecay"];
-            }
-            if (config->conf[name][getName()].contains("tone")) {
-                tone = config->conf[name][getName()]["tone"];
-            }
+            agc.load(config->conf[name][getName()]);
+            loadConf(config->conf[name][getName()], "tone", tone);
             config->release();
 
             // Define structure
-            demod.init(input, tone, agcAttack / getIFSampleRate(), agcDecay / getIFSampleRate(), getIFSampleRate());
-            demod.setAGCEnabled(agcEnabled);
-            demod.setAGCGain(powf(10.0f, agcGain / 20.0f));
+            demod.init(input, tone, agc.attack / getIFSampleRate(), agc.decay / getIFSampleRate(), getIFSampleRate());
+            agc.apply(demod);
         }
 
         void start() { demod.start(); }
@@ -50,56 +36,13 @@ namespace demod {
         void stop() { demod.stop(); }
 
         void showMenu() {
-            float menuWidth = ImGui::GetContentRegionAvail().x;
-            if (ImGui::Checkbox(("AGC##_radio_cw_agc_ena_" + name).c_str(), &agcEnabled)) {
-                demod.setAGCEnabled(agcEnabled);
-                _config->acquire();
-                _config->conf[name][getName()]["agcEnabled"] = agcEnabled;
-                if (!agcEnabled) {
-                    // Keep the last AGC gain as the manual gain
-                    _config->conf[name][getName()]["agcGain"] = agcGain;
-                }
-                _config->release(true);
-            }
-            if (agcEnabled) {
-                agcGain = std::clamp<float>(20.0f * log10f(demod.getAGCGain()), -10.0f, 90.0f);
-                ImGui::BeginDisabled();
-            }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::SliderFloat(("##_radio_cw_gain_" + name).c_str(), &agcGain, -10.0f, 90.0f, "%.0f dB")) {
-                demod.setAGCGain(powf(10.0f, agcGain / 20.0f));
-                _config->acquire();
-                _config->conf[name][getName()]["agcGain"] = agcGain;
-                _config->release(true);
-            }
-            if (agcEnabled) { ImGui::EndDisabled(); }
-            else { ImGui::BeginDisabled(); }
-            ImGui::LeftLabel("AGC Attack");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::SliderFloat(("##_radio_cw_agc_attack_" + name).c_str(), &agcAttack, 1.0f, 200.0f)) {
-                demod.setAGCAttack(agcAttack / getIFSampleRate());
-                _config->acquire();
-                _config->conf[name][getName()]["agcAttack"] = agcAttack;
-                _config->release(true);
-            }
-            ImGui::LeftLabel("AGC Decay");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::SliderFloat(("##_radio_cw_agc_decay_" + name).c_str(), &agcDecay, 1.0f, 20.0f)) {
-                demod.setAGCDecay(agcDecay / getIFSampleRate());
-                _config->acquire();
-                _config->conf[name][getName()]["agcDecay"] = agcDecay;
-                _config->release(true);
-            }
-            if (!agcEnabled) { ImGui::EndDisabled(); }
+            agc.showMenu(demod, this, "cw", getIFSampleRate(), ImGui::GetContentRegionAvail().x);
             ImGui::LeftLabel("Tone Frequency");
             ImGui::FillWidth();
             if (ImGui::InputInt(("Stereo##_radio_cw_tone_" + name).c_str(), &tone, 10, 100)) {
                 tone = std::clamp<int>(tone, 250, 1250);
                 demod.setTone(tone);
-                _config->acquire();
-                _config->conf[name][getName()]["tone"] = tone;
-                _config->release(true);
+                saveConf("tone", tone);
             }
         }
 
@@ -128,15 +71,9 @@ namespace demod {
         dsp::stream<dsp::stereo_t>* getOutput() { return &demod.out; }
 
     private:
-        ConfigManager* _config = NULL;
         dsp::demod::CW<dsp::stereo_t> demod;
 
-        std::string name;
-
-        bool agcEnabled = true;
-        float agcGain = 0.0f;
-        float agcAttack = 100.0f;
-        float agcDecay = 5.0f;
+        AGCControls agc = { true, 0.0f, 100.0f, 5.0f };
         int tone = 800;
 
         EventHandler<float> afbwChangeHandler;

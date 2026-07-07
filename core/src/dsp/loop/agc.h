@@ -33,6 +33,9 @@ namespace dsp::loop {
             assert(base_type::_block_init);
             std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
             _gain = gain;
+            // Seed the envelope so that when enabled, the AGC continues from this gain
+            // instead of recomputing it from a stale envelope on the next sample
+            if (gain > 0.0f) { amp = _setPoint / gain; }
         }
 
         void setEnabled(bool enabled) {

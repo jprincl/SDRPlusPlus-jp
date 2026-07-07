@@ -19,12 +19,9 @@ namespace demod {
 
             // Load config
             _config->acquire();
-            if (config->conf[name][getName()].contains("lowPass")) {
-                _lowPass = config->conf[name][getName()]["lowPass"];
-            }
-            if (config->conf[name][getName()].contains("highPass")) {
-                _highPass = config->conf[name][getName()]["highPass"];
-            }
+            auto& cfg = config->conf[name][getName()];
+            loadConf(cfg, "lowPass", _lowPass);
+            loadConf(cfg, "highPass", _highPass);
             _config->release();
 
 
@@ -39,15 +36,11 @@ namespace demod {
         void showMenu() {
             if (ImGui::Checkbox(("Low Pass##_radio_wfm_lowpass_" + name).c_str(), &_lowPass)) {
                 demod.setLowPass(_lowPass);
-                _config->acquire();
-                _config->conf[name][getName()]["lowPass"] = _lowPass;
-                _config->release(true);
+                saveConf("lowPass", _lowPass);
             }
             if (ImGui::Checkbox(("High Pass##_radio_wfm_highpass_" + name).c_str(), &_highPass)) {
                 demod.setHighPass(_highPass);
-                _config->acquire();
-                _config->conf[name][getName()]["highPass"] = _highPass;
-                _config->release(true);
+                saveConf("highPass", _highPass);
             }
         }
 
@@ -80,11 +73,7 @@ namespace demod {
     private:
         dsp::demod::FM<dsp::stereo_t> demod;
 
-        ConfigManager* _config = NULL;
-
         bool _lowPass = true;
         bool _highPass = false;
-
-        std::string name;
     };
 }

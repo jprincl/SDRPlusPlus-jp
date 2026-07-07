@@ -53,11 +53,17 @@ namespace dsp::demod {
             assert(base_type::_block_init);
             std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
             base_type::tempStop();
-            // Carry the current gain over so the audio level doesn't jump on a mode switch
+            // Carry the current gain to the newly active AGC so the audio level doesn't jump
+            // on a mode switch (setGain also seeds the AGC envelope)
             float gain = (_agcMode == AGCMode::CARRIER) ? carrierAgc.getGain() : audioAgc.getGain();
             _agcMode = agcMode;
             audioAgc.setEnabled(agcMode == AGCMode::AUDIO);
-            audioAgc.setGain(gain);
+            if (agcMode == AGCMode::CARRIER) {
+                carrierAgc.setGain(gain);
+            }
+            else {
+                audioAgc.setGain(gain);
+            }
             base_type::tempStart();
         }
 

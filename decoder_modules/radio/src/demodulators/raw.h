@@ -64,7 +64,5 @@ namespace demod {
     private:
         double audioSampleRate;
         dsp::convert::ComplexToStereo c2s;
-
-        std::string name;
     };
 }

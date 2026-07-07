@@ -21,24 +21,12 @@ namespace demod {
 
             // Load config
             config->acquire();
-            if (config->conf[name][getName()].contains("agcEnabled")) {
-                agcEnabled = config->conf[name][getName()]["agcEnabled"];
-            }
-            if (config->conf[name][getName()].contains("agcGain")) {
-                agcGain = config->conf[name][getName()]["agcGain"];
-            }
-            if (config->conf[name][getName()].contains("agcAttack")) {
-                agcAttack = config->conf[name][getName()]["agcAttack"];
-            }
-            if (config->conf[name][getName()].contains("agcDecay")) {
-                agcDecay = config->conf[name][getName()]["agcDecay"];
-            }
+            agc.load(config->conf[name][getName()]);
             config->release();
 
             // Define structure
-            demod.init(input, dsp::demod::SSB<dsp::stereo_t>::Mode::LSB, bandwidth, getIFSampleRate(), agcAttack / getIFSampleRate(), agcDecay / getIFSampleRate());
-            demod.setAGCEnabled(agcEnabled);
-            demod.setAGCGain(powf(10.0f, agcGain / 20.0f));
+            demod.init(input, dsp::demod::SSB<dsp::stereo_t>::Mode::LSB, bandwidth, getIFSampleRate(), agc.attack / getIFSampleRate(), agc.decay / getIFSampleRate());
+            agc.apply(demod);
         }
 
         void start() { demod.start(); }
@@ -46,48 +34,7 @@ namespace demod {
         void stop() { demod.stop(); }
 
         void showMenu() {
-            float menuWidth = ImGui::GetContentRegionAvail().x;
-            if (ImGui::Checkbox(("AGC##_radio_lsb_agc_ena_" + name).c_str(), &agcEnabled)) {
-                demod.setAGCEnabled(agcEnabled);
-                _config->acquire();
-                _config->conf[name][getName()]["agcEnabled"] = agcEnabled;
-                if (!agcEnabled) {
-                    // Keep the last AGC gain as the manual gain
-                    _config->conf[name][getName()]["agcGain"] = agcGain;
-                }
-                _config->release(true);
-            }
-            if (agcEnabled) {
-                agcGain = std::clamp<float>(20.0f * log10f(demod.getAGCGain()), -10.0f, 90.0f);
-                ImGui::BeginDisabled();
-            }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::SliderFloat(("##_radio_lsb_gain_" + name).c_str(), &agcGain, -10.0f, 90.0f, "%.0f dB")) {
-                demod.setAGCGain(powf(10.0f, agcGain / 20.0f));
-                _config->acquire();
-                _config->conf[name][getName()]["agcGain"] = agcGain;
-                _config->release(true);
-            }
-            if (agcEnabled) { ImGui::EndDisabled(); }
-            else { ImGui::BeginDisabled(); }
-            ImGui::LeftLabel("AGC Attack");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::SliderFloat(("##_radio_lsb_agc_attack_" + name).c_str(), &agcAttack, 1.0f, 200.0f)) {
-                demod.setAGCAttack(agcAttack / getIFSampleRate());
-                _config->acquire();
-                _config->conf[name][getName()]["agcAttack"] = agcAttack;
-                _config->release(true);
-            }
-            ImGui::LeftLabel("AGC Decay");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::SliderFloat(("##_radio_lsb_agc_decay_" + name).c_str(), &agcDecay, 1.0f, 20.0f)) {
-                demod.setAGCDecay(agcDecay / getIFSampleRate());
-                _config->acquire();
-                _config->conf[name][getName()]["agcDecay"] = agcDecay;
-                _config->release(true);
-            }
-            if (!agcEnabled) { ImGui::EndDisabled(); }
+            agc.showMenu(demod, this, "lsb", getIFSampleRate(), ImGui::GetContentRegionAvail().x);
         }
 
         void setBandwidth(double bandwidth) { demod.setBandwidth(bandwidth); }
@@ -116,14 +63,6 @@ namespace demod {
 
     private:
         dsp::demod::SSB<dsp::stereo_t> demod;
-
-        ConfigManager* _config;
-
-        bool agcEnabled = true;
-        float agcGain = 0.0f;
-        float agcAttack = 50.0f;
-        float agcDecay = 5.0f;
-
-        std::string name;
+        AGCControls agc;
     };
 }
