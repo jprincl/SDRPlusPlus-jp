@@ -5,6 +5,13 @@ option(QMX_CAT_DEBUG_TIMING "Enable QMX CAT timing diagnostics" OFF)
 
 file(GLOB_RECURSE LIBQMX_SRC "src/*.cpp")
 
+# Objective-C++ sources (e.g. the macOS microphone-permission helper) only
+# compile on Apple platforms; keep them out of the build elsewhere.
+if (APPLE)
+    file(GLOB_RECURSE LIBQMX_OBJCXX_SRC "src/*.mm")
+    list(APPEND LIBQMX_SRC ${LIBQMX_OBJCXX_SRC})
+endif ()
+
 add_library(qmx STATIC ${LIBQMX_SRC})
 set_target_properties(qmx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(qmx PUBLIC cxx_std_17)
@@ -20,6 +27,7 @@ elseif (APPLE)
         "-framework CoreAudio"
         "-framework AudioUnit"
         "-framework CoreFoundation"
+        "-framework AVFoundation" # AVCaptureDevice microphone authorization
     )
 elseif (UNIX AND NOT APPLE)
     find_package(PkgConfig REQUIRED)

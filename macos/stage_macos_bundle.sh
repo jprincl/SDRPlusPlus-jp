@@ -41,4 +41,4 @@ if [ -f "$SDRPLAY_LIB" ]; then
     bundle_install_binary "$BUNDLE" "$BUNDLE/Contents/Frameworks" "$SDRPLAY_LIB"
 fi
 
-bundle_sign "$BUNDLE"
+bundle_sign "$BUNDLE" "$SCRIPT_DIR/sdrpp.entitlements"
