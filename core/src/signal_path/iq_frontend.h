@@ -16,8 +16,12 @@ public:
 
     enum FFTWindow {
         RECTANGULAR,
+        HAMMING,
+        HANN,
         BLACKMAN,
-        NUTTALL
+        NUTTALL,
+        BLACKMAN_HARRIS4,
+        BLACKMAN_HARRIS7
     };
 
     void init(dsp::stream<dsp::complex_t>* in, double sampleRate, bool buffering, int decimRatio, bool dcBlocking, int fftSize, double fftRate, FFTWindow fftWindow, float* (*acquireFFTBuffer)(void* ctx), void (*releaseFFTBuffer)(void* ctx), void* fftCtx);
@@ -57,6 +61,7 @@ public:
 protected:
     static void handler(dsp::complex_t* data, int count, void* ctx);
     void updateFFTPath(bool updateWaterfall = false);
+    void genFFTWindow(float* buf, int size);
 
     static inline double genDCBlockRate(double sampleRate) {
         return 50.0 / sampleRate;

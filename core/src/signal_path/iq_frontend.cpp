@@ -1,6 +1,11 @@
 #include "iq_frontend.h"
+#include "../dsp/window/rectangular.h"
+#include "../dsp/window/hamming.h"
+#include "../dsp/window/hann.h"
 #include "../dsp/window/blackman.h"
 #include "../dsp/window/nuttall.h"
+#include "../dsp/window/blackman_harris.h"
+#include "../dsp/window/blackman_harris7.h"
 #include <utils/flog.h>
 #include <gui/gui.h>
 #include <core.h>
@@ -47,15 +52,7 @@ void IQFrontEnd::init(dsp::stream<dsp::complex_t>* in, double sampleRate, bool b
     fftSink.init(&reshape.out, handler, this);
 
     fftWindowBuf = dsp::buffer::alloc<float>(_nzFFTSize);
-    if (_fftWindow == FFTWindow::RECTANGULAR) {
-        for (int i = 0; i < _nzFFTSize; i++) { fftWindowBuf[i] = 0; }
-    }
-    else if (_fftWindow == FFTWindow::BLACKMAN) {
-        for (int i = 0; i < _nzFFTSize; i++) { fftWindowBuf[i] = dsp::window::blackman(i, _nzFFTSize); }
-    }
-    else if (_fftWindow == FFTWindow::NUTTALL) {
-        for (int i = 0; i < _nzFFTSize; i++) { fftWindowBuf[i] = dsp::window::nuttall(i, _nzFFTSize); }
-    }
+    genFFTWindow(fftWindowBuf, _nzFFTSize);
 
     fftInBuf = (fftwf_complex*)fftwf_malloc(_fftSize * sizeof(fftwf_complex));
     fftOutBuf = (fftwf_complex*)fftwf_malloc(_fftSize * sizeof(fftwf_complex));
@@ -275,13 +272,41 @@ void IQFrontEnd::handler(dsp::complex_t* data, int count, void* ctx) {
     // Aquire buffer
     float* fftBuf = _this->_acquireFFTBuffer(_this->_fftCtx);
 
-    // Convert the complex output of the FFT to dB amplitude
+    // Convert the complex output of the FFT to dB amplitude. The window is
+    // normalized to unity coherent gain, so no 1/N normalization here.
     if (fftBuf) {
-        volk_32fc_s32f_power_spectrum_32f(fftBuf, (lv_32fc_t*)_this->fftOutBuf, _this->_fftSize, _this->_fftSize);
+        volk_32fc_s32f_power_spectrum_32f(fftBuf, (lv_32fc_t*)_this->fftOutBuf, 1.0f, _this->_fftSize);
     }
 
     // Release buffer
     _this->_releaseFFTBuffer(_this->_fftCtx);
+}
+
+void IQFrontEnd::genFFTWindow(float* buf, int size) {
+    double sum = 0.0;
+    for (int i = 0; i < size; i++) {
+        double w = 1.0;
+        switch (_fftWindow) {
+            case FFTWindow::RECTANGULAR:      w = dsp::window::rectangular(i, size); break;
+            case FFTWindow::HAMMING:          w = dsp::window::hamming(i, size); break;
+            case FFTWindow::HANN:             w = dsp::window::hann(i, size); break;
+            case FFTWindow::BLACKMAN:         w = dsp::window::blackman(i, size); break;
+            case FFTWindow::NUTTALL:          w = dsp::window::nuttall(i, size); break;
+            case FFTWindow::BLACKMAN_HARRIS4: w = dsp::window::blackmanHarris(i, size); break;
+            case FFTWindow::BLACKMAN_HARRIS7: w = dsp::window::blackmanHarris7(i, size); break;
+        }
+        buf[i] = w;
+        sum += w;
+    }
+
+    // Normalize to unity coherent gain (window sum = 1): a coherent sinusoid
+    // then reads its true dBFS amplitude with any window and any FFT zero
+    // padding. The (-1)^n factor rotating DC to the center of the FFT output
+    // is folded into the window.
+    float scale = (sum > 0.0) ? (float)(1.0 / sum) : 1.0f;
+    for (int i = 0; i < size; i++) {
+        buf[i] *= (i % 2) ? -scale : scale;
+    }
 }
 
 void IQFrontEnd::updateFFTPath(bool updateWaterfall) {
@@ -298,15 +323,7 @@ void IQFrontEnd::updateFFTPath(bool updateWaterfall) {
     // Update window
     dsp::buffer::free(fftWindowBuf);
     fftWindowBuf = dsp::buffer::alloc<float>(_nzFFTSize);
-    if (_fftWindow == FFTWindow::RECTANGULAR) {
-        for (int i = 0; i < _nzFFTSize; i++) { fftWindowBuf[i] = 1.0f * ((i % 2) ? -1.0f : 1.0f); }
-    }
-    else if (_fftWindow == FFTWindow::BLACKMAN) {
-        for (int i = 0; i < _nzFFTSize; i++) { fftWindowBuf[i] = dsp::window::blackman(i, _nzFFTSize) * ((i % 2) ? -1.0f : 1.0f); }
-    }
-    else if (_fftWindow == FFTWindow::NUTTALL) {
-        for (int i = 0; i < _nzFFTSize; i++) { fftWindowBuf[i] = dsp::window::nuttall(i, _nzFFTSize) * ((i % 2) ? -1.0f : 1.0f); }
-    }
+    genFFTWindow(fftWindowBuf, _nzFFTSize);
 
     // Update FFT plan
     fftwf_free(fftInBuf);

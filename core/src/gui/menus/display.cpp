@@ -31,12 +31,7 @@ namespace displaymenu {
 
     OptionList<int, int> fftSizes;
     OptionList<float, float> uiScaleFactors;
-
-    const IQFrontEnd::FFTWindow fftWindowList[] = {
-        IQFrontEnd::FFTWindow::RECTANGULAR,
-        IQFrontEnd::FFTWindow::BLACKMAN,
-        IQFrontEnd::FFTWindow::NUTTALL
-    };
+    OptionList<std::string, IQFrontEnd::FFTWindow> fftWindows;
 
     void updateFFTSpeeds() {
         gui::waterfall.setFFTHoldSpeed((float)fftHoldSpeed / ((float)fftRate * 10.0f));
@@ -46,6 +41,10 @@ namespace displaymenu {
 
     void init() {
         // Define FFT sizes
+        // 1M disabled until the waterfall allocation path is hardened: it stores
+        // rawFFTSize * waterfallHeight floats (>1 GiB at a few hundred rows) and
+        // reallocs without checking for failure.
+        // fftSizes.define(1048576, "1048576", 1048576);
         fftSizes.define(524288, "524288", 524288);
         fftSizes.define(262144, "262144", 262144);
         fftSizes.define(131072, "131072", 131072);
@@ -88,8 +87,31 @@ namespace displaymenu {
         fftRate = core::configManager.conf["fftRate"];
         sigpath::iqFrontEnd.setFFTRate(fftRate);
 
-        selectedWindow = std::clamp<int>((int)core::configManager.conf["fftWindow"], 0, (sizeof(fftWindowList) / sizeof(IQFrontEnd::FFTWindow)) - 1);
-        sigpath::iqFrontEnd.setFFTWindow(fftWindowList[selectedWindow]);
+        // Define FFT windows, in order of increasing dynamic range
+        fftWindows.define("Rectangular", "Rectangular", IQFrontEnd::FFTWindow::RECTANGULAR);
+        fftWindows.define("Hamming", "Hamming", IQFrontEnd::FFTWindow::HAMMING);
+        fftWindows.define("Hann", "Hann", IQFrontEnd::FFTWindow::HANN);
+        fftWindows.define("Blackman", "Blackman", IQFrontEnd::FFTWindow::BLACKMAN);
+        fftWindows.define("Nuttall", "Nuttall", IQFrontEnd::FFTWindow::NUTTALL);
+        fftWindows.define("Blackman-Harris 4", "Blackman-Harris 4", IQFrontEnd::FFTWindow::BLACKMAN_HARRIS4);
+        fftWindows.define("Blackman-Harris 7", "Blackman-Harris 7", IQFrontEnd::FFTWindow::BLACKMAN_HARRIS7);
+
+        // The window is stored by name; legacy configs stored an index into
+        // the {Rectangular, Blackman, Nuttall} list.
+        std::string winName = "Nuttall";
+        json fftWindowConf = core::configManager.conf["fftWindow"];
+        if (fftWindowConf.is_string()) {
+            winName = fftWindowConf;
+        }
+        else if (fftWindowConf.is_number_integer()) {
+            const char* legacyWindows[] = { "Rectangular", "Blackman", "Nuttall" };
+            winName = legacyWindows[std::clamp<int>(fftWindowConf, 0, 2)];
+            core::configManager.acquire();
+            core::configManager.conf["fftWindow"] = winName;
+            core::configManager.release(true);
+        }
+        selectedWindow = fftWindows.keyExists(winName) ? fftWindows.keyId(winName) : fftWindows.keyId("Nuttall");
+        sigpath::iqFrontEnd.setFFTWindow(fftWindows.value(selectedWindow));
 
         gui::menu.locked = core::configManager.conf["lockMenuOrder"];
 
@@ -219,10 +241,10 @@ namespace displaymenu {
         }
 
         ImGui::LeftLabelFill("FFT Window");
-        if (ImGui::Combo("##sdrpp_fft_window", &selectedWindow, "Rectangular\0Blackman\0Nuttall\0")) {
-            sigpath::iqFrontEnd.setFFTWindow(fftWindowList[selectedWindow]);
+        if (ImGui::Combo("##sdrpp_fft_window", &selectedWindow, fftWindows.txt)) {
+            sigpath::iqFrontEnd.setFFTWindow(fftWindows.value(selectedWindow));
             core::configManager.acquire();
-            core::configManager.conf["fftWindow"] = selectedWindow;
+            core::configManager.conf["fftWindow"] = fftWindows.key(selectedWindow);
             core::configManager.release(true);
         }
 
