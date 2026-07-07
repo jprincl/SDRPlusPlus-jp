@@ -713,9 +713,12 @@ namespace net::websock {
             }
             const int recvd = recvSocket(buf.data(), buf.size(), 100);
             if (stopped) { return; }
-            if (recvd == 0) { continue; }
             if (recvd < 0) { return; } // peer closed or recv error
-            onEveryReceive();
+            // Tick fires on recv timeouts too, so time-based keepalives keep
+            // flowing while the downlink is stalled (jittery mobile links);
+            // without them the KiwiSDR server drops the session as inactive.
+            onReceiveLoopTick();
+            if (recvd == 0) { continue; }
             if (data.size() + (size_t)recvd > MAX_FRAME_PAYLOAD + 16) {
                 throw std::runtime_error("websock: frame too large");
             }
@@ -735,8 +738,11 @@ namespace net::websock {
         }
 
         websocketReady = true;
-        onConnected();
         try {
+            // onConnected typically sends the session-setup commands; if the
+            // socket dies during them, onDisconnected must still fire so the
+            // owner can unwind its "connected" state.
+            onConnected();
             runReceiveLoop(std::move(*residual));
         }
         catch (...) {

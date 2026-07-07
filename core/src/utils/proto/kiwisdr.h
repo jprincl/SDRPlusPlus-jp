@@ -87,7 +87,9 @@ public:
     virtual ~KiwiSDRClient();
 
     int IQDATA_FREQUENCY = 12000;
-    int NETWORK_BUFFER_SECONDS = 2;
+    // Backstop cap for iqData growth (consumers pace/trim themselves; this
+    // only bounds memory when nobody drains, e.g. an idle tester session).
+    int NETWORK_BUFFER_SECONDS = 5;
     int NETWORK_BUFFER_SIZE = NETWORK_BUFFER_SECONDS * IQDATA_FREQUENCY;
 
     void init(const std::string& hostport);
@@ -103,6 +105,12 @@ public:
     AgcSettings getAgc() const;
 
 private:
+    // Fire-and-forget command send. tune() and setAgc() run on the GUI
+    // thread and can race the socket dying on a flaky link; a failed
+    // command must not throw into the GUI thread (uncaught => terminate).
+    // The receive loop notices the dead socket and tears the session down.
+    bool trySend(const std::string& cmd);
+
     // Build the SET freq command, applying the server-reported hardware
     // offset. Used both by tune() and by the freq_offset MSG handler when it
     // re-issues the last user-requested tune.

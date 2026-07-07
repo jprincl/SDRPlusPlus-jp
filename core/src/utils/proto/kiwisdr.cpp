@@ -145,7 +145,12 @@ void KiwiSDRClient::init(const std::string& hostport) {
     };
     using namespace std::chrono_literals;
     lastPing = Clock::now();
-    wsClient.onEveryReceive = [&]() {
+    // Fires on every receive-loop tick, including recv timeouts during a
+    // stall — the keepalive must keep flowing even when no data arrives or
+    // the server drops the session as inactive. A send failure here throws
+    // and tears the session down via the receive loop, which is correct:
+    // if the keepalive can't be sent, the connection is gone.
+    wsClient.onReceiveLoopTick = [&]() {
         auto now = Clock::now();
         if (now - lastPing > 4s) {
             wsClient.sendString("SET keepalive");
@@ -181,6 +186,17 @@ KiwiSDRClient::AgcSettings KiwiSDRClient::getAgc() const {
     return agc;
 }
 
+bool KiwiSDRClient::trySend(const std::string& cmd) {
+    try {
+        wsClient.sendString(cmd);
+        return true;
+    }
+    catch (const std::exception& e) {
+        flog::warn("KiwiSDRClient: dropped command '{}': {}", cmd, e.what());
+        return false;
+    }
+}
+
 void KiwiSDRClient::sendTuneCommand(double freq, Modulation mod) {
     const double serverFreq = freq - static_cast<double>(serverFrequencyOffset.load());
     char buf[1024];
@@ -192,7 +208,7 @@ void KiwiSDRClient::sendTuneCommand(double freq, Modulation mod) {
         snprintf(buf, sizeof buf, "SET mod=usb low_cut=0 high_cut=8000 freq=%0.3f", (serverFreq - 3000) / 1000.0);
         break;
     }
-    wsClient.sendString(buf);
+    trySend(buf);
 }
 
 void KiwiSDRClient::sendAgcLine() {
@@ -208,7 +224,7 @@ void KiwiSDRClient::sendAgcLine() {
              snap.slopeDb,
              snap.decayMs,
              snap.manualGainDb);
-    wsClient.sendString(buf);
+    trySend(buf);
 }
 
 void KiwiSDRClient::parseMsgFrame(const std::string& msg) {
@@ -340,14 +356,23 @@ void KiwiSDRClient::start() {
             connected = false;
             running = false;
         }
-        catch (const std::runtime_error& e) {
-            flog::error("KiwiSDRSourceModule: Exception: {}", e.what());
+        catch (const std::exception& e) {
+            flog::error("KiwiSDRClient: Exception: {}", e.what());
             char status[100];
             snprintf(status, sizeof status, "Error: %s", e.what());
             setConnectionStatus(status);
             connected = false;
             running = false;
             onError(e.what());
+        }
+        catch (...) {
+            // Anything escaping this thread calls std::terminate and kills
+            // the whole app — swallow and report instead.
+            flog::error("KiwiSDRClient: unknown exception in network thread");
+            setConnectionStatus("Error: unknown exception");
+            connected = false;
+            running = false;
+            onError("unknown exception");
         }
     });
 }

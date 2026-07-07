@@ -22,9 +22,9 @@ namespace net::websock {
         WSClient& operator=(const WSClient&) = delete;
 
         // RFC 6455 client handshake followed by the receive loop. Drives the
-        // on*Message / onConnected / onDisconnected / onEveryReceive callbacks
-        // until stopSocket() is called or the peer closes. Throws on protocol
-        // error; the caller is expected to surface that to the user.
+        // on*Message / onConnected / onDisconnected / onReceiveLoopTick
+        // callbacks until stopSocket() is called or the peer closes. Throws on
+        // protocol error; the caller is expected to surface that to the user.
         void connectAndReceiveLoop(const std::string& host, int port, const std::string& path);
 
         // Both sends are thread-safe (serialized by an internal mutex) and
@@ -49,7 +49,10 @@ namespace net::websock {
         std::function<void(const std::string&)> onBinaryMessage = [](auto){};
         std::function<void()> onConnected     = []{};
         std::function<void()> onDisconnected  = []{};
-        std::function<void()> onEveryReceive  = []{};
+        // Invoked on every receive-loop iteration, including the 100 ms recv
+        // timeouts while the downlink is stalled. Suitable for time-based
+        // keepalives that must keep flowing even when no data arrives.
+        std::function<void()> onReceiveLoopTick = []{};
 
     private:
         // Classification of an inbound frame returned by getFrame(). These

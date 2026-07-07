@@ -19,6 +19,7 @@
 #include "utils/proto/kiwisdr.h"
 #include "utils/url.h"
 #include "gui/smgui.h"
+#include <algorithm>
 #include <filesystem>
 #include <chrono>
 #include <ctime>
@@ -53,6 +54,10 @@ static std::tm safeLocalTime(std::time_t t) {
 struct KiwiSDRSourceModule : public ModuleManager::Instance {
     using Clock = std::chrono::steady_clock;
 
+    static constexpr int CHUNK_SAMPLES = 200; // ~16.7 ms at 12 kHz, sent 60x/s
+    static constexpr int BUFFER_MS_MIN = 100;
+    static constexpr int BUFFER_MS_MAX = 2000;
+
     char kiwisdrHost[1024] = "";
     int kiwisdrPort = 8073;
     std::string kiwisdrLoc = "";
@@ -79,6 +84,9 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         }
         if (config.conf.contains("kiwisdr_loc")) {
             kiwisdrLoc = config.conf["kiwisdr_loc"];
+        }
+        if (config.conf.contains("kiwisdr_buffer_ms")) {
+            bufferMs = std::clamp<int>(config.conf["kiwisdr_buffer_ms"], BUFFER_MS_MIN, BUFFER_MS_MAX);
         }
         config.release(false);
 
@@ -157,14 +165,19 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         _this->feederThread = std::thread([=]() {
             Clock::time_point nextSend{};
             while (_this->running.load()) {
+                // Prebuffer: don't start (and don't resume after an underrun)
+                // until bufferMs worth of samples are queued, so network
+                // jitter up to that size doesn't interrupt the stream.
+                const size_t primeSamples = std::max<size_t>(CHUNK_SAMPLES,
+                    (size_t)_this->bufferMs.load() * _this->kiwiSdrClient.IQDATA_FREQUENCY / 1000);
                 _this->kiwiSdrClient.iqDataLock.lock();
                 auto bufsize = _this->kiwiSdrClient.iqData.size();
                 _this->kiwiSdrClient.iqDataLock.unlock();
                 auto now = Clock::now();
                 if (nextSend == Clock::time_point{}) {
-                    if (bufsize < 200) {
+                    if (bufsize < primeSamples) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(16)); // some sleep
-                        continue;      // waiting for initial batch
+                        continue;      // priming the prebuffer
                     }
                     nextSend = now;
                 }
@@ -172,28 +185,31 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
                     std::this_thread::sleep_for(nextSend - now);
                 }
                 std::vector<std::complex<float>> toSend;
-                int bufferSize = 0;
-                _this->kiwiSdrClient.iqDataLock.lock();
-                if (_this->kiwiSdrClient.iqData.size() >= 200) {
-                    for (int i = 0; i < 200; i++) {
-                        toSend.emplace_back(_this->kiwiSdrClient.iqData[i]);
+                {
+                    std::lock_guard<std::mutex> lock(_this->kiwiSdrClient.iqDataLock);
+                    auto& iq = _this->kiwiSdrClient.iqData;
+                    // After a network stall the server bursts its backlog;
+                    // playing it out at 1x would keep that stall as added
+                    // latency forever. Allow 1 s of slack over the prebuffer
+                    // target, then drop the oldest samples back down to the
+                    // target: one IQ discontinuity instead of the
+                    // time-compressed signal a catch-up drain would produce.
+                    const size_t highWater = primeSamples + _this->kiwiSdrClient.IQDATA_FREQUENCY;
+                    if (iq.size() > highWater) {
+                        iq.erase(iq.begin(), iq.begin() + (iq.size() - primeSamples));
                     }
-                    _this->kiwiSdrClient.iqData.erase(_this->kiwiSdrClient.iqData.begin(), _this->kiwiSdrClient.iqData.begin() + 200);
-                    bufferSize = _this->kiwiSdrClient.iqData.size();
+                    if (iq.size() >= CHUNK_SAMPLES) {
+                        toSend.assign(iq.begin(), iq.begin() + CHUNK_SAMPLES);
+                        iq.erase(iq.begin(), iq.begin() + CHUNK_SAMPLES);
+                    }
                 }
-                _this->kiwiSdrClient.iqDataLock.unlock();
-                if (bufferSize > _this->kiwiSdrClient.NETWORK_BUFFER_SIZE) {
-                    nextSend += std::chrono::microseconds(1000000 / 120);
-                }
-                else {
-                    nextSend += std::chrono::microseconds(1000000 / 60);
-                }
+                nextSend += std::chrono::microseconds(1000000 / 60);
                 if (!toSend.empty()) {
                     memcpy(_this->stream.writeBuf, toSend.data(), toSend.size() * sizeof(dsp::complex_t));
                     _this->stream.swap((int)toSend.size());
                 }
                 else {
-                    nextSend = {};
+                    nextSend = {}; // underrun: go back to priming
                 }
             }
         });
@@ -206,6 +222,15 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         if (!wasRunning && !_this->kiwiSdrClient.running.load() && !_this->feederThread.joinable()) { return; }
         _this->kiwiSdrClient.stop();
 
+        if (_this->kiwiSdrClient.looperThread.get_id() == std::this_thread::get_id()) {
+            // Reached from the client's own network thread (onDisconnected ->
+            // setPlayState(false) -> SourceManager::stop). Joining the feeder
+            // here can race a concurrent GUI-thread stop() joining the same
+            // std::thread, which is UB. The feeder exits on running==false;
+            // the next start(), a later stop() or the destructor joins it.
+            flog::info("KiwiSDRSourceModule '{0}': Stop (from network thread)!", _this->name);
+            return;
+        }
         if (_this->feederThread.joinable()) {
             _this->feederThread.join();
         }
@@ -310,6 +335,18 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         strftime(streamTime, sizeof(streamTime), "%Y-%m-%d %H:%M:%S", &tmm);
         SmGui::Text(("Stream pos: " + std::string(streamTime)).c_str());
 
+        // Network prebuffer: trades latency for immunity against connection
+        // jitter (mobile links). Takes effect live, including while playing.
+        int bufMs = _this->bufferMs.load();
+        SmGui::LeftLabel("Buffer (ms)");
+        SmGui::FillWidth();
+        if (SmGui::SliderInt(("##_kiwisdr_buffer_ms_" + _this->name).c_str(), &bufMs, BUFFER_MS_MIN, BUFFER_MS_MAX)) {
+            _this->bufferMs.store(bufMs);
+            config.acquire();
+            config.conf["kiwisdr_buffer_ms"] = bufMs;
+            config.release(true);
+        }
+
         KiwiSDRClient::AgcSettings agc = _this->kiwiSdrClient.getAgc();
         bool agcChanged = false;
         const std::string agcId = "AGC##_kiwisdr_agc_" + _this->name;
@@ -343,6 +380,9 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     bool enabled = true;
     std::atomic<bool> running{false};
     std::atomic<bool> connected{false};
+    // Prebuffer target in milliseconds; read by the feeder thread each
+    // iteration so UI changes take effect live.
+    std::atomic<int> bufferMs{250};
     bool timeSet = false;
 
     double freq;
