@@ -9,6 +9,9 @@ https://github.com/qrp73/SDRPP
 SDR-888, 1 star
 https://github.com/howard0su/SDRPlusPlus
 
+SideKiq SDR hardware integration, 4 stars
+https://github.com/alphafox02/SDRPlusPlus/commits/sidekiq/
+
 RigExpert fork: fobossdr, network sink catch block, spectran_source fix, 3 stars
 https://github.com/rigexpert/SDRPlusPlus
 
@@ -20,6 +23,9 @@ https://github.com/mriise/SDRPlusPlus-NRSC-5
 
 Changed PlutoSDR source to support libiio v1 API - the libiio v0 crashes for me
 https://github.com/tilarids/SDRPlusPlus
+
+Muting M17 when encrypted
+https://github.com/AlexandreRouma/SDRPlusPlus/compare/master...Paulo-D2000:SDRPlusPlus:master
 
 support for https://rfnm.com/
 https://github.com/chiaraberti13/SDRPlusPlus
@@ -45,8 +51,9 @@ https://github.com/F5OEO/SDRPlusPlus
 Fobos Agile RX support (RigExpert)
 https://github.com/stenn930/SDRPlusPlus
 
-Docking layout, updated ImGUI
+Docking layout, updated ImGUI, 1 star
 https://github.com/Zaryob/SDRPlusPlus
+https://github.com/AlexandreRouma/SDRPlusPlus/compare/master...Zaryob:SDRPlusPlus:master
 
 ?? ATV, raw audio saving?
 https://github.com/randomradioprojects/SDRPlusPlus
@@ -72,8 +79,9 @@ https://github.com/syehorov/SDRPlusPlus
 LimeSDR fixes, 2 stars
 https://github.com/alphafox02/SDRPlusPlus
 
-R-PI hardware (rotary encoder)
+R-PI hardware (rotary encoder), 1 star
 https://github.com/K7MDL2/SDRPlusPlus
+https://github.com/AlexandreRouma/SDRPlusPlus/compare/master...K7MDL2:SDRPlusPlus:master
 
 Disconnected SDR++ forks
 https://github.com/LunaeMons/SDRPlusPlus_CommunityEdition

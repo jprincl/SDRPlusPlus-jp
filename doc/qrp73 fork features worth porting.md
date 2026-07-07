@@ -77,17 +77,52 @@ Contained in `core/src/utils/wav.{h,cpp}` + recorder `main.cpp` +
 but manageable work given our deps infrastructure. FLAC for baseband IQ recording is a
 genuinely useful storage saver.
 
-### 5. Level meter replacing SNR meter — small-medium
+### 5. Level meter replacing SNR meter — small-medium — **PORTED 2026-07-07**
 `ImGui::LevelMeter(level, levelMax, snr, …)` (their
 `core/src/gui/widgets/snr_meter.{h,cpp}`) gives audio level + peak-hold + numeric
 dB/SNR readout instead of the bare SNR bar. Nice operator-facing improvement; needs
 main_window wiring.
 
-### 6. FFT window functions + unity gain — small
+Port notes: `SNRMeter`/`GetSNRMeterMinWidth` removed (main_window was the only
+caller) and replaced by `LevelMeter`/`GetLevelMeterMinWidth`, adapted to our
+`style::dp()` scaling and min-width font/scale cache. The level source is the
+`strength` output of `calculateVFOSignalInfo` that our `pushFFT` previously
+discarded; peak hold is a 10-frame ring buffer member in `WaterFall` (their
+`std::queue` copy-per-frame approach not taken). Differences from qrp73: the
+numeric readout (peak level, SNR below) is right-aligned *inside* the widget
+instead of overflowing 25 px past it, the readout column is reserved in the
+min-width so the top-bar layout adapts, non-finite level/levelMax/snr draw an
+empty meter with a `--.- dB` readout (used when no VFO is selected — theirs
+drew a full green bar in that case, `LevelMeter(0,0,0)`), and the `-90` tick
+label is clamped to the widget's left edge.
+
+### 6. FFT window functions + unity gain — small — **PORTED 2026-07-07**
 Adds Blackman-Harris-4/7, Blackman-Nuttall, Nuttall, Hamming, Hann, cosine as separate
 headers under `core/src/dsp/window/`, with unity-gain normalization so FFT amplitude
 readings are calibrated, plus a 1M FFT size option. Easy port into `iq_frontend` +
 display menu.
+
+Port notes: our 1.2.x base already had all window headers except
+`blackman_harris7.h` (Albrecht 7-term, the only new DSP file) — the gap was that
+`IQFrontEnd` only exposed 3 of them. `IQFrontEnd::FFTWindow` was extended to 7
+entries (Rectangular, Hamming, Hann, Blackman, Nuttall, BH4, BH7 — same set and
+UI order as qrp73; Blackman-Nuttall deliberately not exposed, it duplicates
+Nuttall/BH4) and window generation was unified into `IQFrontEnd::genFFTWindow`
+instead of adopting their `dsp::window::createWindow`, fixing two bugs along the
+way: their centered-normalization loop overruns the buffer by one float when the
+size is odd (`_nzFFTSize` can be odd), and our `init()` filled the rectangular
+window with zeros and skipped the DC-centering factor. Unity-gain normalization:
+window sum scaled to 1, volk power-spectrum normalization factor changed from
+`_fftSize` to 1.0 — this also fixes upstream's level sag with zero padding at
+high FFT rates. Hamming coefficients changed to the exact equiripple values.
+Config: `fftWindow` now stores the window *name* (a saved index would have
+changed meaning); legacy integer configs are migrated on load (0→Rectangular,
+1→Blackman, 2→Nuttall). The 1M FFT size option was NOT adopted (commented out in
+display.cpp): the waterfall stores rawFFTSize × waterfallHeight floats — >1 GiB
+at 1M bins — and its malloc/realloc paths don't check for allocation failure
+(realloc returning NULL would also leak the old buffer); revisit if that path is
+ever hardened. Behavior change: displayed FFT levels jump ~+9 dB with the
+default Nuttall window (changelogged).
 
 ## Not worth it / already covered
 
