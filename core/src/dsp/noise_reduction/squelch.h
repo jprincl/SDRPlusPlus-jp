@@ -18,6 +18,7 @@ namespace dsp::noise_reduction {
 
         void init(stream<complex_t>* in, double level) {
             _level = level;
+            updateHoldSamples();
 
             normBuffer = buffer::alloc<float>(STREAM_BUFFER_SIZE);
 
@@ -30,13 +31,36 @@ namespace dsp::noise_reduction {
             _level = level;
         }
 
+        void setSamplerate(double samplerate) {
+            assert(base_type::_block_init);
+            std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
+            _samplerate = samplerate;
+            updateHoldSamples();
+        }
+
         inline int process(int count, const complex_t* in, complex_t* out) {
             float sum;
             volk_32fc_magnitude_32f(normBuffer, (lv_32fc_t*)in, count);
             volk_32f_accumulator_s32f(&sum, normBuffer, count);
             sum /= (float)count;
 
-            if (10.0f * log10f(sum) >= _level) {
+            float level = 20.0f * log10f(sum);
+            if (_muted) {
+                // Unmute only after the signal has stayed above the threshold for the hold time
+                if (level >= _level) {
+                    _aboveCount += count;
+                    if (_aboveCount >= _holdSamples) { _muted = false; }
+                }
+                else {
+                    _aboveCount = 0;
+                }
+            }
+            else if (level < _level - HYSTERESIS) {
+                _muted = true;
+                _aboveCount = 0;
+            }
+
+            if (!_muted) {
                 memcpy(out, in, count * sizeof(complex_t));
             }
             else {
@@ -58,8 +82,19 @@ namespace dsp::noise_reduction {
         }
 
     private:
+        void updateHoldSamples() {
+            _holdSamples = (int)(_samplerate * HOLD_TIME);
+        }
+
+        static constexpr float HYSTERESIS = 1.0f;   // dB
+        static constexpr double HOLD_TIME = 0.1;    // seconds above threshold before unmuting
+
         float* normBuffer;
         float _level = -50.0f;
-                
+        double _samplerate = 48000.0;
+        int _holdSamples = 4800;
+        int _aboveCount = 0;
+        bool _muted = false;
+
     };
 }

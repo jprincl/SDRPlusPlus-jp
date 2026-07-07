@@ -439,6 +439,7 @@ private:
         setFMIFNREnabled(FMIFNRAllowed ? FMIFNREnabled : false);
 
         // Configure squelch
+        squelch.setSamplerate(ifSamplerate);
         setSquelchLevel(squelchLevel);
         setSquelchEnabled(squelchEnabled);
 

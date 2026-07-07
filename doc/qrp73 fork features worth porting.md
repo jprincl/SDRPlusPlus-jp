@@ -13,13 +13,19 @@ GPL-3.0, so license-compatible with our fork.
 
 ## Worth porting (in priority order)
 
-### 1. Squelch hysteresis + hold — tiny patch, immediate win
+### 1. Squelch hysteresis + hold — tiny patch, immediate win — **PORTED 2026-07-07**
 Their `core/src/dsp/noise_reduction/squelch.h` adds 1 dB hysteresis and a 100 ms hold
 before unmuting, and fixes the dB math (upstream/ours uses `10*log10` on an amplitude
 mean where `20*log10` is correct). Ours is verbatim upstream with none of that.
 
 Caveat: their counter is a `static int` inside `process()`, which is a bug with
 multiple VFOs — make it a member when porting.
+
+Port notes: counter made a per-instance member; the hold is sample-count based
+(`Squelch::setSamplerate`, wired from `selectDemodByID`) instead of their "10 blocks
+≈ 100 ms" assumption. Behavior change for users: with the `20*log10` fix the same
+signal reads twice the dB value, so previously saved squelch levels trigger
+differently and need re-adjusting (slider range -100..0 dB still covers it).
 
 ### 2. Manual/auto AGC switch for CW/SSB/AM/DSB — small, very relevant to QMX/ham use
 Each demodulator gets an AGC on/off checkbox plus a gain slider in dB; in auto mode the

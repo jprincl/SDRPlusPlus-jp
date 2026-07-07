@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.2-beta1 - 2026-07-07
+
+### Changed
+
+- Squelch improvements adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: 1 dB hysteresis when closing and a 100 ms above-threshold hold before unmuting, so the squelch no longer chatters at the threshold or pops open on short noise spikes. The hold is sample-count based in this port, exact at any IF sample rate.
+
+### Fixed
+
+- Squelch level dB math (also from @qrp73): the threshold now uses `20*log10` of the mean signal amplitude instead of `10*log10`, so the slider value is in real dB. Previously saved squelch levels will trigger differently and need re-adjusting.
+
 ## v1.2.2-beta - 2026-07-06
 
 ### Added
