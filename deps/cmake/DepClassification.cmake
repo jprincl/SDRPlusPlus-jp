@@ -16,6 +16,15 @@ sdrpp_register_dep(fftw3
     DEFAULT_LINKAGE portable:shared distro:shared android:shared
     USAGE core)
 
+# libFLAC is consumed by core's utils/wav writer (recorder FLAC container).
+# Static when bundled: encoder-only usage linked into sdrpp_core, keeps the
+# Windows/macOS/Android packaging untouched. Distro builds use libflac-dev
+# (CMake config on bookworm+, flac.pc pkg-config fallback on older bases).
+sdrpp_register_dep(flac
+    DEFAULT_SOURCE  portable:bundled distro:system android:bundled
+    DEFAULT_LINKAGE portable:static distro:shared android:static
+    USAGE core)
+
 sdrpp_register_dep(glfw3
     DEFAULT_SOURCE  portable:bundled distro:system android:bundled
     DEFAULT_LINKAGE portable:static distro:shared android:static

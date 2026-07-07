@@ -5,7 +5,7 @@
 #include <mutex>
 #include "riff.h"
 
-namespace wav {    
+namespace wav {
     #pragma pack(push, 1)
     struct FormatHeader {
         uint16_t codec;
@@ -19,14 +19,18 @@ namespace wav {
 
     enum Format {
         FORMAT_WAV,
-        FORMAT_RF64
+        FORMAT_RF64,
+        FORMAT_FLAC
     };
 
+    // The recorder persists these as their integer value — append new entries
+    // at the end, never renumber.
     enum SampleType {
         SAMP_TYPE_UINT8,
         SAMP_TYPE_INT16,
         SAMP_TYPE_INT32,
-        SAMP_TYPE_FLOAT32
+        SAMP_TYPE_FLOAT32,
+        SAMP_TYPE_INT24
     };
 
     enum Codec {
@@ -48,24 +52,39 @@ namespace wav {
         void setFormat(Format format);
         void setSampleType(SampleType type);
 
+        std::string getFileExtension();
+
         size_t getSamplesWritten() { return samplesWritten; }
 
         void write(float* samples, int count);
 
     private:
+        bool isOpenInt();
+        void freeBuffers();
+
         std::recursive_mutex mtx;
         FormatHeader hdr;
         riff::Writer rw;
+
+        // FLAC encoder handle. Opaque on purpose: FLAC__StreamEncoder is a
+        // typedef of an anonymous struct (not forward-declarable), and
+        // including <FLAC/stream_encoder.h> here would force the FLAC include
+        // dirs onto every consumer of this header while libFLAC links PRIVATE
+        // into sdrpp_core.
+        void* flacEnc = NULL;
 
         int _channels;
         uint64_t _samplerate;
         Format _format;
         SampleType _type;
         size_t bytesPerSamp;
+        double intScale;
 
         uint8_t* bufU8 = NULL;
         int16_t* bufI16 = NULL;
+        uint8_t* bufI24 = NULL;
         int32_t* bufI32 = NULL;
         size_t samplesWritten = 0;
+        bool writeErrorLogged = false;
     };
 }

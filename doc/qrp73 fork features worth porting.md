@@ -70,12 +70,59 @@ kHz/MHz/GHz and decimals ("7.100MHz", SDR Console/HDSDR style). Not ported: thei
 play-position slider, loop checkbox and real-time pacing (our playback is paced by
 the DSP sink and always loops, as upstream).
 
-### 4. Recorder: FLAC, MP3 (VBR), and 24-bit PCM containers — medium effort
+### 4. Recorder: FLAC, MP3 (VBR), and 24-bit PCM containers — medium effort — **FLAC + INT24 PORTED 2026-07-07** (MP3 not adopted)
 Contained in `core/src/utils/wav.{h,cpp}` + recorder `main.cpp` +
 `cmake/FindFLAC.cmake` / `cmake/Findmp3lame.cmake`. Code is tidy, but it adds
 **libFLAC and LAME to our static-deps CI** across Windows/Android/macOS/Linux — real
 but manageable work given our deps infrastructure. FLAC for baseband IQ recording is a
 genuinely useful storage saver.
+
+Dependency analysis (2026-07-07): their `wav::Writer` uses only the encode APIs
+(`FLAC/stream_encoder.h`, `lame/lame.h`); their three `cmake/Find*.cmake` modules
+don't fit our config-package-based `sdrpp_link_dep` flow and are not needed. libogg
+is not needed at all — it only serves the Ogg-FLAC container, and the recorder
+writes native `.flac` (build libFLAC with `WITH_OGG=OFF`).
+
+FLAC dependency infra landed 2026-07-07: `deps/+flac/` recipe (FLAC 1.5.0,
+`WITH_OGG=OFF`, encoder-only; `patch_flac.cmake` drops the unconditional
+`find_dependency(Ogg)` from `flac-config.cmake.in` that would break Ogg-less
+prefixes), registered `portable:bundled/static distro:system android:bundled/static`
+(USAGE core), added to the root dep set, linked PRIVATE into `sdrpp_core`
+(`FLAC::FLAC`; static builds carry `FLAC__NO_DLL` as an exported PUBLIC define),
+`libflac-dev` added to the deb docker apt list (bookworm+ resolves via CMake
+config, bullseye/focal/jammy fall back to `flac.pc`). No CI yml changes needed —
+the deps caches key on `deps/+**` content.
+
+Code port (2026-07-07): `wav::Writer` gained the FLAC encoder path and
+`SAMP_TYPE_INT24` (both WAV and FLAC); recorder gained the FLAC container option
+and Int24, with the sample-type list rebuilt per container (Float32 hidden for
+FLAC) and the file extension taken from the writer. Port differences vs qrp73:
+`FLAC__StreamEncoder` is held as an opaque `void*` in `wav.h` (it's an
+anonymous-struct typedef — NOT forward-declarable — and including FLAC headers
+in wav.h would break the PRIVATE core linkage); `SAMP_TYPE_INT24` was appended
+at the enum end because the recorder persists sample types by integer value;
+the FLAC conversion buffer is allocated once at open (qrp73 allocated a
+std::vector per write() call on the DSP thread); int24/FLAC float→int scaling is
+done in double — qrp73's float-precision `(8388608.0f - 0.5f)` rounds to 2^23
+and wraps full-scale +1.0 samples to negative full-scale in the int24 WAV path;
+int24/FLAC float→int scaling uses the symmetric `2^(bits-1) - 1` factor in
+double (volk-convention) instead of qrp73's `x * (2^(bits-1) - 0.5) - 0.5`,
+which (a) maps exact 0 to −1 LSB — a DC offset on silence — and (b) in the
+int24 WAV path computed the scale in float, where `(8388608.0f - 0.5f)`
+rounds to 2^23 and wraps full-scale +1.0 samples to negative full scale;
+encoder errors are logged once per file, not per block. Existing WAV
+uint8/int16/int32/f32 conversions kept upstream volk semantics (unchanged).
+Limits: FLAC caps at 1048575 Hz sample rate (libFLAC ≥ 1.4; 655350 on 1.3.x =
+Debian bullseye / Ubuntu focal+jammy) and 32-bit samples need libFLAC ≥ 1.4 —
+`open()` fails cleanly with a logged error, recorder stays idle.
+
+MP3/LAME deferred (separate follow-up if wanted): LAME 3.100 has no CMake build
+and Debian's `libmp3lame-dev` ships no pkg-config or CMake config, so it must be
+`distro:bundled` (mbedtls precedent) with a PATCH_COMMAND-injected CMakeLists
+(vcpkg's mp3lame port, MIT, is a good base) + `sdrpp_emit_imported_config`.
+LGPL-2+, MP3 patents expired 2017 — no licensing blocker, just work; it's ~80% of
+the total dependency effort for maybe 20% of the value (MP3 only compresses
+demodulated audio; FLAC covers IQ).
 
 ### 5. Level meter replacing SNR meter — small-medium — **PORTED 2026-07-07**
 `ImGui::LevelMeter(level, levelMax, snr, …)` (their

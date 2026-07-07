@@ -9,6 +9,8 @@
 
 - FFT windows extended from 3 to 7, adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: Rectangular, Hamming, Hann, Blackman, Nuttall, Blackman-Harris 4-term (−92 dB sidelobes) and Blackman-Harris 7-term (−180 dB sidelobes, for spur hunting next to strong carriers).
 
+- Recorder: FLAC container and 24-bit PCM sample type, adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73. FLAC compresses baseband IQ losslessly to roughly half the size (integer sample types only; sample rates up to 1.048 MHz — a libFLAC format limit — with higher rates failing cleanly at record start). Recording uses libFLAC 1.5.0, statically bundled on Windows/Android/macOS/AppImage and the distro package on Linux .deb builds. The MP3 (LAME) recording option from the same fork was not adopted.
+
 ### Changed
 
 - FFT amplitude calibration (also from @qrp73): the FFT window is now normalized to unity coherent gain, so a sinusoid reads its true dBFS amplitude with any window, any FFT size/rate combination, and any zero padding. Previously the reading was only correct for the rectangular window, and the displayed level also sagged when the FFT rate was raised. **With the default Nuttall window all FFT/waterfall levels now read ~9 dB higher (Blackman: ~7.5 dB), so saved waterfall min/max ranges will need a one-time re-adjustment.** The noise floor still shifts slightly between windows (equivalent noise bandwidth) — that is physically correct and matches bench spectrum analyzers.

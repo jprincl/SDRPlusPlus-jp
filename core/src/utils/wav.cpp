@@ -3,7 +3,11 @@
 #include <stdexcept>
 #include <dsp/buffer/buffer.h>
 #include <dsp/stream.h>
+#include <utils/flog.h>
+#include <algorithm>
+#include <cmath>
 #include <map>
+#include <FLAC/stream_encoder.h>
 
 namespace wav {
     const char* WAVE_FILE_TYPE          = "WAVE";
@@ -15,15 +19,16 @@ namespace wav {
     std::map<SampleType, int> SAMP_BITS = {
         { SAMP_TYPE_UINT8, 8 },
         { SAMP_TYPE_INT16, 16 },
+        { SAMP_TYPE_INT24, 24 },
         { SAMP_TYPE_INT32, 32 },
         { SAMP_TYPE_FLOAT32, 32 }
     };
-    
+
     Writer::Writer(int channels, uint64_t samplerate, Format format, SampleType type) {
         // Validate channels and samplerate
         if (channels < 1) { throw std::runtime_error("Channel count must be greater or equal to 1"); }
         if (!samplerate) { throw std::runtime_error("Samplerate must be non-zero"); }
-        
+
         // Initialize variables
         _channels = channels;
         _samplerate = samplerate;
@@ -36,17 +41,66 @@ namespace wav {
     bool Writer::open(std::string path) {
         std::lock_guard<std::recursive_mutex> lck(mtx);
         // Close previous file
-        if (rw.isOpen()) { close(); }
+        if (isOpenInt()) { close(); }
 
         // Reset work values
         samplesWritten = 0;
+        writeErrorLogged = false;
+        auto bitsIt = SAMP_BITS.find(_type);
+        if (bitsIt == SAMP_BITS.end()) {
+            flog::error("Unknown sample type: {}", (int)_type);
+            return false;
+        }
+        int bits = bitsIt->second;
+        bytesPerSamp = (bits / 8) * _channels;
+
+        // Symmetric full-scale factor (2^(bits-1) - 1), the same convention as
+        // the volk int16/int32 conversions below: 0 maps to 0 (no DC offset on
+        // silence) and clamped +/-1.0 input can't overflow the integer range,
+        // at the cost of the deepest negative code staying unused. Computed in
+        // double so the scale and products are exact for depths up to 32 bits.
+        intScale = (double)((1ull << (bits - 1)) - 1);
+
+        if (_format == FORMAT_FLAC) {
+            // The FLAC codec takes integer samples only
+            if (_type == SAMP_TYPE_FLOAT32) {
+                flog::error("FLAC container requires an integer sample type");
+                return false;
+            }
+
+            // Create and configure the encoder
+            FLAC__StreamEncoder* enc = FLAC__stream_encoder_new();
+            if (!enc) {
+                flog::error("FLAC__stream_encoder_new() failed");
+                return false;
+            }
+            FLAC__stream_encoder_set_channels(enc, _channels);
+            FLAC__stream_encoder_set_sample_rate(enc, (uint32_t)_samplerate);
+            FLAC__stream_encoder_set_bits_per_sample(enc, bits);
+            FLAC__stream_encoder_set_compression_level(enc, 5);
+
+            // Open the output file. Fails (among others) for samplerates above
+            // FLAC__MAX_SAMPLE_RATE (1048575 Hz; 655350 Hz on libFLAC < 1.4)
+            // and for 32-bit samples on libFLAC < 1.4.
+            auto status = FLAC__stream_encoder_init_file(enc, path.c_str(), NULL, NULL);
+            if (status != FLAC__STREAM_ENCODER_INIT_STATUS_OK) {
+                flog::error("FLAC__stream_encoder_init_file() failed: {}", FLAC__StreamEncoderInitStatusString[status]);
+                FLAC__stream_encoder_delete(enc);
+                return false;
+            }
+
+            // Conversion buffer (the encoder takes sign-extended int32 at every depth)
+            bufI32 = dsp::buffer::alloc<int32_t>(STREAM_BUFFER_SIZE * _channels);
+
+            flacEnc = enc;
+            return true;
+        }
 
         // Fill header
-        bytesPerSamp = (SAMP_BITS[_type] / 8) * _channels;
         hdr.codec = (_type == SAMP_TYPE_FLOAT32) ? CODEC_FLOAT : CODEC_PCM;
         hdr.channelCount = _channels;
         hdr.sampleRate = _samplerate;
-        hdr.bitDepth = SAMP_BITS[_type];
+        hdr.bitDepth = bits;
         hdr.bytesPerSample = bytesPerSamp;
         hdr.bytesPerSecond = bytesPerSamp * _samplerate;
 
@@ -57,6 +111,9 @@ namespace wav {
             break;
         case SAMP_TYPE_INT16:
             bufI16 = dsp::buffer::alloc<int16_t>(STREAM_BUFFER_SIZE * _channels);
+            break;
+        case SAMP_TYPE_INT24:
+            bufI24 = dsp::buffer::alloc<uint8_t>(STREAM_BUFFER_SIZE * _channels * 3);
             break;
         case SAMP_TYPE_INT32:
             bufI32 = dsp::buffer::alloc<int32_t>(STREAM_BUFFER_SIZE * _channels);
@@ -69,7 +126,10 @@ namespace wav {
         }
 
         // Open file
-        if (!rw.open(path, WAVE_FILE_TYPE)) { return false; }
+        if (!rw.open(path, WAVE_FILE_TYPE)) {
+            freeBuffers();
+            return false;
+        }
 
         // Write format chunk
         rw.beginChunk(FORMAT_MARKER);
@@ -78,27 +138,46 @@ namespace wav {
 
         // Begin data chunk
         rw.beginChunk(DATA_MARKER);
-        
+
         return true;
+    }
+
+    bool Writer::isOpenInt() {
+        return flacEnc || rw.isOpen();
     }
 
     bool Writer::isOpen() {
         std::lock_guard<std::recursive_mutex> lck(mtx);
-        return rw.isOpen();
+        return isOpenInt();
     }
 
     void Writer::close() {
         std::lock_guard<std::recursive_mutex> lck(mtx);
         // Do nothing if the file is not open
-        if (!rw.isOpen()) { return; }
+        if (!isOpenInt()) { return; }
 
-        // Finish data chunk
-        rw.endChunk();
+        if (flacEnc) {
+            // Flush the encoder and finalize the file (rewrites STREAMINFO)
+            FLAC__StreamEncoder* enc = (FLAC__StreamEncoder*)flacEnc;
+            if (!FLAC__stream_encoder_finish(enc)) {
+                flog::error("FLAC__stream_encoder_finish() failed");
+            }
+            FLAC__stream_encoder_delete(enc);
+            flacEnc = NULL;
+        }
+        else {
+            // Finish data chunk
+            rw.endChunk();
 
-        // Close the file
-        rw.close();
+            // Close the file
+            rw.close();
+        }
 
         // Free buffers
+        freeBuffers();
+    }
+
+    void Writer::freeBuffers() {
         if (bufU8) {
             dsp::buffer::free(bufU8);
             bufU8 = NULL;
@@ -106,6 +185,10 @@ namespace wav {
         if (bufI16) {
             dsp::buffer::free(bufI16);
             bufI16 = NULL;
+        }
+        if (bufI24) {
+            dsp::buffer::free(bufI24);
+            bufI24 = NULL;
         }
         if (bufI32) {
             dsp::buffer::free(bufI32);
@@ -116,7 +199,7 @@ namespace wav {
     void Writer::setChannels(int channels) {
         std::lock_guard<std::recursive_mutex> lck(mtx);
         // Do not allow settings to change while open
-        if (rw.isOpen()) { throw std::runtime_error("Cannot change parameters while file is open"); }
+        if (isOpenInt()) { throw std::runtime_error("Cannot change parameters while file is open"); }
 
         // Validate channel count
         if (channels < 1) { throw std::runtime_error("Channel count must be greater or equal to 1"); }
@@ -126,7 +209,7 @@ namespace wav {
     void Writer::setSamplerate(uint64_t samplerate) {
         std::lock_guard<std::recursive_mutex> lck(mtx);
         // Do not allow settings to change while open
-        if (rw.isOpen()) { throw std::runtime_error("Cannot change parameters while file is open"); }
+        if (isOpenInt()) { throw std::runtime_error("Cannot change parameters while file is open"); }
 
         // Validate samplerate
         if (!samplerate) { throw std::runtime_error("Samplerate must be non-zero"); }
@@ -136,24 +219,52 @@ namespace wav {
     void Writer::setFormat(Format format) {
         std::lock_guard<std::recursive_mutex> lck(mtx);
         // Do not allow settings to change while open
-        if (rw.isOpen()) { throw std::runtime_error("Cannot change parameters while file is open"); }
+        if (isOpenInt()) { throw std::runtime_error("Cannot change parameters while file is open"); }
         _format = format;
     }
 
     void Writer::setSampleType(SampleType type) {
         std::lock_guard<std::recursive_mutex> lck(mtx);
         // Do not allow settings to change while open
-        if (rw.isOpen()) { throw std::runtime_error("Cannot change parameters while file is open"); }
+        if (isOpenInt()) { throw std::runtime_error("Cannot change parameters while file is open"); }
         _type = type;
+    }
+
+    std::string Writer::getFileExtension() {
+        std::lock_guard<std::recursive_mutex> lck(mtx);
+        switch (_format) {
+        case FORMAT_FLAC: return ".flac";
+        default:          return ".wav";
+        }
     }
 
     void Writer::write(float* samples, int count) {
         std::lock_guard<std::recursive_mutex> lck(mtx);
-        if (!rw.isOpen()) { return; }
-        
-        // Select different writer function depending on the chose depth
+
         int tcount = count * _channels;
         int tbytes = count * bytesPerSamp;
+
+        if (flacEnc) {
+            for (int i = 0; i < tcount; i++) {
+                bufI32[i] = (int32_t)llround((double)std::clamp<float>(samples[i], -1.0f, 1.0f) * intScale);
+            }
+            FLAC__StreamEncoder* enc = (FLAC__StreamEncoder*)flacEnc;
+            if (!FLAC__stream_encoder_process_interleaved(enc, bufI32, count)) {
+                // Log the first failure only (this runs per DSP block)
+                if (!writeErrorLogged) {
+                    auto state = FLAC__stream_encoder_get_state(enc);
+                    flog::error("FLAC__stream_encoder_process_interleaved() failed: {}", FLAC__StreamEncoderStateString[state]);
+                    writeErrorLogged = true;
+                }
+                return;
+            }
+            samplesWritten += count;
+            return;
+        }
+
+        if (!rw.isOpen()) { return; }
+
+        // Select different writer function depending on the chose depth
         switch (_type) {
         case SAMP_TYPE_UINT8:
             // Volk doesn't support unsigned ints yet :/
@@ -166,6 +277,19 @@ namespace wav {
             volk_32f_s32f_convert_16i(bufI16, samples, 32767.0f, tcount);
             rw.write((uint8_t*)bufI16, tbytes);
             break;
+        case SAMP_TYPE_INT24:
+        {
+            // Little-endian 3-byte packing
+            uint8_t* dst = bufI24;
+            for (int i = 0; i < tcount; i++) {
+                int32_t sval = (int32_t)llround((double)std::clamp<float>(samples[i], -1.0f, 1.0f) * intScale);
+                *(dst++) = (uint8_t)sval;
+                *(dst++) = (uint8_t)(sval >> 8);
+                *(dst++) = (uint8_t)(sval >> 16);
+            }
+            rw.write(bufI24, tbytes);
+            break;
+        }
         case SAMP_TYPE_INT32:
             volk_32f_s32f_convert_32i(bufI32, samples, 2147483647.0f, tcount);
             rw.write((uint8_t*)bufI32, tbytes);

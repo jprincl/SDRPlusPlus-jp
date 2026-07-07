@@ -134,6 +134,14 @@ sdrpp_link_dep(sdrpp_core zstd PUBLIC PC_NAME libzstd
     STATIC_TARGETS zstd::libzstd_static)
 sdrpp_link_dep(sdrpp_core Volk PUBLIC PC_NAME volk TARGETS Volk::volk volk::volk volk)
 
+# libFLAC is a core implementation detail of the utils/wav writer (recorder
+# FLAC container). Modules consume wav::Writer, not FLAC itself — keep the
+# encoder headers out of wav.h so PRIVATE linkage holds.
+sdrpp_link_dep(sdrpp_core flac PRIVATE
+    PACKAGE_NAME FLAC
+    PC_NAME      flac
+    TARGETS      FLAC::FLAC)
+
 if (NOT ANDROID)
     find_package(OpenGL REQUIRED)
     target_link_libraries(sdrpp_core PUBLIC OpenGL::GL)

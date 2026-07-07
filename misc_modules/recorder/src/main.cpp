@@ -47,14 +47,10 @@ public:
         // Define option lists
         containers.define("WAV", wav::FORMAT_WAV);
         // containers.define("RF64", wav::FORMAT_RF64); // Disabled for now
-        sampleTypes.define(wav::SAMP_TYPE_UINT8, "Uint8", wav::SAMP_TYPE_UINT8);
-        sampleTypes.define(wav::SAMP_TYPE_INT16, "Int16", wav::SAMP_TYPE_INT16);
-        sampleTypes.define(wav::SAMP_TYPE_INT32, "Int32", wav::SAMP_TYPE_INT32);
-        sampleTypes.define(wav::SAMP_TYPE_FLOAT32, "Float32", wav::SAMP_TYPE_FLOAT32);
+        containers.define("FLAC", wav::FORMAT_FLAC);
 
         // Load default config for option lists
         containerId = containers.valueId(wav::FORMAT_WAV);
-        sampleTypeId = sampleTypes.valueId(wav::SAMP_TYPE_INT16);
 
         // Load config
         config.acquire();
@@ -67,6 +63,7 @@ public:
         if (config.conf[name].contains("container") && containers.keyExists(config.conf[name]["container"])) {
             containerId = containers.keyId(config.conf[name]["container"]);
         }
+        refreshSampleTypes();
         if (config.conf[name].contains("sampleType") && sampleTypes.keyExists(config.conf[name]["sampleType"])) {
             sampleTypeId = sampleTypes.keyId(config.conf[name]["sampleType"]);
         }
@@ -169,7 +166,7 @@ public:
 
         // Open file
         std::string vfoName = (recMode == RECORDER_MODE_AUDIO) ? selectedStreamName : "";
-        std::string extension = ".wav";
+        std::string extension = writer.getFileExtension();
         std::string expandedPath = expandString(folderSelect.path + "/" + genFileName(nameTemplate, recMode, vfoName) + extension);
         if (!writer.open(expandedPath)) {
             flog::error("Failed to open file for recording: {0}", expandedPath);
@@ -269,8 +266,12 @@ private:
         ImGui::LeftLabel("Container");
         ImGui::FillWidth();
         if (ImGui::Combo(CONCAT("##_recorder_container_", _this->name), &_this->containerId, _this->containers.txt)) {
+            // The sample type choices depend on the container; save the
+            // (possibly remapped) sample type along with the container.
+            _this->refreshSampleTypes();
             config.acquire();
             config.conf[_this->name]["container"] = _this->containers.key(_this->containerId);
+            config.conf[_this->name]["sampleType"] = _this->sampleTypes.key(_this->sampleTypeId);
             config.release(true);
         }
 
@@ -352,6 +353,22 @@ private:
                 ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Recording %02d:%02d:%02d", dtm->tm_hour, dtm->tm_min, dtm->tm_sec);
             }
         }
+    }
+
+    void refreshSampleTypes() {
+        // The FLAC codec takes integer samples only, so Float32 is a
+        // WAV-container-only choice. Rebuild the list for the selected
+        // container, keeping the current selection when it's still valid.
+        wav::SampleType prev = sampleTypes.empty() ? wav::SAMP_TYPE_INT16 : sampleTypes[sampleTypeId];
+        sampleTypes.clear();
+        sampleTypes.define(wav::SAMP_TYPE_UINT8, "Uint8", wav::SAMP_TYPE_UINT8);
+        sampleTypes.define(wav::SAMP_TYPE_INT16, "Int16", wav::SAMP_TYPE_INT16);
+        sampleTypes.define(wav::SAMP_TYPE_INT24, "Int24", wav::SAMP_TYPE_INT24);
+        sampleTypes.define(wav::SAMP_TYPE_INT32, "Int32", wav::SAMP_TYPE_INT32);
+        if (containers[containerId] != wav::FORMAT_FLAC) {
+            sampleTypes.define(wav::SAMP_TYPE_FLOAT32, "Float32", wav::SAMP_TYPE_FLOAT32);
+        }
+        sampleTypeId = sampleTypes.valueExists(prev) ? sampleTypes.valueId(prev) : sampleTypes.valueId(wav::SAMP_TYPE_INT16);
     }
 
     void selectStream(std::string name) {
