@@ -9,6 +9,7 @@
 
 ### Changed
 
+- File source WAV support extended, adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: plays RF64 (>4 GB recordings), WAVE_FORMAT_EXTENSIBLE, 8/16/24/32-bit PCM and 32/64-bit float, mono and multi-channel files, and recovers unfinalized recordings from crashed recorders. The sample format is auto-detected (the "Float32 Mode" checkbox is gone), the menu shows the detected format and duration, filename frequencies are also parsed with kHz/MHz/GHz units and decimals (HDSDR/SDR Console naming), and selecting a file during playback — previously a crash — is now disabled.
 - Squelch improvements adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: 1 dB hysteresis when closing and a 100 ms above-threshold hold before unmuting, so the squelch no longer chatters at the threshold or pops open on short noise spikes. The hold is sample-count based in this port, exact at any IF sample rate.
 - PlutoSDR (also from @F5OEO): larger IIO buffers (50 ms, 8 kernel buffers) to avoid underflows at high sample rates over USB and network, device scan now covers both the USB and network backends, extended device whitelist (Pluto+, ad9361, FISH), and the full libiio description is shown as the device name.
 
