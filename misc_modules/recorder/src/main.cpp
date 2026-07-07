@@ -330,9 +330,11 @@ private:
         bool canRecord = _this->folderSelect.pathIsValid();
         if (_this->recMode == RECORDER_MODE_AUDIO) { canRecord &= !_this->selectedStreamName.empty(); }
         if (!_this->recording) {
+            if (!canRecord) { style::beginDisabled(); }
             if (ImGui::Button(CONCAT("Record##_recorder_rec_", _this->name), ImVec2(menuWidth, 0))) {
                 _this->start();
             }
+            if (!canRecord) { style::endDisabled(); }
             ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_Text), "Idle --:--:--");
         }
         else {
@@ -423,8 +425,12 @@ private:
         if (_this->selectedStreamName == name) {
             _this->selectStream("");
         }
-        else {
+        else if (_this->audioStreams.keyExists(_this->selectedStreamName)) {
             _this->streamId = _this->audioStreams.keyId(_this->selectedStreamName);
+        }
+        else {
+            // Selected stream is gone too (e.g. it failed to bind); keyId() throws on a missing key.
+            _this->streamId = 0;
         }
     }
 
@@ -581,7 +587,7 @@ private:
     bool ignoringSilence = false;
     wav::Writer writer;
     std::recursive_mutex recMtx;
-    dsp::stream<dsp::complex_t>* basebandStream;
+    dsp::stream<dsp::complex_t>* basebandStream = NULL;
     dsp::stream<dsp::stereo_t> stereoStream;
     dsp::sink::Handler<dsp::complex_t> basebandSink;
     dsp::sink::Handler<dsp::stereo_t> stereoSink;

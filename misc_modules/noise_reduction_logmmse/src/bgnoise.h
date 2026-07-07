@@ -42,7 +42,9 @@ public:
         logFrame.clear();
         logFrame.reserve(fftFrame.size());
         for(float q : fftFrame) {
-            if(q != ERASED_SAMPLE) {
+            // Skip non-positive samples: log10(0) = -inf would poison minn and
+            // turn the bucket index math below into NaN (UB when cast to int).
+            if(q != ERASED_SAMPLE && q > 0.0f) {
                 q = log10(q);
                 minn = std::min<float>(minn, q);
                 maxx = std::max<float>(maxx, q);

@@ -1,5 +1,4 @@
 #pragma once
-#include "dialog_box.h"
 #include <imgui.h>
 #include <string>
 #include <gui/gui.h>
