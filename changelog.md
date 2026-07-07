@@ -5,10 +5,12 @@
 ### Added
 
 - Manual/auto AGC switch for the SSB (USB/LSB/DSB), CW/CW-R and AM demodulators, adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: an AGC checkbox with a gain slider in dB (for AM an Off/Carrier/Audio AGC mode selector). In auto mode the slider shows the live AGC gain; in manual mode it sets a fixed gain, with the last AGC gain carried over so the audio level doesn't jump. Manual gain is still clipped to the maximum output amplitude to protect ears and speakers.
+- PlutoSDR improvements adopted from the [SDRPlusPlus](https://github.com/F5OEO/SDRPlusPlus) fork by @F5OEO (Evariste Courjaud): RX1/RX2 RF input selection for hardware with a second RX input (Pluto+, ANTSDR, LibreSDR RevC), and buffer underflow / ADC overload status indicators in the source menu. A config persistence bug in the original RF input selection was fixed during the port; the CS8 streaming mode (Tezuka firmware only) and the removal of the FIR-based low sample rates were deliberately not adopted.
 
 ### Changed
 
 - Squelch improvements adopted from the [SDRPP](https://github.com/qrp73/SDRPP) fork by @qrp73: 1 dB hysteresis when closing and a 100 ms above-threshold hold before unmuting, so the squelch no longer chatters at the threshold or pops open on short noise spikes. The hold is sample-count based in this port, exact at any IF sample rate.
+- PlutoSDR (also from @F5OEO): larger IIO buffers (50 ms, 8 kernel buffers) to avoid underflows at high sample rates over USB and network, device scan now covers both the USB and network backends, extended device whitelist (Pluto+, ad9361, FISH), and the full libiio description is shown as the device name.
 
 ### Fixed
 
