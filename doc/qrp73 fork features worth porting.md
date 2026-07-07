@@ -42,7 +42,7 @@ via setters after init) so third-party callers and `vor_receiver` don't break. A
 decay sliders are greyed out in manual mode, the gain slider shows live AGC gain in
 auto mode, and the last AGC gain carries over when switching to manual.
 
-### 3. file_source format support — self-contained, high interop value
+### 3. file_source format support — self-contained, high interop value — **PORTED 2026-07-07**
 Their `source_modules/file_source/src/wavreader.h` (252 lines, drop-in replacement
 shape) handles:
 - RF64 (>4 GB recordings)
@@ -53,6 +53,22 @@ shape) handles:
 
 Ours is the bare upstream reader (effectively 16-bit PCM only). Matters for playing
 back recordings from SDR#, SDR Console, HDSDR, etc.
+
+Port notes: `wavreader.h` adapted with fixes — their `readSamples` remaining-bytes
+math over-subtracted `_dataOffset` (and its `size_t < 0` check was dead code); the
+parsed ds64/data chunk sizes were discarded (we honor them when plausible and only
+fall back to physical file size for recovery, so trailing non-data chunks aren't
+played as samples); RIFF odd-size chunk padding handled; truncated headers can't
+infinite-loop the chunk scan; `wBlockAlign==0` recovered from channels×bits. Their
+per-format worker loops used VLAs and the `0.5d` literal suffix (both GCC-only, we
+build MSVC) — replaced by a single worker with per-format converter functions;
+mono plays as I=Q like theirs, >2-channel files play channels 0/1. The manual
+"Float32 Mode" checkbox is gone (format auto-detected; a format/duration line shows
+in the menu instead), file selection is disabled while running (crash fix — deleting
+the reader under the worker), and filename frequency parsing now accepts
+kHz/MHz/GHz and decimals ("7.100MHz", SDR Console/HDSDR style). Not ported: their
+play-position slider, loop checkbox and real-time pacing (our playback is paced by
+the DSP sink and always loops, as upstream).
 
 ### 4. Recorder: FLAC, MP3 (VBR), and 24-bit PCM containers — medium effort
 Contained in `core/src/utils/wav.{h,cpp}` + recorder `main.cpp` +

@@ -3,6 +3,7 @@
 #include <utils/flog.h>
 #include <module.h>
 #include <gui/gui.h>
+#include <gui/style.h>
 #include <signal_path/signal_path.h>
 #include <wavreader.h>
 #include <core.h>
@@ -12,6 +13,7 @@
 #include <gui/tuner.h>
 #include <algorithm>
 #include <stdexcept>
+#include <cstdio>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -19,11 +21,72 @@ SDRPP_MOD_INFO{
     /* Name:            */ "file_source",
     /* Description:     */ "Wav file source module for SDR++",
     /* Author:          */ "Ryzerth",
-    /* Version:         */ 0, 1, 1,
+    /* Version:         */ 0, 1, 2,
     /* Max instances    */ 1
 };
 
 ConfigManager config;
+
+// Converters from one WAV sample to float, all little-endian
+// (per-format conversion adopted from qrp73/SDRPP)
+typedef float (*SampleConv)(const uint8_t*);
+
+static float convU8(const uint8_t* p) {
+    return ((float)p[0] - 127.5f) * (1.0f / 127.5f);
+}
+static float convI16(const uint8_t* p) {
+    int16_t v;
+    memcpy(&v, p, sizeof(v));
+    return (float)v * (1.0f / 32768.0f);
+}
+static float convI24(const uint8_t* p) {
+    int32_t v = (int32_t)((uint32_t)(p[0] | (p[1] << 8) | (p[2] << 16)) << 8) >> 8;
+    return (float)v * (1.0f / 8388608.0f);
+}
+static float convI32(const uint8_t* p) {
+    int32_t v;
+    memcpy(&v, p, sizeof(v));
+    return (float)((double)v * (1.0 / 2147483648.0));
+}
+static float convF32(const uint8_t* p) {
+    float v;
+    memcpy(&v, p, sizeof(v));
+    return v;
+}
+static float convF64(const uint8_t* p) {
+    double v;
+    memcpy(&v, p, sizeof(v));
+    return (float)v;
+}
+
+static SampleConv getSampleConv(WAVE_FORMAT format, int bitDepth) {
+    if (format == WAVE_FORMAT::PCM) {
+        switch (bitDepth) {
+            case 8:  return convU8;
+            case 16: return convI16;
+            case 24: return convI24;
+            case 32: return convI32;
+        }
+    }
+    else if (format == WAVE_FORMAT::IEEE_FLOAT) {
+        switch (bitDepth) {
+            case 32: return convF32;
+            case 64: return convF64;
+        }
+    }
+    return NULL;
+}
+
+// The worker assumes all of this, so it must hold before starting one
+static bool isPlayable(WavReader* reader) {
+    if (!reader) { return false; }
+    int channels = reader->getChannelCount();
+    int bytesPerChan = reader->getBitDepth() / 8;
+    return getSampleConv(reader->getFormat(), reader->getBitDepth()) != NULL
+        && channels >= 1
+        && reader->getBlockAlign() >= channels * bytesPerChan
+        && reader->getSampleCount() >= 1;
+}
 
 class FileSourceModule : public ModuleManager::Instance {
 public:
@@ -90,9 +153,9 @@ private:
     static void start(void* ctx) {
         FileSourceModule* _this = (FileSourceModule*)ctx;
         if (_this->running) { return; }
-        if (_this->reader == NULL) { return; }
+        if (!isPlayable(_this->reader)) { return; }
         _this->running = true;
-        _this->workerThread = _this->float32Mode ? std::thread(floatWorker, _this) : std::thread(worker, _this);
+        _this->workerThread = std::thread(worker, _this);
         flog::info("FileSourceModule '{0}': Start!", _this->name);
     }
 
@@ -116,77 +179,136 @@ private:
     static void menuHandler(void* ctx) {
         FileSourceModule* _this = (FileSourceModule*)ctx;
 
-        if (_this->fileSelect.render("##file_source_" + _this->name)) {
-            if (_this->fileSelect.pathIsValid()) {
+        if (_this->running) { style::beginDisabled(); }
+        bool fileChanged = _this->fileSelect.render("##file_source_" + _this->name);
+        if (_this->running) { style::endDisabled(); }
+
+        if (fileChanged && _this->fileSelect.pathIsValid()) {
+            if (_this->reader != NULL) {
+                _this->reader->close();
+                delete _this->reader;
+                _this->reader = NULL;
+            }
+            try {
+                _this->reader = new WavReader(_this->fileSelect.path);
+                if (!_this->reader->isValid()) {
+                    throw std::runtime_error("Invalid or damaged WAV file");
+                }
+                if (_this->reader->getSampleRate() == 0) {
+                    throw std::runtime_error("Sample rate may not be zero");
+                }
+                if (!getSampleConv(_this->reader->getFormat(), _this->reader->getBitDepth())) {
+                    throw std::runtime_error(std::string("Unsupported sample format: ") + _this->reader->getFormatName() + ", " + std::to_string(_this->reader->getBitDepth()) + " bit");
+                }
+                if (_this->reader->getSampleCount() < 1) {
+                    throw std::runtime_error("File contains no samples");
+                }
+                if (!isPlayable(_this->reader)) {
+                    throw std::runtime_error("Invalid channel layout");
+                }
+                _this->sampleRate = _this->reader->getSampleRate();
+                core::setInputSampleRate(_this->sampleRate);
+                std::string filename = std::filesystem::path(_this->fileSelect.path).filename().string();
+                _this->centerFreq = _this->getFrequency(filename);
+                tuner::tune(tuner::TUNER_MODE_IQ_ONLY, "", _this->centerFreq);
+                //gui::freqSelect.minFreq = _this->centerFreq - (_this->sampleRate/2);
+                //gui::freqSelect.maxFreq = _this->centerFreq + (_this->sampleRate/2);
+                //gui::freqSelect.limitFreq = true;
+            }
+            catch (const std::exception& e) {
+                flog::error("Error: {}", e.what());
                 if (_this->reader != NULL) {
                     _this->reader->close();
                     delete _this->reader;
+                    _this->reader = NULL;
                 }
-                try {
-                    _this->reader = new WavReader(_this->fileSelect.path);
-                    if (_this->reader->getSampleRate() == 0) {
-                        _this->reader->close();
-                        delete _this->reader;
-                        _this->reader = NULL;
-                        throw std::runtime_error("Sample rate may not be zero");
-                    }
-                    _this->sampleRate = _this->reader->getSampleRate();
-                    core::setInputSampleRate(_this->sampleRate);
-                    std::string filename = std::filesystem::path(_this->fileSelect.path).filename().string();
-                    _this->centerFreq = _this->getFrequency(filename);
-                    tuner::tune(tuner::TUNER_MODE_IQ_ONLY, "", _this->centerFreq);
-                    //gui::freqSelect.minFreq = _this->centerFreq - (_this->sampleRate/2);
-                    //gui::freqSelect.maxFreq = _this->centerFreq + (_this->sampleRate/2);
-                    //gui::freqSelect.limitFreq = true;
-                }
-                catch (const std::exception& e) {
-                    flog::error("Error: {}", e.what());
-                }
-                config.acquire();
-                config.conf["path"] = _this->fileSelect.path;
-                config.release(true);
             }
+            _this->updateFormatStr();
+            config.acquire();
+            config.conf["path"] = _this->fileSelect.path;
+            config.release(true);
         }
 
-        ImGui::Checkbox("Float32 Mode##_file_source", &_this->float32Mode);
+        if (!_this->formatStr.empty()) {
+            ImGui::TextDisabled("%s", _this->formatStr.c_str());
+        }
+    }
+
+    void updateFormatStr() {
+        if (reader == NULL) {
+            formatStr = "";
+            return;
+        }
+        uint32_t rate = std::max(reader->getSampleRate(), (uint32_t)1);
+        uint64_t seconds = reader->getSampleCount() / rate;
+        char buf[128];
+        snprintf(buf, sizeof(buf), "%s %u bit, %u ch, %.6g MS/s, %02u:%02u:%02u",
+                 reader->getFormatName(), (unsigned)reader->getBitDepth(), (unsigned)reader->getChannelCount(),
+                 rate / 1e6, (unsigned)(seconds / 3600), (unsigned)((seconds / 60) % 60), (unsigned)(seconds % 60));
+        formatStr = buf;
     }
 
     static void worker(void* ctx) {
         FileSourceModule* _this = (FileSourceModule*)ctx;
-        double sampleRate = std::max(_this->reader->getSampleRate(), (uint32_t)1);
-        int blockSize = std::min((int)(sampleRate / 200.0f), (int)STREAM_BUFFER_SIZE);
-        int16_t* inBuf = new int16_t[blockSize * 2];
+        WavReader* reader = _this->reader;
+        uint32_t sampleRate = std::max(reader->getSampleRate(), (uint32_t)1);
+        int blockSize = std::clamp((int)(sampleRate / 200), 1, (int)STREAM_BUFFER_SIZE);
+        int channels = reader->getChannelCount();
+        int blockAlign = reader->getBlockAlign();
+        int bytesPerChan = reader->getBitDepth() / 8;
+
+        // Cap the input buffer at 16 MB: a corrupt header could otherwise
+        // declare sizes whose bad_alloc, thrown on this thread, would
+        // terminate the app
+        blockSize = std::clamp(blockSize, 1, std::max(1, (int)(16777216 / blockAlign)));
+
+        // start() only runs the worker on an isPlayable() reader
+        SampleConv conv = getSampleConv(reader->getFormat(), reader->getBitDepth());
+
+        // Stereo float32 is already the stream's format, read it in directly
+        bool direct = (conv == convF32 && channels == 2 && blockAlign == sizeof(dsp::complex_t));
+        uint8_t* inBuf = direct ? NULL : new uint8_t[(size_t)blockSize * blockAlign];
 
         while (true) {
-            _this->reader->readSamples(inBuf, blockSize * 2 * sizeof(int16_t));
-            volk_16i_s32f_convert_32f((float*)_this->stream.writeBuf, inBuf, 32768.0f, blockSize * 2);
-            if (!_this->stream.swap(blockSize)) { break; };
+            // swap() exchanges writeBuf/readBuf, so re-fetch it every block
+            void* readDst = direct ? (void*)_this->stream.writeBuf : (void*)inBuf;
+            size_t read = reader->readSamples(readDst, (size_t)blockSize * blockAlign);
+            if (read < (size_t)blockAlign) {
+                // End of file, loop back to the start
+                reader->rewind();
+                read = reader->readSamples(readDst, (size_t)blockSize * blockAlign);
+                if (read < (size_t)blockAlign) { break; }
+            }
+            int frames = read / blockAlign;
+            if (!direct) {
+                const uint8_t* src = inBuf;
+                dsp::complex_t* dst = _this->stream.writeBuf;
+                for (int i = 0; i < frames; i++) {
+                    // Mono plays as I=Q; extra channels beyond 2 are ignored
+                    float ival = conv(src);
+                    dst[i].re = ival;
+                    dst[i].im = (channels >= 2) ? conv(src + bytesPerChan) : ival;
+                    src += blockAlign;
+                }
+            }
+            if (!_this->stream.swap(frames)) { break; }
         }
 
-        delete[] inBuf;
-    }
-
-    static void floatWorker(void* ctx) {
-        FileSourceModule* _this = (FileSourceModule*)ctx;
-        double sampleRate = std::max(_this->reader->getSampleRate(), (uint32_t)1);
-        int blockSize = std::min((int)(sampleRate / 200.0f), (int)STREAM_BUFFER_SIZE);
-        dsp::complex_t* inBuf = new dsp::complex_t[blockSize];
-
-        while (true) {
-            _this->reader->readSamples(_this->stream.writeBuf, blockSize * sizeof(dsp::complex_t));
-            if (!_this->stream.swap(blockSize)) { break; };
-        }
-
-        delete[] inBuf;
+        if (inBuf) { delete[] inBuf; }
     }
 
     double getFrequency(std::string filename) {
-        std::regex expr("[0-9]+Hz");
+        // Match e.g. "14100000Hz" (SDR++, SDR#), "7100kHz" (HDSDR) or
+        // "7.100MHz" (SDR Console)
+        std::regex expr("([0-9]+(\\.[0-9]+)?)(G|M|k)?Hz");
         std::smatch matches;
-        std::regex_search(filename, matches, expr);
-        if (matches.empty()) { return 0; }
-        std::string freqStr = matches[0].str();
-        return std::atof(freqStr.substr(0, freqStr.size() - 2).c_str());
+        if (!std::regex_search(filename, matches, expr)) { return 0; }
+        double freq = std::atof(matches[1].str().c_str());
+        std::string unit = matches[3].str();
+        if (unit == "G") { return freq * 1e9; }
+        if (unit == "M") { return freq * 1e6; }
+        if (unit == "k") { return freq * 1e3; }
+        return freq;
     }
 
     FileSelect fileSelect;
@@ -201,7 +323,7 @@ private:
 
     double centerFreq = 100000000;
 
-    bool float32Mode = false;
+    std::string formatStr;
 };
 
 MOD_EXPORT void _INIT_() {
