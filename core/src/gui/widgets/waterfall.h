@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <mutex>
+#include <cmath>
 #include <gui/widgets/bandplan.h>
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -162,6 +163,8 @@ namespace ImGui {
         bool mouseInWaterfall = false;
 
         float selectedVFOSNR = 0.0f;
+        float selectedVFOLevel = -INFINITY;    // peak in-bandwidth FFT level of the selected VFO (dBFS)
+        float selectedVFOLevelMax = -INFINITY; // peak hold of selectedVFOLevel over the last few FFT frames
 
         bool centerFrequencyLocked = false;
 
@@ -314,6 +317,12 @@ namespace ImGui {
         bool snrSmoothing = false;
         float snrSmoothingAlpha = 0.5;
         float snrSmoothingBeta = 0.5;
+
+        static constexpr int LEVEL_HOLD_FRAMES = 10;
+        float levelHistory[LEVEL_HOLD_FRAMES];
+        int levelHistoryPos = 0;
+        int levelHistoryCount = 0;
+        std::string levelHistoryVFO = ""; // VFO the level history belongs to
 
         // UI Select elements
         bool fftResizeSelect = false;

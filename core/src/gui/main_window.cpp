@@ -457,9 +457,9 @@ void MainWindow::draw() {
         float itemSpacing  = ImGui::GetStyle().ItemSpacing.x;
         float tuningCost   = btnSize.x + 2 * toolbarButtonPadding + itemSpacing; // btn + padding + gap
         float freqCost     = gui::freqSelect.getWidth() + itemSpacing;
-        float snrMinWidth  = ImGui::GetSNRMeterMinWidth();
-        float snrOffset    = 87.0f * style::uiScale;
-        float rightReserve = snrMinWidth + snrOffset;
+        float meterMinWidth = ImGui::GetLevelMeterMinWidth();
+        float meterOffset  = 87.0f * style::uiScale;
+        float rightReserve = meterMinWidth + meterOffset;
         float available = topBarWidth - ImGui::GetCursorPosX() - freqCost - tuningCost - rightReserve;
         volumeWidth = std::clamp(available, 100.0f * style::uiScale, 248.0f * style::uiScale);
     }
@@ -499,18 +499,23 @@ void MainWindow::draw() {
 
     ImGui::SameLine();
 
-    float snrOffset = 87.0f * style::uiScale;
-    float snrMinWidth = ImGui::GetSNRMeterMinWidth();
-    float snrMaxWidth = std::max(300.0f * style::uiScale, snrMinWidth);
+    float meterOffset = 87.0f * style::uiScale;
+    float meterMinWidth = ImGui::GetLevelMeterMinWidth();
+    float meterMaxWidth = std::max(300.0f * style::uiScale, meterMinWidth);
 
-    float snrAvailWidth = topBarWidth - ImGui::GetCursorPosX() - snrOffset;
-    float snrWidth = std::clamp(snrAvailWidth, snrMinWidth, snrMaxWidth);
-    float snrPos = std::max(topBarWidth - (snrWidth + snrOffset), ImGui::GetCursorPosX());
+    float meterAvailWidth = topBarWidth - ImGui::GetCursorPosX() - meterOffset;
+    float meterWidth = std::clamp(meterAvailWidth, meterMinWidth, meterMaxWidth);
+    float meterPos = std::max(topBarWidth - (meterWidth + meterOffset), ImGui::GetCursorPosX());
 
-    ImGui::SetCursorPosX(snrPos);
+    ImGui::SetCursorPosX(meterPos);
     ImGui::SetCursorPosY(origY + (5.0f * style::uiScale));
-    ImGui::SetNextItemWidth(snrWidth);
-    ImGui::SNRMeter((vfo != NULL) ? gui::waterfall.selectedVFOSNR : 0);
+    ImGui::SetNextItemWidth(meterWidth);
+    if (vfo != NULL) {
+        ImGui::LevelMeter(gui::waterfall.selectedVFOLevel, gui::waterfall.selectedVFOLevelMax, gui::waterfall.selectedVFOSNR);
+    }
+    else {
+        ImGui::LevelMeter(-INFINITY, -INFINITY, NAN);
+    }
 
     // Note: this is what makes the vertical size correct, needs to be fixed
     ImGui::SameLine();

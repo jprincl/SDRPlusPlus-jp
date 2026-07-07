@@ -959,14 +959,43 @@ namespace ImGui {
         }
 
         if (selectedVFO != "" && vfos.size() > 0) {
-            float dummy;
-            if (snrSmoothing) {
-                float newSNR = 0.0f;
-                calculateVFOSignalInfo(waterfallVisible ? &rawFFTs[currentFFTLine * rawFFTSize] : rawFFTs, vfos[selectedVFO], dummy, newSNR);
-                selectedVFOSNR = (snrSmoothingBeta*selectedVFOSNR) + (snrSmoothingAlpha*newSNR);
+            // Reset the peak hold when the VFO selection changes, so the new
+            // VFO doesn't inherit the previous VFO's peak
+            if (selectedVFO != levelHistoryVFO) {
+                levelHistoryVFO = selectedVFO;
+                levelHistoryPos = 0;
+                levelHistoryCount = 0;
+            }
+
+            float newLevel = -INFINITY;
+            float newSNR = NAN;
+            bool infoValid = calculateVFOSignalInfo(waterfallVisible ? &rawFFTs[currentFFTLine * rawFFTSize] : rawFFTs, vfos[selectedVFO], newLevel, newSNR);
+
+            if (infoValid && std::isfinite(newLevel)) {
+                selectedVFOLevel = newLevel;
+                // Start smoothing fresh from the first valid SNR after a gap
+                selectedVFOSNR = (snrSmoothing && std::isfinite(selectedVFOSNR))
+                    ? (snrSmoothingBeta * selectedVFOSNR) + (snrSmoothingAlpha * newSNR)
+                    : newSNR;
+
+                // Peak hold: max level over the last LEVEL_HOLD_FRAMES FFT frames
+                levelHistory[levelHistoryPos] = newLevel;
+                levelHistoryPos = (levelHistoryPos + 1) % LEVEL_HOLD_FRAMES;
+                levelHistoryCount = std::min<int>(levelHistoryCount + 1, LEVEL_HOLD_FRAMES);
+                float maxLevel = -INFINITY;
+                for (int i = 0; i < levelHistoryCount; i++) {
+                    maxLevel = std::max<float>(maxLevel, levelHistory[i]);
+                }
+                selectedVFOLevelMax = maxLevel;
             }
             else {
-                calculateVFOSignalInfo(waterfallVisible ? &rawFFTs[currentFFTLine * rawFFTSize] : rawFFTs, vfos[selectedVFO], dummy, selectedVFOSNR);
+                // No usable FFT data: blank the meter instead of showing stale
+                // values, and drop the history so peaks don't merge across a gap
+                levelHistoryPos = 0;
+                levelHistoryCount = 0;
+                selectedVFOLevel = -INFINITY;
+                selectedVFOLevelMax = -INFINITY;
+                selectedVFOSNR = NAN;
             }
         }
 
