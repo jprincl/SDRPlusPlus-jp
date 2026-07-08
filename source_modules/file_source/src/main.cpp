@@ -6,6 +6,7 @@
 #include <gui/style.h>
 #include <signal_path/signal_path.h>
 #include <wavreader.h>
+#include <flacreader.h>
 #include <core.h>
 #include <gui/widgets/file_select.h>
 #include <filesystem>
@@ -14,6 +15,8 @@
 #include <algorithm>
 #include <stdexcept>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -77,8 +80,19 @@ static SampleConv getSampleConv(WAVE_FORMAT format, int bitDepth) {
     return NULL;
 }
 
+// Pick the reader by the file's magic bytes rather than its extension:
+// "RIFF"/"RF64" -> WavReader, "fLaC" -> FlacReader. Returns NULL for anything
+// else. The caller owns the returned reader.
+static SampleReader* openReader(const std::string& path) {
+    uint8_t magic[4] = { 0 };
+    std::ifstream(path, std::ios::binary).read((char*)magic, sizeof(magic));
+    if (!memcmp(magic, "fLaC", 4)) { return new FlacReader(path); }
+    if (!memcmp(magic, "RIFF", 4) || !memcmp(magic, "RF64", 4)) { return new WavReader(path); }
+    return NULL;
+}
+
 // The worker assumes all of this, so it must hold before starting one
-static bool isPlayable(WavReader* reader) {
+static bool isPlayable(SampleReader* reader) {
     if (!reader) { return false; }
     int channels = reader->getChannelCount();
     int bytesPerChan = reader->getBitDepth() / 8;
@@ -90,7 +104,7 @@ static bool isPlayable(WavReader* reader) {
 
 class FileSourceModule : public ModuleManager::Instance {
 public:
-    FileSourceModule(std::string name) : fileSelect("", { "Wav IQ Files (*.wav)", "*.wav", "All Files", "*" }) {
+    FileSourceModule(std::string name) : fileSelect("", { "IQ Recordings (*.wav *.flac)", "*.wav *.flac", "All Files", "*" }) {
         this->name = name;
 
         if (core::args["server"].b()) { return; }
@@ -190,9 +204,12 @@ private:
                 _this->reader = NULL;
             }
             try {
-                _this->reader = new WavReader(_this->fileSelect.path);
+                _this->reader = openReader(_this->fileSelect.path);
+                if (_this->reader == NULL) {
+                    throw std::runtime_error("Unsupported file format (not a WAV or FLAC file)");
+                }
                 if (!_this->reader->isValid()) {
-                    throw std::runtime_error("Invalid or damaged WAV file");
+                    throw std::runtime_error("Invalid or damaged file");
                 }
                 if (_this->reader->getSampleRate() == 0) {
                     throw std::runtime_error("Sample rate may not be zero");
@@ -250,7 +267,7 @@ private:
 
     static void worker(void* ctx) {
         FileSourceModule* _this = (FileSourceModule*)ctx;
-        WavReader* reader = _this->reader;
+        SampleReader* reader = _this->reader;
         uint32_t sampleRate = std::max(reader->getSampleRate(), (uint32_t)1);
         int blockSize = std::clamp((int)(sampleRate / 200), 1, (int)STREAM_BUFFER_SIZE);
         int channels = reader->getChannelCount();
@@ -315,7 +332,7 @@ private:
     std::string name;
     dsp::stream<dsp::complex_t> stream;
     SourceManager::SourceHandler handler;
-    WavReader* reader = NULL;
+    SampleReader* reader = NULL;
     bool running = false;
     bool enabled = true;
     float sampleRate = 1000000;

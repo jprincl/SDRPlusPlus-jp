@@ -23,21 +23,13 @@
 #include <stdexcept>
 #include <string>
 #include <utils/flog.h>
-
-enum class WAVE_FORMAT : uint16_t {
-    PCM = 1,
-    ADPCM = 2,
-    IEEE_FLOAT = 3,
-    ALAW = 6,             // 8-bit ITU-T G.711 A-law
-    MULAW = 7,            // 8-bit ITU-T G.711 u-law
-    EXTENSIBLE = 0xFFFE,  // Actual format is in the SubFormat GUID
-};
+#include "sample_reader.h"
 
 // Reads RIFF and RF64 WAV files with any chunk layout, including
 // WAVE_FORMAT_EXTENSIBLE headers. Files whose headers declare a wrong data
 // size (e.g. from a recorder that crashed before finalizing the header) are
 // recovered using the physical file size.
-class WavReader {
+class WavReader : public SampleReader {
 public:
     WavReader(std::string path) {
         _file = std::ifstream(path.c_str(), std::ios::binary);
