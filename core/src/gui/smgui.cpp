@@ -76,6 +76,7 @@ namespace SmGui {
             else if (elem.step == DRAW_STEP_SAME_LINE) { SameLine(); }
             else if (elem.step == DRAW_STEP_BEGIN_DISABLED) { BeginDisabled(); }
             else if (elem.step == DRAW_STEP_END_DISABLED) { EndDisabled(); }
+            else if (elem.step == DRAW_STEP_SEPARATOR) { Separator(); }
 
             // Widget Calls
             else if (elem.step == DRAW_STEP_COMBO) {
@@ -488,6 +489,11 @@ namespace SmGui {
     void EndDisabled() {
         if (!serverMode) { style::endDisabled(); return; }
         if (rdl) { rdl->pushStep(DRAW_STEP_END_DISABLED, false); }
+    }
+
+    void Separator() {
+        if (!serverMode) { ImGui::Separator(); return; }
+        if (rdl) { rdl->pushStep(DRAW_STEP_SEPARATOR, false); }
     }
 
 

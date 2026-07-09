@@ -45,7 +45,10 @@ namespace SmGui {
         DRAW_STEP_END_TABLE,
         DRAW_STEP_TABLE_NEXT_ROW,
         DRAW_STEP_TABLE_SET_COLUMN_INDEX,
-        DRAW_STEP_SET_NEXT_ITEM_WIDTH
+        DRAW_STEP_SET_NEXT_ITEM_WIDTH,
+        // Appended after the original set to keep prior opcode values stable
+        // across server/client versions.
+        DRAW_STEP_SEPARATOR
     };
 
     enum DrawListElemType {
@@ -122,6 +125,7 @@ namespace SmGui {
     void SameLine();
     void BeginDisabled();
     void EndDisabled();
+    void Separator();
 
     // Widget functions
     bool Combo(const char *label, int *current_item, const char *items_separated_by_zeros, int popup_max_height_in_items = -1);
