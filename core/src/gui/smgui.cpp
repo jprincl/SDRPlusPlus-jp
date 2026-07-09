@@ -2,6 +2,9 @@
 #include "style.h"
 #include <gui/widgets/stepped_slider.h>
 #include <gui/gui.h>
+#include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 
 namespace SmGui {
     std::map<FormatString, const char*> fmtStr = {
@@ -135,9 +138,12 @@ namespace SmGui {
                 i += 6;
             }
             else if (elem.step == DRAW_STEP_INPUT_TEXT) {
+                // Both the initial text and buf_size arrive from the network;
+                // bound them to the local buffer instead of trusting the server.
                 char tmpBuf[4096];
-                strcpy(tmpBuf, elements[i+1].str.c_str());
-                if (InputText(elements[i].str.c_str(), tmpBuf, elements[i+2].i, elements[i+3].i)) {
+                snprintf(tmpBuf, sizeof(tmpBuf), "%s", elements[i+1].str.c_str());
+                int bufSize = std::clamp<int>(elements[i+2].i, 1, (int)sizeof(tmpBuf));
+                if (InputText(elements[i].str.c_str(), tmpBuf, bufSize, elements[i+3].i)) {
                     elements[i+1].str = tmpBuf;
                     SET_DIFF_STRING(elements[i].str, tmpBuf);
                 }
@@ -673,7 +679,9 @@ namespace SmGui {
             rdl->pushInt(flags);
             forceSyncForNext = false;
         }
-        if (diffId == label && diffValue.type == DRAW_LIST_ELEM_TYPE_STRING && diffValue.str.size() <= buf_size) {
+        // Strict '<': the terminator must fit too. A remote value of exactly
+        // buf_size characters would otherwise overflow the caller's buffer.
+        if (diffId == label && diffValue.type == DRAW_LIST_ELEM_TYPE_STRING && diffValue.str.size() < buf_size) {
             strcpy(buf, diffValue.str.c_str());
             return true;
         }
@@ -698,6 +706,36 @@ namespace SmGui {
             rdl->pushFloat(col.w);
             rdl->pushString(str);
         }
+    }
+
+    // Variadic forms: format into a local buffer, then defer to the verbatim
+    // overloads so both the local ImGui path and the server record path see
+    // the already-formatted string.
+    void Text(const char* fmt, ...) {
+        char buf[1024];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+        Text(static_cast<const char*>(buf));
+    }
+
+    void TextColored(const ImVec4 &col, const char *fmt, ...) {
+        char buf[1024];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+        TextColored(col, static_cast<const char*>(buf));
+    }
+
+    void LeftLabel(const char* fmt, ...) {
+        char buf[1024];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+        LeftLabel(static_cast<const char*>(buf));
     }
 
     void OpenPopup(const char *str_id, ImGuiPopupFlags popup_flags) {

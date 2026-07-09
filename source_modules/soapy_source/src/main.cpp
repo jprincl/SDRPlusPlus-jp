@@ -459,10 +459,8 @@ private:
         }
 
         int i = 0;
-        char buf[128];
         for (auto gain : _this->gainList) {
-            sprintf(buf, "%s gain", gain.c_str());
-            SmGui::LeftLabel(buf);
+            SmGui::LeftLabel("%s gain", gain.c_str());
             // ImGui::SetCursorPosX(gainNameLen);
             // ImGui::SetNextItemWidth(menuWidth - gainNameLen);
             float step = _this->gainRanges[i].step();

@@ -704,7 +704,6 @@ private:
             hydrasdr_device_info_t devInfo;
             memset(&devInfo, 0, sizeof(devInfo));
             if (hydrasdr_get_device_info(_this->openDev, &devInfo) == HYDRASDR_SUCCESS) {
-                char infoStr[128];
                 char hwSrStr[32], bwStr[32];
                 // Format HW sample rate with smart units
                 double hwSr = devInfo.current_hw_samplerate;
@@ -726,9 +725,8 @@ private:
                     else
                         snprintf(bwStr, sizeof(bwStr), "%.2f%s", bwVal, bwUnit);
                 }
-                snprintf(infoStr, sizeof(infoStr), "HW SR:%s BW:%s Decim:%d",
-                         hwSrStr, bwStr, devInfo.current_decimation_factor);
-                SmGui::Text(infoStr);
+                SmGui::Text("HW SR:%s BW:%s Decim:%d",
+                            hwSrStr, bwStr, devInfo.current_decimation_factor);
             }
         }
 
@@ -801,7 +799,6 @@ private:
 
             // Temperature display with auto-refresh checkbox
             if (_this->hasTemperatureSensor) {
-                char tempStr[32];
                 SmGui::ForceSync();
                 if (SmGui::Checkbox(CONCAT("Temperature Auto##_hydrasdr_temp_", _this->name), &_this->autoRefreshTemp)) {
                     if (_this->autoRefreshTemp) {
@@ -811,11 +808,10 @@ private:
                 }
                 SmGui::SameLine();
                 if (_this->temperatureValid) {
-                    snprintf(tempStr, sizeof(tempStr), "%.1f DegC", _this->currentTemperature);
+                    SmGui::Text("%.1f DegC", _this->currentTemperature);
                 } else {
-                    snprintf(tempStr, sizeof(tempStr), "-- DegC");
+                    SmGui::Text("-- DegC");
                 }
-                SmGui::Text(tempStr);
                 if (!_this->serverMode && ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Auto-refresh temperature every second");
                 }
@@ -823,10 +819,8 @@ private:
 
             // Dropped buffers display (only show if there are dropped buffers)
             if (_this->droppedBuffers > 0) {
-                char statsStr[64];
-                snprintf(statsStr, sizeof(statsStr), "%llu dropped!", (unsigned long long)_this->droppedBuffers);
                 SmGui::LeftLabel("Buffers");
-                SmGui::Text(statsStr);
+                SmGui::Text("%llu dropped!", (unsigned long long)_this->droppedBuffers);
             }
         }
 

@@ -5,6 +5,14 @@
 #include <vector>
 #include <map>
 
+// printf-style format checking for the variadic SmGui text overloads.
+// MSVC has no equivalent attribute for plain variadics; expands to nothing there.
+#if defined(__GNUC__) || defined(__clang__)
+#define SMGUI_PRINTF(fmtIdx, vaIdx) __attribute__((format(printf, fmtIdx, vaIdx)))
+#else
+#define SMGUI_PRINTF(fmtIdx, vaIdx)
+#endif
+
 namespace SmGui {
     enum DrawStep {
         // Format calls
@@ -130,8 +138,15 @@ namespace SmGui {
     bool Checkbox(const char *label, bool *v);
     bool SliderFloat(const char *label, float *v, float v_min, float v_max, FormatString format = FMT_STR_FLOAT_THREE_DECIMAL, ImGuiSliderFlags flags = 0);
     bool InputText(const char *label, char *buf, size_t buf_size, ImGuiInputTextFlags flags = 0);
+    // Single-argument forms: the string is displayed verbatim. Dynamic /
+    // untrusted strings (device labels, network-sourced names, error text)
+    // bind here by overload resolution, so a '%' in them is never interpreted.
     void Text(const char* str);
     void TextColored(const ImVec4 &col, const char *str);
+    // printf-style forms: only selected when extra arguments are passed.
+    void Text(const char* fmt, ...) SMGUI_PRINTF(1, 2);
+    void TextColored(const ImVec4 &col, const char *fmt, ...) SMGUI_PRINTF(2, 3);
+    void LeftLabel(const char* fmt, ...) SMGUI_PRINTF(1, 2);
     void OpenPopup(const char *str_id, ImGuiPopupFlags popup_flags = 0);
     bool BeginPopup(const char *str_id, ImGuiWindowFlags flags = 0);
     void EndPopup();
