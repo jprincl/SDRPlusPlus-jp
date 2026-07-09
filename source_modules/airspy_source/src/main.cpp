@@ -284,15 +284,15 @@ private:
     static void menuSelected(void* ctx) {
         AirspySourceModule* _this = (AirspySourceModule*)ctx;
         core::setInputSampleRate(_this->sampleRate);
-        gui::freqSelect.minFreq = 24000000ul; // 24 MHz
-        gui::freqSelect.maxFreq = 1750000000ul; // 1.75 GHz
-        gui::freqSelect.limitFreq = true;
+        // Airspy R2 / Mini native RX range (mfr spec); the manager shifts this
+        // by the tuning offset for up/down-converters.
+        sigpath::sourceManager.setTuningLimits(24000000.0, 1750000000.0); // 24 MHz - 1.75 GHz
         flog::info("AirspySourceModule '{0}': Menu Select!", _this->name);
     }
 
     static void menuDeselected(void* ctx) {
         AirspySourceModule* _this = (AirspySourceModule*)ctx;
-        gui::freqSelect.limitFreq = false;
+        sigpath::sourceManager.clearTuningLimits();
         flog::info("AirspySourceModule '{0}': Menu Deselect!", _this->name);
     }
 

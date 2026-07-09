@@ -37,6 +37,14 @@ public:
     void setTuningMode(TuningMode mode);
     void setPanadapterIF(double freq);
 
+    // Constrain / release the main-window frequency selector. Sources pass
+    // their NATIVE hardware tuning range (min/max at the antenna port); the
+    // manager shifts it into the display domain by the current tuning offset,
+    // so an up/down-converter offset keeps the limit correct. Kept in sync
+    // whenever the offset changes.
+    void setTuningLimits(double minFreq, double maxFreq);
+    void clearTuningLimits();
+
     std::vector<std::string> getSourceNames();
 
     Event<std::string> onSourceRegistered;
@@ -53,4 +61,12 @@ private:
     double ifFreq = 0.0;
     TuningMode tuneMode = TuningMode::NORMAL;
     dsp::stream<dsp::complex_t> nullSource;
+
+    // Native (hardware-domain) frequency limit last requested by the source,
+    // plus whether one is active. applyTuningLimits() converts it into the
+    // display-domain window on gui::freqSelect.
+    bool tuningLimitEnabled = false;
+    double tuningLimitMin = 0.0;
+    double tuningLimitMax = 0.0;
+    void applyTuningLimits();
 };

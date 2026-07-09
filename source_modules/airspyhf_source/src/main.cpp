@@ -265,16 +265,15 @@ private:
         core::setInputSampleRate(_this->sampleRate);
         // AirspyHF+ / HF+ Discovery tune 0-31 MHz and 64-260 MHz (mfr spec).
         // freqSelect only supports one contiguous window, so we clamp the
-        // outer envelope; the 31-64 MHz gap cannot be excluded here.
-        gui::freqSelect.minFreq = 0ul;
-        gui::freqSelect.maxFreq = 260000000ul; // 260 MHz
-        gui::freqSelect.limitFreq = true;
+        // outer envelope; the 31-64 MHz gap cannot be excluded here. The
+        // manager shifts this by the tuning offset for up/down-converters.
+        sigpath::sourceManager.setTuningLimits(0.0, 260000000.0); // 0 - 260 MHz
         flog::info("AirspyHFSourceModule '{0}': Menu Select!", _this->name);
     }
 
     static void menuDeselected(void* ctx) {
         AirspyHFSourceModule* _this = (AirspyHFSourceModule*)ctx;
-        gui::freqSelect.limitFreq = false;
+        sigpath::sourceManager.clearTuningLimits();
         flog::info("AirspyHFSourceModule '{0}': Menu Deselect!", _this->name);
     }
 

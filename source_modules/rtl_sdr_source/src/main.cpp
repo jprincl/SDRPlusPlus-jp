@@ -305,15 +305,15 @@ private:
     static void menuSelected(void* ctx) {
         RTLSDRSourceModule* _this = (RTLSDRSourceModule*)ctx;
         core::setInputSampleRate(_this->sampleRate);
-        gui::freqSelect.minFreq = 100000ul; // 100 kHz for direct sampling
-        gui::freqSelect.maxFreq = 1750000000ul; // 1.75 GHz
-        gui::freqSelect.limitFreq = true;
+        // 100 kHz (direct sampling) - 1.75 GHz; the manager shifts this by the
+        // tuning offset for up/down-converters.
+        sigpath::sourceManager.setTuningLimits(100000.0, 1750000000.0); // 100 kHz - 1.75 GHz
         flog::info("RTLSDRSourceModule '{0}': Menu Select!", _this->name);
     }
 
     static void menuDeselected(void* ctx) {
         RTLSDRSourceModule* _this = (RTLSDRSourceModule*)ctx;
-        gui::freqSelect.limitFreq = false;
+        sigpath::sourceManager.clearTuningLimits();
         flog::info("RTLSDRSourceModule '{0}': Menu Deselect!", _this->name);
     }
 

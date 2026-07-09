@@ -266,14 +266,14 @@ private:
     static void menuSelected(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
         core::setInputSampleRate(self->sampleRate);
-        gui::freqSelect.minFreq = 100000; // 100 kHz
-        gui::freqSelect.maxFreq = 60000000; // 60 MHz
-        gui::freqSelect.limitFreq = true;
+        // 100 kHz - 60 MHz; the manager shifts this by the tuning offset for
+        // up/down-converters.
+        sigpath::sourceManager.setTuningLimits(100000.0, 60000000.0); // 100 kHz - 60 MHz
     }
 
     static void menuDeselected(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
-        gui::freqSelect.limitFreq = false;
+        sigpath::sourceManager.clearTuningLimits();
     }
 
     static void start(void* ctx) {

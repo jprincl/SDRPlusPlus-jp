@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <optional>
+#include <utility>
 #include <chrono>
 #include <ctime>
 #include <cstring>
@@ -72,6 +73,9 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     // Served frequency range of the selected server, if known (from the
     // directory 'bands' field). Used to constrain the tuning UI.
     std::optional<ServerEntry::FrequencyBand> selectedBand;
+    // Last native [lo, hi] pushed to sourceManager from the live-refine path,
+    // so menuHandler only re-applies the limit when the served range changes.
+    std::optional<std::pair<uint64_t, uint64_t>> appliedServedRange;
     KiwiSDRClient kiwiSdrClient;
     std::string root;
     KiwiSDRMapSelector selector;
@@ -164,17 +168,20 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     // range: the known band if we have one, otherwise the plain-KiwiSDR
     // default. Also trims the number of visible digits in the display.
     void applyFreqLimits() {
+        uint64_t lo, hi;
         if (selectedBand) {
             // The directory 'bands' field often reports a start of 0; a plain
             // KiwiSDR isn't usefully tunable below 10 kHz, so keep that floor.
-            gui::freqSelect.minFreq = std::max<uint64_t>(selectedBand->startHz, DEFAULT_MIN_FREQ);
-            gui::freqSelect.maxFreq = selectedBand->endHz;
+            lo = std::max<uint64_t>(selectedBand->startHz, DEFAULT_MIN_FREQ);
+            hi = selectedBand->endHz;
         }
         else {
-            gui::freqSelect.minFreq = DEFAULT_MIN_FREQ;
-            gui::freqSelect.maxFreq = DEFAULT_MAX_FREQ;
+            lo = DEFAULT_MIN_FREQ;
+            hi = DEFAULT_MAX_FREQ;
         }
-        gui::freqSelect.limitFreq = true;
+        // Pass the native range; the manager shifts it by any tuning offset
+        // (converter-equipped Kiwi) into the display domain.
+        sigpath::sourceManager.setTuningLimits((double)lo, (double)hi);
     }
 
     static void menuSelected(void* ctx) {
@@ -188,7 +195,8 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
         // Release the range constraint so a stale KiwiSDR band doesn't leak
         // into whatever source is selected next.
-        gui::freqSelect.limitFreq = false;
+        sigpath::sourceManager.clearTuningLimits();
+        _this->appliedServedRange.reset();
         flog::info("KiwiSDRSourceModule '{0}': Menu Deselect!", _this->name);
     }
 
@@ -322,10 +330,11 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             if (auto range = _this->kiwiSdrClient.getServedRange()) {
                 const uint64_t lo = std::max<int64_t>(range->minHz, (int64_t)DEFAULT_MIN_FREQ);
                 const uint64_t hi = std::max<int64_t>(range->maxHz, range->minHz);
-                if (gui::freqSelect.minFreq != lo || gui::freqSelect.maxFreq != hi || !gui::freqSelect.limitFreq) {
-                    gui::freqSelect.minFreq = lo;
-                    gui::freqSelect.maxFreq = hi;
-                    gui::freqSelect.limitFreq = true;
+                const auto served = std::make_pair(lo, hi);
+                if (_this->appliedServedRange != served) {
+                    _this->appliedServedRange = served;
+                    // Native range; the manager applies any tuning offset.
+                    sigpath::sourceManager.setTuningLimits((double)lo, (double)hi);
                 }
             }
         }

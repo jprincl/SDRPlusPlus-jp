@@ -3,6 +3,7 @@
 #include <utils/flog.h>
 #include <signal_path/signal_path.h>
 #include <core.h>
+#include <gui/gui.h>
 #ifdef __ANDROID__
 #include <android_backend.h>
 #endif
@@ -101,7 +102,41 @@ void SourceManager::tune(double freq) {
 
 void SourceManager::setTuningOffset(double offset) {
     tuneOffset = offset;
+    // The offset shifts the display<->hardware mapping, so the selector limit
+    // must be recomputed against the new offset.
+    applyTuningLimits();
     tune(currentFreq);
+}
+
+void SourceManager::setTuningLimits(double minFreq, double maxFreq) {
+    tuningLimitEnabled = true;
+    tuningLimitMin = minFreq;
+    tuningLimitMax = maxFreq;
+    applyTuningLimits();
+}
+
+void SourceManager::clearTuningLimits() {
+    tuningLimitEnabled = false;
+    applyTuningLimits();
+}
+
+void SourceManager::applyTuningLimits() {
+    if (!tuningLimitEnabled) {
+        gui::freqSelect.limitFreq = false;
+        return;
+    }
+    // gui::freqSelect constrains the DISPLAY frequency, but sources express
+    // their NATIVE hardware range. tune() computes hardware = display +
+    // tuneOffset, so display = hardware - tuneOffset. Shift the native range
+    // into the display domain. Floor at 0 because the display frequency can't
+    // be negative (an upconverter offset would push the low end below zero).
+    double dispMin = tuningLimitMin - tuneOffset;
+    double dispMax = tuningLimitMax - tuneOffset;
+    if (dispMin < 0.0) { dispMin = 0.0; }
+    if (dispMax < 0.0) { dispMax = 0.0; }
+    gui::freqSelect.minFreq = (uint64_t)dispMin;
+    gui::freqSelect.maxFreq = (uint64_t)dispMax;
+    gui::freqSelect.limitFreq = true;
 }
 
 void SourceManager::setTuningMode(TuningMode mode) {
