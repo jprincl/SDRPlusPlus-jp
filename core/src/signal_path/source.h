@@ -56,8 +56,8 @@ private:
     std::map<std::string, SourceHandler*> sources;
     std::string selectedName;
     SourceHandler* selectedHandler = NULL;
-    double tuneOffset;
-    double currentFreq;
+    double tuneOffset = 0.0;
+    double currentFreq = 0.0;
     double ifFreq = 0.0;
     TuningMode tuneMode = TuningMode::NORMAL;
     dsp::stream<dsp::complex_t> nullSource;

@@ -182,6 +182,10 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         // Pass the native range; the manager shifts it by any tuning offset
         // (converter-equipped Kiwi) into the display domain.
         sigpath::sourceManager.setTuningLimits((double)lo, (double)hi);
+        // This estimate now owns the widget, so the live-refine cache no longer
+        // reflects it. Invalidate it so the next served-range poll re-applies
+        // even if the new server reports the same [lo, hi] as the previous one.
+        appliedServedRange.reset();
     }
 
     static void menuSelected(void* ctx) {
