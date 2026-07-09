@@ -725,8 +725,8 @@ private:
                     else
                         snprintf(bwStr, sizeof(bwStr), "%.2f%s", bwVal, bwUnit);
                 }
-                SmGui::Text("HW SR:%s BW:%s Decim:%d",
-                            hwSrStr, bwStr, devInfo.current_decimation_factor);
+                SmGui::TextF("HW SR:%s BW:%s Decim:%d",
+                             hwSrStr, bwStr, devInfo.current_decimation_factor);
             }
         }
 
@@ -808,7 +808,7 @@ private:
                 }
                 SmGui::SameLine();
                 if (_this->temperatureValid) {
-                    SmGui::Text("%.1f DegC", _this->currentTemperature);
+                    SmGui::TextF("%.1f DegC", _this->currentTemperature);
                 } else {
                     SmGui::Text("-- DegC");
                 }
@@ -820,7 +820,7 @@ private:
             // Dropped buffers display (only show if there are dropped buffers)
             if (_this->droppedBuffers > 0) {
                 SmGui::LeftLabel("Buffers");
-                SmGui::Text("%llu dropped!", (unsigned long long)_this->droppedBuffers);
+                SmGui::TextF("%llu dropped!", (unsigned long long)_this->droppedBuffers);
             }
         }
 

@@ -441,14 +441,14 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         if (playing) { SmGui::EndDisabled(); }
 
         if (!_this->kiwisdrLoc.empty())
-            SmGui::Text("Loc: %s", _this->kiwisdrLoc.c_str());
-        SmGui::Text("Status: %s", _this->kiwiSdrClient.getConnectionStatus().c_str());
+            SmGui::TextF("Loc: %s", _this->kiwisdrLoc.c_str());
+        SmGui::TextF("Status: %s", _this->kiwiSdrClient.getConnectionStatus().c_str());
 
         std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         auto tmm = safeLocalTime(t);
         char streamTime[64];
         strftime(streamTime, sizeof(streamTime), "%Y-%m-%d %H:%M:%S", &tmm);
-        SmGui::Text("Stream pos: %s", streamTime);
+        SmGui::TextF("Stream pos: %s", streamTime);
 
         // Network prebuffer: trades latency for immunity against connection
         // jitter (mobile links). Takes effect live, including while playing.

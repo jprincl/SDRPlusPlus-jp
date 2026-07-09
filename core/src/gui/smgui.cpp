@@ -714,34 +714,34 @@ namespace SmGui {
         }
     }
 
-    // Variadic forms: format into a local buffer, then defer to the verbatim
-    // overloads so both the local ImGui path and the server record path see
-    // the already-formatted string.
-    void Text(const char* fmt, ...) {
+    // Formatting variants: format into a local buffer, then defer to the
+    // verbatim forms so both the local ImGui path and the server record path
+    // see the already-formatted string.
+    void TextF(const char* fmt, ...) {
         char buf[1024];
         va_list args;
         va_start(args, fmt);
         vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
-        Text(static_cast<const char*>(buf));
+        Text(buf);
     }
 
-    void TextColored(const ImVec4 &col, const char *fmt, ...) {
+    void TextColoredF(const ImVec4 &col, const char *fmt, ...) {
         char buf[1024];
         va_list args;
         va_start(args, fmt);
         vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
-        TextColored(col, static_cast<const char*>(buf));
+        TextColored(col, buf);
     }
 
-    void LeftLabel(const char* fmt, ...) {
+    void LeftLabelF(const char* fmt, ...) {
         char buf[1024];
         va_list args;
         va_start(args, fmt);
         vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
-        LeftLabel(static_cast<const char*>(buf));
+        LeftLabel(buf);
     }
 
     void OpenPopup(const char *str_id, ImGuiPopupFlags popup_flags) {

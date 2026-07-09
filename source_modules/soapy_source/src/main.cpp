@@ -460,7 +460,7 @@ private:
 
         int i = 0;
         for (auto gain : _this->gainList) {
-            SmGui::LeftLabel("%s gain", gain.c_str());
+            SmGui::LeftLabelF("%s gain", gain.c_str());
             // ImGui::SetCursorPosX(gainNameLen);
             // ImGui::SetNextItemWidth(menuWidth - gainNameLen);
             float step = _this->gainRanges[i].step();

@@ -496,24 +496,24 @@ private:
         SmGui::Text("Rig Freq:");
         SmGui::SameLine();
         if (st.hasFrequency())
-            SmGui::Text("%.0f Hz", static_cast<double>(st.frequency));
+            SmGui::TextF("%.0f Hz", static_cast<double>(st.frequency));
         else
             SmGui::Text("Unknown");
 
         if (st.hasRxVfo() || st.hasTxVfo() || st.hasSplit()) {
             SmGui::Text("VFO:");
             SmGui::SameLine();
-            SmGui::Text("RX %s  TX %s  Split %s",
-                        formatVfoLabel(st.rxVfo),
-                        formatVfoLabel(st.txVfo),
-                        st.hasSplit() ? (st.split ? "On" : "Off") : "?");
+            SmGui::TextF("RX %s  TX %s  Split %s",
+                         formatVfoLabel(st.rxVfo),
+                         formatVfoLabel(st.txVfo),
+                         st.hasSplit() ? (st.split ? "On" : "Off") : "?");
         }
 
         if (st.hasRit() || st.hasRitEnabled()) {
             SmGui::Text("RIT:");
             SmGui::SameLine();
             if (st.hasRit())
-                SmGui::Text("%s %d Hz", st.hasRitEnabled() ? (st.ritEnabled ? "On" : "Off") : "", st.ritHz);
+                SmGui::TextF("%s %d Hz", st.hasRitEnabled() ? (st.ritEnabled ? "On" : "Off") : "", st.ritHz);
             else
                 SmGui::Text(st.ritEnabled ? "On" : "Off");
         }
@@ -521,19 +521,19 @@ private:
         if (st.hasSMeter() && (!st.hasTransmit() || !st.transmit)) {
             SmGui::Text("S-Meter:");
             SmGui::SameLine();
-            SmGui::Text("%d dB", st.sMeterDb);
+            SmGui::TextF("%d dB", st.sMeterDb);
         }
 
         if (st.hasPower()) {
             SmGui::Text("Power:");
             SmGui::SameLine();
-            SmGui::Text("%.1f W", st.powerTenthsW / 10.0f);
+            SmGui::TextF("%.1f W", st.powerTenthsW / 10.0f);
         }
 
         if (st.hasSWR()) {
             SmGui::Text("SWR:");
             SmGui::SameLine();
-            SmGui::Text("%.2f:1", st.swrHundredths / 100.0f);
+            SmGui::TextF("%.2f:1", st.swrHundredths / 100.0f);
         }
     }
 
