@@ -84,6 +84,10 @@ public:
     struct OkServer {
         std::string hostPort;
         std::string loc;
+        // Served frequency range from the directory 'bands' field, if known.
+        // Carried back so the source can constrain the tuning UI to what the
+        // server actually receives.
+        std::optional<ServerEntry::FrequencyBand> band;
     };
 
     /// Start probing the given URL. No-op if a probe is already in flight.

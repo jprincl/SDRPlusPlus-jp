@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -37,6 +38,13 @@ private:
     // Server-reported hardware-converter offset (Hz). Subtracted from the
     // user-requested frequency before being sent. Updated by MSG/freq_offset.
     std::atomic<int64_t> serverFrequencyOffset{0};
+
+    // Server-reported ADC passband width (Hz), from the MSG/bandwidth field.
+    // 0 = not yet reported. Combined with serverFrequencyOffset this yields
+    // the tunable dial span [freq_offset, freq_offset + bandwidth]. The
+    // 'center_freq' MSG is deliberately ignored: it is the cosmetic ADC
+    // passband center, not part of the tuning span.
+    std::atomic<int64_t> serverBandwidth{0};
 
     // KiwiSDR text-protocol metadata (key=value tokens from MSG frames).
     // Touched only on the receive thread, so no synchronization needed.
@@ -103,6 +111,14 @@ public:
 
     // Coherent snapshot of the current AGC settings.
     AgcSettings getAgc() const;
+
+    struct ServedRange {
+        int64_t minHz;   // freq_offset
+        int64_t maxHz;   // freq_offset + bandwidth
+    };
+    // Live tunable dial span derived from the server's reported freq_offset
+    // and bandwidth, or nullopt until the server has reported its bandwidth.
+    std::optional<ServedRange> getServedRange() const;
 
 private:
     // Fire-and-forget command send. tune() and setAgc() run on the GUI

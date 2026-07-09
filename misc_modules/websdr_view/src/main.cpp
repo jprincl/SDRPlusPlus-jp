@@ -339,7 +339,7 @@ private:
             config.release(true);
             receivers.erase(receivers.begin() + removeIndex);
         }
-        selector.drawPopup([=](const std::string &hostPort, const std::string &loc) {
+        selector.drawPopup([=](const std::string &hostPort, const std::string &loc, const std::optional<ServerEntry::FrequencyBand> &) {
             if (std::find_if(receivers.begin(), receivers.end(), [&](const std::shared_ptr<SingleReceiver> &r) {
                 return r->url == hostPort;
             }) == receivers.end()) {

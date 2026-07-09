@@ -21,6 +21,7 @@
 #include "gui/smgui.h"
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <chrono>
 #include <ctime>
 #include <cstring>
@@ -58,9 +59,19 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     static constexpr int BUFFER_MS_MIN = 100;
     static constexpr int BUFFER_MS_MAX = 2000;
 
+    // Fallback tuning range for a plain (converter-less) KiwiSDR when the
+    // server's served band is unknown (manually typed host, no directory
+    // entry). KiwiSDR/KiwiSDR 2 are specified as 10 kHz - 30 MHz receivers,
+    // which covers the overwhelming majority of servers.
+    static constexpr uint64_t DEFAULT_MIN_FREQ = 10000ull;     // 10 kHz
+    static constexpr uint64_t DEFAULT_MAX_FREQ = 30000000ull;  // 30 MHz
+
     char kiwisdrHost[1024] = "";
     int kiwisdrPort = 8073;
     std::string kiwisdrLoc = "";
+    // Served frequency range of the selected server, if known (from the
+    // directory 'bands' field). Used to constrain the tuning UI.
+    std::optional<ServerEntry::FrequencyBand> selectedBand;
     KiwiSDRClient kiwiSdrClient;
     std::string root;
     KiwiSDRMapSelector selector;
@@ -84,6 +95,14 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         }
         if (config.conf.contains("kiwisdr_loc")) {
             kiwisdrLoc = config.conf["kiwisdr_loc"];
+        }
+        if (config.conf.contains("kiwisdr_band_start") && config.conf.contains("kiwisdr_band_end")) {
+            ServerEntry::FrequencyBand b;
+            b.startHz = config.conf["kiwisdr_band_start"];
+            b.endHz = config.conf["kiwisdr_band_end"];
+            if (b.startHz <= b.endHz) {
+                selectedBand = b;
+            }
         }
         if (config.conf.contains("kiwisdr_buffer_ms")) {
             bufferMs = std::clamp<int>(config.conf["kiwisdr_buffer_ms"], BUFFER_MS_MIN, BUFFER_MS_MAX);
@@ -141,14 +160,35 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         return enabled;
     }
 
+    // Constrain the main-window frequency selector to the server's served
+    // range: the known band if we have one, otherwise the plain-KiwiSDR
+    // default. Also trims the number of visible digits in the display.
+    void applyFreqLimits() {
+        if (selectedBand) {
+            // The directory 'bands' field often reports a start of 0; a plain
+            // KiwiSDR isn't usefully tunable below 10 kHz, so keep that floor.
+            gui::freqSelect.minFreq = std::max<uint64_t>(selectedBand->startHz, DEFAULT_MIN_FREQ);
+            gui::freqSelect.maxFreq = selectedBand->endHz;
+        }
+        else {
+            gui::freqSelect.minFreq = DEFAULT_MIN_FREQ;
+            gui::freqSelect.maxFreq = DEFAULT_MAX_FREQ;
+        }
+        gui::freqSelect.limitFreq = true;
+    }
+
     static void menuSelected(void* ctx) {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
         core::setInputSampleRate(12000); // fixed for kiwisdr
+        _this->applyFreqLimits();
         flog::info("KiwiSDRSourceModule '{0}': Menu Select!", _this->name);
     }
 
     static void menuDeselected(void* ctx) {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
+        // Release the range constraint so a stale KiwiSDR band doesn't leak
+        // into whatever source is selected next.
+        gui::freqSelect.limitFreq = false;
         flog::info("KiwiSDRSourceModule '{0}': Menu Deselect!", _this->name);
     }
 
@@ -273,6 +313,23 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
 
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
 
+        // While connected, refine the tuning range to the exact span the
+        // server reports (freq_offset + bandwidth). This supersedes the
+        // directory-band / default estimate set on select, and corrects for
+        // converter-equipped Kiwis and 32 MHz wideband units. Runs on the GUI
+        // thread, so it's the safe place to touch gui::freqSelect.
+        if (_this->connected.load()) {
+            if (auto range = _this->kiwiSdrClient.getServedRange()) {
+                const uint64_t lo = std::max<int64_t>(range->minHz, (int64_t)DEFAULT_MIN_FREQ);
+                const uint64_t hi = std::max<int64_t>(range->maxHz, range->minHz);
+                if (gui::freqSelect.minFreq != lo || gui::freqSelect.maxFreq != hi || !gui::freqSelect.limitFreq) {
+                    gui::freqSelect.minFreq = lo;
+                    gui::freqSelect.maxFreq = hi;
+                    gui::freqSelect.limitFreq = true;
+                }
+            }
+        }
+
         if (core::args["server"].b()) {
 
         } else {
@@ -283,7 +340,7 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             }
             ImGui::EndDisabled();
 
-            _this->selector.drawPopup([=](const std::string &hostPort, const std::string &loc) {
+            _this->selector.drawPopup([=](const std::string &hostPort, const std::string &loc, const std::optional<ServerEntry::FrequencyBand> &band) {
                 auto parsed = url::splitHostPort(hostPort);
                 std::string host = parsed ? parsed->host : hostPort;
                 int port = parsed ? parsed->port : 8073;
@@ -291,11 +348,23 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
                 _this->kiwisdrHost[sizeof(_this->kiwisdrHost) - 1] = '\0';
                 _this->kiwisdrPort = port;
                 _this->kiwisdrLoc = loc;
+                _this->selectedBand = band;
                 config.acquire();
                 config.conf["kiwisdr_host"] = host;
                 config.conf["kiwisdr_port"] = port;
                 config.conf["kiwisdr_loc"] = _this->kiwisdrLoc;
+                if (band) {
+                    config.conf["kiwisdr_band_start"] = band->startHz;
+                    config.conf["kiwisdr_band_end"] = band->endHz;
+                }
+                else {
+                    config.conf.erase("kiwisdr_band_start");
+                    config.conf.erase("kiwisdr_band_end");
+                }
                 config.release(true);
+                // The KiwiSDR source is the active source while this popup is
+                // open, so retune the digit limits to the newly chosen server.
+                _this->applyFreqLimits();
                 _this->kiwiSdrClient.init(_this->kiwisdrHostPort());
             });
 
@@ -317,9 +386,15 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             bool portCommitted = ImGui::IsItemDeactivatedAfterEdit();
             if (hostCommitted || portCommitted) {
                 _this->kiwisdrLoc.clear();
+                // A hand-typed host has no directory band; fall back to the
+                // default range rather than keeping the previous server's.
+                _this->selectedBand.reset();
                 config.acquire();
                 config.conf["kiwisdr_loc"] = _this->kiwisdrLoc;
+                config.conf.erase("kiwisdr_band_start");
+                config.conf.erase("kiwisdr_band_end");
                 config.release(true);
+                _this->applyFreqLimits();
                 _this->kiwiSdrClient.init(_this->kiwisdrHostPort());
             }
             ImGui::EndDisabled();

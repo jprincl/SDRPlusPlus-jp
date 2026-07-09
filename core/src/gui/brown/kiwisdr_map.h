@@ -19,7 +19,7 @@ struct KiwiSDRMapSelector {
     KiwiSDRMapSelector(const std::string& root, ConfigManager* config, const std::string& configPrefix);
 
     void openPopup();
-    void drawPopup(std::function<void(const std::string&, const std::string&)> onSelected);
+    void drawPopup(std::function<void(const std::string&, const std::string&, const std::optional<ServerEntry::FrequencyBand>&)> onSelected);
 
     // Runtime-toggleable. Default keeps the original behavior so existing
     // users see no surprise; a popup button cycles between styles.

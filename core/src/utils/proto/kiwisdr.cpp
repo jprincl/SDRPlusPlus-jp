@@ -254,6 +254,25 @@ void KiwiSDRClient::onKeyValue(const std::string& key, const std::string& value)
             sendTuneCommand(last, currentModulation.load());
         }
     }
+    else if (key == "bandwidth") {
+        // Reported in Hz (e.g. "30000000", or "32000000" on wideband Kiwis).
+        std::istringstream iss(value);
+        iss.imbue(std::locale::classic());
+        double hz = 0.0;
+        iss >> hz;
+        if (iss && hz > 0.0) {
+            serverBandwidth.store(static_cast<int64_t>(std::llround(hz)));
+        }
+    }
+}
+
+std::optional<KiwiSDRClient::ServedRange> KiwiSDRClient::getServedRange() const {
+    const int64_t bw = serverBandwidth.load();
+    if (bw <= 0) {
+        return std::nullopt;
+    }
+    const int64_t foff = serverFrequencyOffset.load();
+    return ServedRange{ foff, foff + bw };
 }
 
 int64_t KiwiSDRClient::parseKhzToHz(const std::string& value) {
@@ -315,6 +334,7 @@ void KiwiSDRClient::resetSessionState() {
     keyValues.clear();
     times.clear();
     serverFrequencyOffset.store(0);
+    serverBandwidth.store(0);
 }
 
 void KiwiSDRClient::stop() {

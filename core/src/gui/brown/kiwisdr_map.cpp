@@ -50,7 +50,7 @@ void KiwiSDRMapSelector::openPopup() {
     ImGui::OpenPopup((configPrefix + ": The KiwiSDR Map").c_str());
 }
 
-void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const std::string&)> onSelected) {
+void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const std::string&, const std::optional<ServerEntry::FrequencyBand>&)> onSelected) {
     const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 #ifdef __ANDROID__
     const bool desktopPopup = false;
@@ -181,7 +181,7 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     if (auto ok = tester.lastOk()) {
         ImGui::SameLine();
         if (doFingerButton("Use tested server: " + ok->hostPort)) {
-            onSelected(ok->hostPort, ok->loc);
+            onSelected(ok->hostPort, ok->loc, ok->band);
             ImGui::CloseCurrentPopup();
         }
     }

@@ -331,7 +331,7 @@ void KiwiSDRTester::testThreadFn(std::string url, std::string loc, std::optional
                 std::lock_guard<std::mutex> lock(stateMutex);
                 if (plannedDisconnect.load()) {
                     status = "Got some data. Server OK: " + url;
-                    lastOkServer = OkServer{hostPort, loc};
+                    lastOkServer = OkServer{hostPort, loc, band};
                 }
                 else {
                     status = "Disconnect, no data. Server NOT OK: " + url;
