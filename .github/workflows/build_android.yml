@@ -48,18 +48,18 @@ jobs:
     build:
         runs-on: ubuntu-latest
         strategy:
-            # Don't abort sibling matrix jobs if one fails — the failure is
-            # usually specific to one (flavor, build_type) combination and
-            # we want to surface diagnostics for the working ones too.
+            # Don't abort the sibling build_type job if one fails — a failure is
+            # usually specific to one build type and we want diagnostics for the
+            # other too.
             fail-fast: false
             matrix:
-                # Per-(flavor, build_type) matrix split. Each cell runs in its
-                # own parallel job, dropping the wall-clock from sum(per-cell)
-                # to max(per-cell). flavor maps to the productFlavors{} block
-                # in android/app/build.gradle ('arm' = armeabi-v7a + arm64-v8a,
-                # 'x86' = x86 + x86_64). Debug cells are opt-in: manual runs
-                # default to including them, build_all calls stay Release-only.
-                flavor: [arm, x86]
+                # We now compile a single all-ABI 'universal' package (see the
+                # productFlavors{} block in android/app/build.gradle) instead of
+                # one job per arch: Google Play needs a single all-ABI bundle
+                # anyway, and the two GitHub-release APKs are split out of the
+                # universal APK afterwards. Only the build type still fans out —
+                # Debug cells are opt-in (manual runs default to including them,
+                # build_all calls stay Release-only).
                 build_type: ${{ inputs.include_debug && fromJSON('["debug", "release"]') || fromJSON('["release"]') }}
 
         steps:
@@ -69,17 +69,16 @@ jobs:
           with:
               fetch-depth: 0
 
-        # Derive the values later steps need from this matrix cell. flavor /
-        # build_type stay lowercase because they appear in apk output paths;
-        # the capitalized variants form the assemble<Flavor><BuildType> gradle
-        # task name. Release APKs are published without a build-type suffix,
-        # Debug APKs get -debug.
-        - name: Resolve version and artifact name
+        # Derive the values later steps need from this matrix cell. Release APKs
+        # are published without a build-type suffix, Debug APKs get -debug. The
+        # bundle is release-only and, unless forced via build_bundle, tag-only.
+        - name: Resolve version and artifact names
           id: names
           env:
               INPUT_VERSION_FULL: ${{ inputs.version_full }}
-              FLAVOR: ${{ matrix.flavor }}
               BUILD_TYPE: ${{ matrix.build_type }}
+              REF_TYPE: ${{ github.ref_type }}
+              BUILD_BUNDLE_INPUT: ${{ inputs.build_bundle }}
           run: |
             VERSION_FULL="$INPUT_VERSION_FULL"
             if [ -z "$VERSION_FULL" ]; then
@@ -90,16 +89,27 @@ jobs:
             else
               ARTIFACT_SUFFIX=""
             fi
+            # The bundle is Play-only: release build type, and (tag OR forced).
+            WANT_BUNDLE=false
+            if [ "$BUILD_TYPE" = "release" ] && { [ "$REF_TYPE" = "tag" ] || [ "$BUILD_BUNDLE_INPUT" = "true" ]; }; then
+              WANT_BUNDLE=true
+            fi
             {
+              echo "version_full=${VERSION_FULL}"
               echo "build_type_caps=${BUILD_TYPE^}"
-              echo "assemble_task=assemble${FLAVOR^}${BUILD_TYPE^}"
-              echo "artifact=sdrpp-iak-${VERSION_FULL}-android-${FLAVOR}${ARTIFACT_SUFFIX}"
+              echo "want_bundle=${WANT_BUNDLE}"
+              echo "arm_artifact=sdrpp-iak-${VERSION_FULL}-android-arm${ARTIFACT_SUFFIX}"
+              echo "x86_artifact=sdrpp-iak-${VERSION_FULL}-android-x86${ARTIFACT_SUFFIX}"
+              # Named outside the sdrpp-iak-* glob so build_all's create_full_archive
+              # never sweeps the bundle onto the GitHub release.
+              echo "aab_artifact=playstore-aab-${VERSION_FULL}"
+              echo "aab=sdrpp-iak-${VERSION_FULL}-android.aab"
             } >> "$GITHUB_OUTPUT"
 
         - name: Install build tools
           run: |
             sudo apt update -y
-            sudo apt install -y wget git p7zip-full openjdk-17-jdk build-essential cmake patchelf python3-mako
+            sudo apt install -y wget git zip unzip p7zip-full openjdk-17-jdk build-essential cmake patchelf python3-mako
 
         # Provision Gradle 9.4.1 (pinned to match android/build.gradle's AGP
         # 9.2.1) ahead of install_android_devenv.sh so the script's gradle
@@ -111,24 +121,24 @@ jobs:
           with:
               gradle-version: 9.4.1
 
-        # Per-(flavor, build_type) install-prefix cache. Glob covers both
-        # ABIs in this flavor (arm* matches armeabi-v7a + arm64-v8a; x86*
-        # matches x86 + x86_64) for the specific build type.
+        # Per-build_type install-prefix cache. The universal package builds all
+        # four ABIs, so the glob covers every build-android-<abi>-<Config> deps
+        # destdir for this build type.
         - name: Cache deps
           uses: ./.github/actions/deps-cache
           with:
-              destdir-path: deps/build-android-${{ matrix.flavor }}*-${{ steps.names.outputs.build_type_caps }}/destdir
-              key-suffix: android-${{ matrix.flavor }}-${{ steps.names.outputs.build_type_caps }}
+              destdir-path: deps/build-android-*-${{ steps.names.outputs.build_type_caps }}/destdir
+              key-suffix: android-universal-${{ steps.names.outputs.build_type_caps }}
               extra-hash-file: android/app/build.gradle
 
         - name: Install Android development environment
           run: bash ./install_android_devenv.sh
 
         # Release-only: decode the signing keystore if the secret is present.
-        # has_keystore controls whether the Release build / upload steps run
-        # — repos without the secret (forks, PRs) skip the release path
+        # has_keystore controls whether the Release build / split / upload steps
+        # run — repos without the secret (forks, PRs) skip the release path
         # cleanly. Manual runs with include_debug=true still produce Debug APKs
-        # without signing.
+        # (signed with the committed debug keystore).
         - name: Decode keystore
           id: check_signing
           if: matrix.build_type == 'release'
@@ -142,158 +152,103 @@ jobs:
           env:
             ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
-        - name: Build ${{ matrix.flavor }} ${{ matrix.build_type }} APK
+        # Compile the universal (all-ABI) package once. assembleUniversal<Type>
+        # yields the fat APK we split per platform below; bundleUniversalRelease
+        # (release + tag/forced only) yields the Play Store .aab — both share the
+        # single native build, so nothing is compiled twice.
+        - name: Build universal ${{ matrix.build_type }} package
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           working-directory: ${{ github.workspace }}/android
           env:
+            BUILD_TYPE_CAPS: ${{ steps.names.outputs.build_type_caps }}
+            WANT_BUNDLE: ${{ steps.names.outputs.want_bundle }}
             ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
             ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
             ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
             ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
-          run: gradle --info -PoptBuildDeps=ON ${{ steps.names.outputs.assemble_task }}
+          run: |
+            TASKS="assembleUniversal${BUILD_TYPE_CAPS}"
+            if [ "$WANT_BUNDLE" = "true" ]; then
+              TASKS="$TASKS bundleUniversalRelease"
+            fi
+            gradle --info -PoptBuildDeps=ON $TASKS
 
-        # Renamed to the artifact name here (rather than in create_full_archive)
-        # so the file inside the artifact already has its final published name.
-        - name: Rename ${{ matrix.flavor }} ${{ matrix.build_type }} APK
+        # Split the one universal APK into the two per-arch APKs by deleting the
+        # other platform's ABI folders, re-page-aligning the archive, and
+        # re-signing. Release uses the upload keystore; Debug uses the committed
+        # debug keystore. Output names follow the usual convention
+        # (sdrpp-iak-<ver>-android-{arm,x86}[-debug].apk).
+        - name: Split universal APK into per-platform APKs
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
-          working-directory: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}
-          run: mv sdrpp-iak-${{ matrix.flavor }}-${{ matrix.build_type }}.apk ${{ steps.names.outputs.artifact }}.apk
+          working-directory: ${{ github.workspace }}/android/app/build/outputs/apk/universal/${{ matrix.build_type }}
+          env:
+            BUILD_TYPE: ${{ matrix.build_type }}
+            VERSION_FULL: ${{ steps.names.outputs.version_full }}
+            ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
+            ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+            ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+            ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          run: |
+            set -euo pipefail
+            BUILD_TOOLS="$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/ | sort -V | tail -1)"
+            UNIVERSAL="sdrpp-iak-universal-${BUILD_TYPE}.apk"
 
-        - name: Save ${{ matrix.flavor }} ${{ matrix.build_type }} APK
+            if [ "$BUILD_TYPE" = "debug" ]; then
+              SUFFIX="-debug"
+              KS="$GITHUB_WORKSPACE/android/app/debug.keystore"
+              KS_PASS="android"; KS_ALIAS="androiddebugkey"; KEY_PASS="android"
+            else
+              SUFFIX=""
+              KS="$ANDROID_KEYSTORE_FILE"
+              KS_PASS="$ANDROID_KEYSTORE_PASSWORD"; KS_ALIAS="$ANDROID_KEY_ALIAS"; KEY_PASS="$ANDROID_KEY_PASSWORD"
+            fi
+
+            # $1 = platform label, remaining args = ABI globs to delete.
+            split_one() {
+              local platform="$1"; shift
+              local out="sdrpp-iak-${VERSION_FULL}-android-${platform}${SUFFIX}.apk"
+              cp "$UNIVERSAL" stripped.apk
+              # `zip -d` leaves the surviving (STORED, uncompressed) .so entries as
+              # they are but shifts their offsets, so re-align afterwards.
+              zip -q -d stripped.apk "$@"
+              # -P 16: 16 KiB page alignment, matching what AGP emits for API 23+.
+              "${BUILD_TOOLS}zipalign" -f -P 16 4 stripped.apk aligned.apk
+              "${BUILD_TOOLS}apksigner" sign \
+                --ks "$KS" --ks-pass "pass:$KS_PASS" \
+                --ks-key-alias "$KS_ALIAS" --key-pass "pass:$KEY_PASS" \
+                --out "$out" aligned.apk
+              rm -f stripped.apk stripped.apk.idsig aligned.apk aligned.apk.idsig
+              echo "== $out =="
+              unzip -l "$out" | grep 'lib/' || true
+            }
+            split_one arm 'lib/x86/*' 'lib/x86_64/*'
+            split_one x86 'lib/armeabi-v7a/*' 'lib/arm64-v8a/*'
+
+        - name: Save arm ${{ matrix.build_type }} APK
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v6
           with:
-              name: ${{ steps.names.outputs.artifact }}
-              path: ${{ github.workspace }}/android/app/build/outputs/apk/${{ matrix.flavor }}/${{ matrix.build_type }}/${{ steps.names.outputs.artifact }}.apk
-
-    # Google Play upload bundle (.aab). Play wants a single signed bundle that
-    # carries every ABI; the GitHub release keeps the two lean per-arch APKs the
-    # matrix above produces. Runs only on release tags (or on-demand via the
-    # build_bundle input) — never on nightly/PR pushes.
-    #
-    # To avoid recompiling all four ABIs, this repackages the native libraries
-    # already built by the arm + x86 release cells: it extracts their .so from
-    # the release APK artifacts and hands them to the packaging-only 'universal'
-    # flavor (-PprebuiltJniLibs disables the native build), so
-    # bundleUniversalRelease only assembles + signs. The artifact is named
-    # outside the sdrpp-iak-* pattern that build_all's create_full_archive
-    # sweeps, so it never lands on the GitHub release — it's a standalone
-    # download for manual Play Console upload.
-    #
-    # continue-on-error: a bundle failure must not block the GitHub release of
-    # the APKs (the reusable workflow still reports success); the job just goes
-    # red so we notice and can re-run it.
-    build_bundle:
-        needs: [build]
-        if: github.ref_type == 'tag' || inputs.build_bundle
-        continue-on-error: true
-        runs-on: ubuntu-latest
-
-        steps:
-        # Full history: get_version.sh needs the release tags to derive the
-        # version suffix when a manual run doesn't pass version_full.
-        - uses: actions/checkout@v5
-          with:
-              fetch-depth: 0
-
-        - name: Resolve version and artifact names
-          id: names
-          env:
-              INPUT_VERSION_FULL: ${{ inputs.version_full }}
-          run: |
-            VERSION_FULL="$INPUT_VERSION_FULL"
-            if [ -z "$VERSION_FULL" ]; then
-              eval "$(scripts/get_version.sh "$GITHUB_WORKSPACE")"
-            fi
-            {
-              echo "arm_artifact=sdrpp-iak-${VERSION_FULL}-android-arm"
-              echo "x86_artifact=sdrpp-iak-${VERSION_FULL}-android-x86"
-              echo "aab=sdrpp-iak-${VERSION_FULL}-android.aab"
-              # Named outside the sdrpp-iak-* glob so create_full_archive doesn't
-              # sweep the bundle onto the GitHub release.
-              echo "artifact=playstore-aab-${VERSION_FULL}"
-            } >> "$GITHUB_OUTPUT"
-
-        # The bundle is Play-only and must be signed with the upload key; skip
-        # the whole job cleanly on forks/repos without the keystore secret.
-        - name: Decode keystore
-          id: check_signing
-          run: |
-            if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-              echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > ${{ runner.workspace }}/release.keystore
-              echo "has_keystore=true" >> $GITHUB_OUTPUT
-            else
-              echo "has_keystore=false" >> $GITHUB_OUTPUT
-            fi
-          env:
-            ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-
-        - name: Install build tools
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          run: |
-            sudo apt update -y
-            sudo apt install -y wget git p7zip-full openjdk-17-jdk
-
-        # Pinned to match android/build.gradle's AGP 9.2.1, same as the APK jobs.
-        - name: Set up Gradle
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          uses: gradle/actions/setup-gradle@v6
-          with:
-              gradle-version: 9.4.1
-
-        # No deps-cache and no native compile: -PprebuiltJniLibs disables CMake,
-        # so this only needs the SDK/NDK (NDK for AGP's .so strip step) + Gradle,
-        # which install_android_devenv.sh provisions without building anything.
-        - name: Install Android development environment
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          run: bash ./install_android_devenv.sh
-
-        - name: Download arm release APK
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          uses: actions/download-artifact@v7
-          with:
               name: ${{ steps.names.outputs.arm_artifact }}
-              path: apks
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/universal/${{ matrix.build_type }}/${{ steps.names.outputs.arm_artifact }}.apk
 
-        - name: Download x86 release APK
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          uses: actions/download-artifact@v7
+        - name: Save x86 ${{ matrix.build_type }} APK
+          if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
+          uses: actions/upload-artifact@v6
           with:
               name: ${{ steps.names.outputs.x86_artifact }}
-              path: apks
+              path: ${{ github.workspace }}/android/app/build/outputs/apk/universal/${{ matrix.build_type }}/${{ steps.names.outputs.x86_artifact }}.apk
 
-        # An APK stores native libs at lib/<abi>/*.so; jniLibs.srcDirs wants the
-        # same <abi>/*.so layout. Extracting from the signed APKs captures the
-        # exact runtime .so set the APKs ship (app libs + liboboe + libc++_shared),
-        # so the bundle's native payload matches the released APKs.
-        - name: Extract native libraries from APKs
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          run: |
-            mkdir -p prebuilt-jni
-            for apk in apks/*.apk; do
-              unzip -o "$apk" 'lib/*' -d apk-extract
-            done
-            cp -r apk-extract/lib/* prebuilt-jni/
-            echo "Bundled ABIs:"; ls prebuilt-jni
-
-        - name: Build universal AAB
-          if: steps.check_signing.outputs.has_keystore == 'true'
-          working-directory: ${{ github.workspace }}/android
-          env:
-            ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-            ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-            ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-            ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
-          run: gradle --info -PprebuiltJniLibs=${{ github.workspace }}/prebuilt-jni bundleUniversalRelease
-
+        # Play Store bundle: renamed to its final published name, uploaded under a
+        # non-sdrpp-iak-* artifact name so it stays off the GitHub release and is a
+        # standalone download for manual Play Console upload.
         - name: Rename AAB
-          if: steps.check_signing.outputs.has_keystore == 'true'
+          if: steps.names.outputs.want_bundle == 'true' && steps.check_signing.outputs.has_keystore == 'true'
           working-directory: ${{ github.workspace }}/android/app/build/outputs/bundle/universalRelease
           run: mv app-universal-release.aab ${{ steps.names.outputs.aab }}
 
         - name: Save AAB
-          if: steps.check_signing.outputs.has_keystore == 'true'
+          if: steps.names.outputs.want_bundle == 'true' && steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v6
           with:
-              name: ${{ steps.names.outputs.artifact }}
+              name: ${{ steps.names.outputs.aab_artifact }}
               path: ${{ github.workspace }}/android/app/build/outputs/bundle/universalRelease/${{ steps.names.outputs.aab }}

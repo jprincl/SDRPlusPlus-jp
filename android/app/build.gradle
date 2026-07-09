@@ -31,15 +31,6 @@ def readVersionFromHeader() {
 }
 def appVersion = readVersionFromHeader()
 
-// When -PprebuiltJniLibs=<dir> is passed, the native code is NOT compiled: the
-// 'universal' flavor packages prebuilt .so from <dir> (one <abi>/ subdirectory
-// each) straight into the AAB. Used by the tag-only Play-bundle CI job, which
-// feeds it the .so extracted from the already-built arm/x86 release APKs so
-// bundleUniversalRelease only repackages + signs — no recompile. Every other
-// build (local dev, the arm/x86 APK CI matrix) leaves this null and compiles
-// natively as usual.
-def prebuiltJniLibs = project.hasProperty('prebuiltJniLibs') ? project.property('prebuiltJniLibs') : null
-
 android {
     namespace = 'org.sdrpp.sdrpp'
     compileSdk 36
@@ -52,11 +43,9 @@ android {
         versionName appVersion.name
         resValue "string", "app_name", "SDR++ iak"
 
-        if (prebuiltJniLibs == null) {
-            externalNativeBuild {
-                cmake {
-                    arguments "-DOPT_BUILD_DEPS=ON", "-DOPT_BACKEND_GLFW=OFF", "-DOPT_BACKEND_ANDROID=ON", "-DOPT_BUILD_SOAPY_SOURCE=OFF", "-DOPT_BUILD_ANDROID_AUDIO_SINK=ON", "-DOPT_BUILD_AUDIO_SINK=OFF", "-DOPT_BUILD_DISCORD_PRESENCE=OFF", "-DOPT_BUILD_M17_DECODER=ON", "-DOPT_BUILD_PLUTOSDR_SOURCE=ON", "-DOPT_BUILD_AUDIO_SOURCE=OFF", "-DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON", "-DOPT_BUILD_QMX_SOURCE=ON", "-DANDROID_STL=c++_shared"
-                }
+        externalNativeBuild {
+            cmake {
+                arguments "-DOPT_BUILD_DEPS=${project.findProperty('optBuildDeps') ?: 'OFF'}", "-DOPT_BACKEND_GLFW=OFF", "-DOPT_BACKEND_ANDROID=ON", "-DOPT_BUILD_SOAPY_SOURCE=OFF", "-DOPT_BUILD_ANDROID_AUDIO_SINK=ON", "-DOPT_BUILD_AUDIO_SINK=OFF", "-DOPT_BUILD_DISCORD_PRESENCE=OFF", "-DOPT_BUILD_M17_DECODER=ON", "-DOPT_BUILD_PLUTOSDR_SOURCE=ON", "-DOPT_BUILD_AUDIO_SOURCE=OFF", "-DOPT_BUILD_HYDRASDR_RFONE_SOURCE=ON", "-DOPT_BUILD_QMX_SOURCE=ON", "-DANDROID_STL=c++_shared"
             }
         }
     }
@@ -86,10 +75,10 @@ android {
             dimension "platform"
             ndk { abiFilters "x86", "x86_64" }
         }
-        // Packaging-only flavor that carries every ABI: the source of the single
-        // all-ABI Play Store bundle (bundleUniversalRelease). Built exclusively
-        // with -PprebuiltJniLibs (native build disabled, .so supplied prebuilt)
-        // so it never recompiles what the arm/x86 flavors already built.
+        // The single all-ABI package the CI actually compiles: it feeds the Play
+        // Store bundle (bundleUniversalRelease) and, after CI splits the universal
+        // APK per ABI group, the two GitHub-release APKs. The arm/x86 flavors above
+        // remain for local single-arch builds; CI no longer uses them.
         universal {
             dimension "platform"
             ndk { abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64" }
@@ -112,11 +101,7 @@ android {
 
     buildFeatures {
         buildConfig true
-        // prefab exposes the oboe AAR's native libs to the CMake build; with
-        // -PprebuiltJniLibs the native build is off and the .so arrive prebuilt,
-        // so there's nothing for prefab to feed — disable it so the packaging-
-        // only bundle build doesn't pull native tooling it won't use.
-        prefab prebuiltJniLibs == null
+        prefab true
         resValues true
     }
 
@@ -125,28 +110,17 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    if (prebuiltJniLibs == null) {
-        externalNativeBuild {
-            cmake {
-                // devenv:cmake - install_android_devenv.sh anchors its sed extraction to this marker.
-                version = "3.22.1"
-                path "../../CMakeLists.txt"
-            }
+    externalNativeBuild {
+        cmake {
+            // devenv:cmake - install_android_devenv.sh anchors its sed extraction to this marker.
+            version = "3.22.1"
+            path "../../CMakeLists.txt"
         }
     }
 
     sourceSets {
         main {
             assets.srcDirs += ['assets']
-        }
-        universal {
-            // Populated only for the prebuilt-jniLibs bundle build; a no-op for
-            // normal compiling builds (the universal flavor is never assembled
-            // then). files() resolves <dir> against the app module directory,
-            // but CI passes an absolute path.
-            if (prebuiltJniLibs != null) {
-                jniLibs.srcDirs += files(prebuiltJniLibs)
-            }
         }
     }
 }
