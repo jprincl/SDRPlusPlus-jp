@@ -10,11 +10,6 @@ on:
                 required: false
                 type: boolean
                 default: false
-            build_bundle:
-                description: Force-build the signed Play Store .aab. Otherwise it builds only on release tags.
-                required: false
-                type: boolean
-                default: false
         secrets:
             ANDROID_KEYSTORE_BASE64:
                 required: false
@@ -32,11 +27,6 @@ on:
                 type: string
             include_debug:
                 description: Build Debug APKs in addition to signed Release APKs.
-                required: false
-                type: boolean
-                default: true
-            build_bundle:
-                description: Build the signed Play Store .aab bundle.
                 required: false
                 type: boolean
                 default: true
@@ -71,14 +61,12 @@ jobs:
 
         # Derive the values later steps need from this matrix cell. Release APKs
         # are published without a build-type suffix, Debug APKs get -debug. The
-        # bundle is release-only and, unless forced via build_bundle, tag-only.
+        # signed .aab is release-only.
         - name: Resolve version and artifact names
           id: names
           env:
               INPUT_VERSION_FULL: ${{ inputs.version_full }}
               BUILD_TYPE: ${{ matrix.build_type }}
-              REF_TYPE: ${{ github.ref_type }}
-              BUILD_BUNDLE_INPUT: ${{ inputs.build_bundle }}
           run: |
             VERSION_FULL="$INPUT_VERSION_FULL"
             if [ -z "$VERSION_FULL" ]; then
@@ -89,20 +77,14 @@ jobs:
             else
               ARTIFACT_SUFFIX=""
             fi
-            # The bundle is Play-only: release build type, and (tag OR forced).
-            WANT_BUNDLE=false
-            if [ "$BUILD_TYPE" = "release" ] && { [ "$REF_TYPE" = "tag" ] || [ "$BUILD_BUNDLE_INPUT" = "true" ]; }; then
-              WANT_BUNDLE=true
-            fi
             {
               echo "version_full=${VERSION_FULL}"
               echo "build_type_caps=${BUILD_TYPE^}"
-              echo "want_bundle=${WANT_BUNDLE}"
               echo "arm_artifact=sdrpp-iak-${VERSION_FULL}-android-arm${ARTIFACT_SUFFIX}"
               echo "x86_artifact=sdrpp-iak-${VERSION_FULL}-android-x86${ARTIFACT_SUFFIX}"
-              # Named outside the sdrpp-iak-* glob so build_all's create_full_archive
-              # never sweeps the bundle onto the GitHub release.
-              echo "aab_artifact=playstore-aab-${VERSION_FULL}"
+              # sdrpp-iak-* name so build_all's create_full_archive publishes the
+              # bundle on the GitHub release (nightly + tag) alongside the APKs.
+              echo "aab_artifact=sdrpp-iak-${VERSION_FULL}-android"
               echo "aab=sdrpp-iak-${VERSION_FULL}-android.aab"
             } >> "$GITHUB_OUTPUT"
 
@@ -153,22 +135,21 @@ jobs:
             ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
         # Compile the universal (all-ABI) package once. assembleUniversal<Type>
-        # yields the fat APK we split per platform below; bundleUniversalRelease
-        # (release + tag/forced only) yields the Play Store .aab — both share the
+        # yields the fat APK we split per platform below; on release we also build
+        # bundleUniversalRelease (the signed Play Store .aab) — both share the
         # single native build, so nothing is compiled twice.
         - name: Build universal ${{ matrix.build_type }} package
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           working-directory: ${{ github.workspace }}/android
           env:
             BUILD_TYPE_CAPS: ${{ steps.names.outputs.build_type_caps }}
-            WANT_BUNDLE: ${{ steps.names.outputs.want_bundle }}
             ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
             ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
             ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
             ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
           run: |
             TASKS="assembleUniversal${BUILD_TYPE_CAPS}"
-            if [ "$WANT_BUNDLE" = "true" ]; then
+            if [ "$BUILD_TYPE_CAPS" = "Release" ]; then
               TASKS="$TASKS bundleUniversalRelease"
             fi
             gradle --info -PoptBuildDeps=ON $TASKS
@@ -238,16 +219,16 @@ jobs:
               name: ${{ steps.names.outputs.x86_artifact }}
               path: ${{ github.workspace }}/android/app/build/outputs/apk/universal/${{ matrix.build_type }}/${{ steps.names.outputs.x86_artifact }}.apk
 
-        # Play Store bundle: renamed to its final published name, uploaded under a
-        # non-sdrpp-iak-* artifact name so it stays off the GitHub release and is a
-        # standalone download for manual Play Console upload.
+        # Signed Play Store bundle: renamed to its final published name and
+        # uploaded under an sdrpp-iak-* artifact name, so create_full_archive
+        # publishes it on the GitHub release (nightly + tag) next to the APKs.
         - name: Rename AAB
-          if: steps.names.outputs.want_bundle == 'true' && steps.check_signing.outputs.has_keystore == 'true'
+          if: matrix.build_type == 'release' && steps.check_signing.outputs.has_keystore == 'true'
           working-directory: ${{ github.workspace }}/android/app/build/outputs/bundle/universalRelease
           run: mv app-universal-release.aab ${{ steps.names.outputs.aab }}
 
         - name: Save AAB
-          if: steps.names.outputs.want_bundle == 'true' && steps.check_signing.outputs.has_keystore == 'true'
+          if: matrix.build_type == 'release' && steps.check_signing.outputs.has_keystore == 'true'
           uses: actions/upload-artifact@v6
           with:
               name: ${{ steps.names.outputs.aab_artifact }}
