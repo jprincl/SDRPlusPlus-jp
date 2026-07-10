@@ -314,12 +314,19 @@ void KiwiSDRTester::testThreadFn(std::string url, std::string loc, std::optional
     std::atomic<bool> plannedDisconnect{false};
     std::atomic<bool> connectedFlag{false};
     std::atomic<bool> disconnectedFlag{false};
+    std::atomic<bool> sampleReceived{false};
     try {
         auto parsedUrl = url::parseHttpHostPort(url);
         if (parsedUrl) {
             const std::string hostPort = parsedUrl->host + ":" + std::to_string(parsedUrl->port);
             setStatus("Testing server " + hostPort + "...");
             testClient.init(hostPort);
+            testClient.onSamples = [&](const dsp::complex_t*, int count) {
+                if (count > 0) {
+                    sampleReceived = true;
+                    plannedDisconnect = true;
+                }
+            };
             testClient.onConnected = [&]() {
                 connectedFlag = true;
                 setStatus("Connected to server " + hostPort + " ...");
@@ -342,12 +349,8 @@ void KiwiSDRTester::testThreadFn(std::string url, std::string loc, std::optional
             while (true) {
                 if (isCanceled()) break;
                 if (disconnectedFlag.load()) break;
-                testClient.iqDataLock.lock();
-                auto bufsize = testClient.iqData.size();
-                testClient.iqDataLock.unlock();
                 std::this_thread::sleep_for(100ms);
-                if (bufsize > 0) {
-                    plannedDisconnect = true;
+                if (sampleReceived.load()) {
                     break;
                 }
                 if (Clock::now() - begin > 5s) break;
