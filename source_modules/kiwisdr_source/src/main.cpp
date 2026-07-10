@@ -88,6 +88,15 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         this->name = name;
         this->root = root;
 
+        // Not served headless: re-streaming an already networked source adds
+        // a pointless hop (a client should connect to the KiwiSDR directly),
+        // and the disconnect handling relies on gui::mainWindow, which is
+        // never driven on a server. Skip registration so the source doesn't
+        // appear in the server's list. Also the map selector is a custom canvas widget
+        // that can't be serialized over the server protocol, so it has no counterpart
+        // in the streamed (remote client) UI.
+        if (core::args["server"].b()) { return; }
+
         config.acquire();
         if (config.conf.contains("kiwisdr_host")) {
             std::string host = config.conf["kiwisdr_host"];
@@ -145,6 +154,8 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     }
 
     ~KiwiSDRSourceModule() {
+        // Server mode: the constructor returned before registering.
+        if (core::args["server"].b()) { return; }
         stop(this);
         sigpath::sourceManager.unregisterSource("KiwiSDR");
     }
@@ -188,10 +199,9 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         appliedServedRange.reset();
     }
 
-    // Apply a hand-typed host/port (from the text boxes on commit, or the
-    // remote-mode Connect button). Unlike a map pick, a typed server has no
-    // directory entry, so drop any cached location/band, fall back to the
-    // default tuning range, and reconnect.
+    // Apply a hand-typed host/port (from the text boxes on commit). Unlike a
+    // map pick, a typed server has no directory entry, so drop any cached
+    // location/band, fall back to the default tuning range, and reconnect.
     void applyTypedServer() {
         kiwisdrLoc.clear();
         selectedBand.reset();
@@ -359,63 +369,52 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             }
         }
 
-        const bool serverMode = core::args["server"].b();
-        // On a headless server MainWindow is never driven by COMMAND_START/STOP,
-        // so isPlaying() would stay false while streaming; use the module's own
-        // running flag there.
-        const bool playing = serverMode ? _this->running.load() : gui::mainWindow.isPlaying();
+        // This source is never registered on a headless server (see the
+        // constructor), so this menu only ever renders locally.
+        const bool playing = gui::mainWindow.isPlaying();
 
-        if (!serverMode) {
-            // Local-only: the map picker is a custom canvas widget that can't
-            // be serialized over the server protocol, so it has no counterpart
-            // in the streamed (remote client) UI.
-            ImGui::BeginDisabled(playing);
-            if (doFingerButton("Choose on map...")) {
-                _this->selector.openPopup();
-            }
-            ImGui::EndDisabled();
-
-            _this->selector.drawPopup([=](const std::string &hostPort, const std::string &loc, const std::optional<ServerEntry::FrequencyBand> &band) {
-                auto parsed = url::splitHostPort(hostPort);
-                std::string host = parsed ? parsed->host : hostPort;
-                int port = parsed ? parsed->port : 8073;
-                std::strncpy(_this->kiwisdrHost, host.c_str(), sizeof(_this->kiwisdrHost) - 1);
-                _this->kiwisdrHost[sizeof(_this->kiwisdrHost) - 1] = '\0';
-                _this->kiwisdrPort = port;
-                _this->kiwisdrLoc = loc;
-                _this->selectedBand = band;
-                config.acquire();
-                config.conf["kiwisdr_host"] = host;
-                config.conf["kiwisdr_port"] = port;
-                config.conf["kiwisdr_loc"] = _this->kiwisdrLoc;
-                if (band) {
-                    config.conf["kiwisdr_band_start"] = band->startHz;
-                    config.conf["kiwisdr_band_end"] = band->endHz;
-                }
-                else {
-                    config.conf.erase("kiwisdr_band_start");
-                    config.conf.erase("kiwisdr_band_end");
-                }
-                config.release(true);
-                // The KiwiSDR source is the active source while this popup is
-                // open, so retune the digit limits to the newly chosen server.
-                _this->applyFreqLimits();
-                _this->kiwiSdrClient.init(_this->kiwisdrHostPort());
-            });
+        ImGui::BeginDisabled(playing);
+        if (doFingerButton("Choose on map...")) {
+            _this->selector.openPopup();
         }
+        ImGui::EndDisabled();
 
-        // Host / port. Rendered with SmGui in both modes, so a headless
-        // server's KiwiSDR can be repointed from a remote client.
-        if (playing) { SmGui::BeginDisabled(); }
+        _this->selector.drawPopup([=](const std::string &hostPort, const std::string &loc, const std::optional<ServerEntry::FrequencyBand> &band) {
+            auto parsed = url::splitHostPort(hostPort);
+            std::string host = parsed ? parsed->host : hostPort;
+            int port = parsed ? parsed->port : 8073;
+            std::strncpy(_this->kiwisdrHost, host.c_str(), sizeof(_this->kiwisdrHost) - 1);
+            _this->kiwisdrHost[sizeof(_this->kiwisdrHost) - 1] = '\0';
+            _this->kiwisdrPort = port;
+            _this->kiwisdrLoc = loc;
+            _this->selectedBand = band;
+            config.acquire();
+            config.conf["kiwisdr_host"] = host;
+            config.conf["kiwisdr_port"] = port;
+            config.conf["kiwisdr_loc"] = _this->kiwisdrLoc;
+            if (band) {
+                config.conf["kiwisdr_band_start"] = band->startHz;
+                config.conf["kiwisdr_band_end"] = band->endHz;
+            }
+            else {
+                config.conf.erase("kiwisdr_band_start");
+                config.conf.erase("kiwisdr_band_end");
+            }
+            config.release(true);
+            // The KiwiSDR source is the active source while this popup is
+            // open, so retune the digit limits to the newly chosen server.
+            _this->applyFreqLimits();
+            _this->kiwiSdrClient.init(_this->kiwisdrHostPort());
+        });
+
+        ImGui::BeginDisabled(playing);
         if (SmGui::InputText(("##_kiwisdr_host_" + _this->name).c_str(),
                              _this->kiwisdrHost, sizeof(_this->kiwisdrHost))) {
             config.acquire();
             config.conf["kiwisdr_host"] = std::string(_this->kiwisdrHost);
             config.release(true);
         }
-        // Commit-on-defocus only exists in the local ImGui path; a streamed
-        // widget can't report it, so server mode reconnects via the button.
-        bool hostCommitted = !serverMode && ImGui::IsItemDeactivatedAfterEdit();
+        bool hostCommitted = ImGui::IsItemDeactivatedAfterEdit();
         SmGui::SameLine();
         SmGui::FillWidth();
         if (SmGui::InputInt(("##_kiwisdr_port_" + _this->name).c_str(), &_this->kiwisdrPort, 0, 0)) {
@@ -423,22 +422,11 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             config.conf["kiwisdr_port"] = _this->kiwisdrPort;
             config.release(true);
         }
-        bool portCommitted = !serverMode && ImGui::IsItemDeactivatedAfterEdit();
-
-        if (serverMode) {
-            // A remote client has no defocus event, so make reconnecting to the
-            // typed host/port an explicit action. Applying it changes visible
-            // state below (Loc:/status lines), so force the client to re-fetch
-            // the drawlist after the action.
-            SmGui::ForceSync();
-            if (SmGui::Button(("Connect##_kiwisdr_conn_" + _this->name).c_str())) {
-                _this->applyTypedServer();
-            }
-        }
-        else if (hostCommitted || portCommitted) {
+        bool portCommitted = ImGui::IsItemDeactivatedAfterEdit();
+        if (hostCommitted || portCommitted) {
             _this->applyTypedServer();
         }
-        if (playing) { SmGui::EndDisabled(); }
+        ImGui::EndDisabled();
 
         if (!_this->kiwisdrLoc.empty())
             SmGui::TextF("Loc: %s", _this->kiwisdrLoc.c_str());

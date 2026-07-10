@@ -5,8 +5,10 @@
 #include <atomic>
 #include <queue>
 #include <server_protocol.h>
-#include <atomic>
 #include <map>
+#include <memory>
+#include <mutex>
+#include <condition_variable>
 #include <vector>
 #include <dsp/compression/sample_stream_decompressor.h>
 #include <dsp/sink.h>
@@ -17,59 +19,49 @@
 #define PROTOCOL_TIMEOUT_MS             10000
 
 namespace server {
+    // One-shot ACK rendezvous between the GUI thread and the network worker.
+    // The worker copies the ACK payload into the waiter, so the waiter stays
+    // valid on its own: notify() never blocks and the worker never has to
+    // pause to keep its receive buffer intact for the awaiting thread.
     class PacketWaiter {
     public:
+        // Returns true if the ACK arrived, false on timeout or cancel.
         bool await(int timeout) {
-            std::unique_lock lck(readyMtx);
-            return readyCnd.wait_for(lck, std::chrono::milliseconds(timeout), [=](){ return dataReady || canceled; }) && !canceled;
+            std::unique_lock lck(mtx);
+            return cnd.wait_for(lck, std::chrono::milliseconds(timeout), [this]() { return dataReady || canceled; }) && dataReady && !canceled;
         }
 
-        void handled() {
+        // Worker thread: copy the ACK payload into the waiter and wake the
+        // awaiting thread. Never blocks, so it is safe to call while holding
+        // the owner's waiter-map mutex.
+        void notify(const uint8_t* data, size_t size) {
             {
-                std::lock_guard lck(handledMtx);
-                dataHandled = true;
-            }
-            handledCnd.notify_all();
-        }
-
-        void notify() {
-            // Tell waiter that data is ready
-            {
-                std::lock_guard lck(readyMtx);
+                std::lock_guard lck(mtx);
+                payload.assign(data, data + size);
                 dataReady = true;
             }
-            readyCnd.notify_all();
-
-            // Wait for waiter to handle the request
-            {
-                std::unique_lock lck(readyMtx);
-                handledCnd.wait(lck, [=](){ return dataHandled; });
-            }
+            cnd.notify_all();
         }
 
         void cancel() {
-            canceled = true;
-            notify();
+            {
+                std::lock_guard lck(mtx);
+                canceled = true;
+            }
+            cnd.notify_all();
         }
 
-        void reset() {
-            std::lock_guard lck1(readyMtx);
-            std::lock_guard lck2(handledMtx);
-            dataReady = false;
-            dataHandled = false;
-            canceled = false;
-        }
+        // Only valid after await() returned true. Owned by the waiter, so it
+        // survives whatever the worker receives next.
+        const std::vector<uint8_t>& data() const { return payload; }
 
     private:
         bool dataReady = false;
-        bool dataHandled = false;
-        bool canceled = 0;
-        
-        std::condition_variable readyCnd;
-        std::condition_variable handledCnd;
+        bool canceled = false;
+        std::vector<uint8_t> payload;
 
-        std::mutex readyMtx;
-        std::mutex handledMtx;
+        std::condition_variable cnd;
+        std::mutex mtx;
     };
 
     enum ConnectionError {
@@ -86,18 +78,24 @@ namespace server {
 
         void setFrequency(double freq);
         double getSampleRate();
-        
+
         void setSampleType(dsp::compression::PCMType type);
         void setCompression(bool enabled);
 
         void start();
         void stop();
 
+        // GUI thread only. Apply the server-pushed state (samplerate, tuning
+        // limits) cached by the network worker. With force, re-apply even if
+        // nothing new arrived — used on re-selection, when another local
+        // source may have overwritten the samplerate or limits.
+        void syncRemoteState(bool force = false);
+
         void close();
         bool isOpen();
 
-        int bytes = 0;
-        bool serverBusy = false;
+        std::atomic<int> bytes{0};
+        std::atomic<bool> serverBusy{false};
 
     private:
         void worker();
@@ -108,9 +106,17 @@ namespace server {
         void sendCommand(Command cmd, int len);
         void sendCommandAck(Command cmd, int len);
 
-        PacketWaiter* awaitCommandAck(Command cmd);
-        void commandAckHandled(PacketWaiter* waiter);
-        std::map<PacketWaiter*, Command> commandAckWaiters;
+        std::shared_ptr<PacketWaiter> awaitCommandAck(Command cmd);
+        void cancelAllWaiters();
+        // Remove a waiter that will never be completed (e.g. after a timeout),
+        // so a late ACK can't be delivered to a later same-command waiter.
+        void forgetCommandAck(const std::shared_ptr<PacketWaiter>& waiter);
+
+        // Guards commandAckWaiters. Held by the worker across notify(), which
+        // is safe because notify() never blocks (the payload is copied into
+        // the waiter instead of being read from the worker's buffer).
+        std::mutex waitersMtx;
+        std::map<std::shared_ptr<PacketWaiter>, Command> commandAckWaiters;
 
         static void dHandler(dsp::complex_t *data, int count, void *ctx);
 
@@ -141,7 +147,16 @@ namespace server {
 
         std::thread workerThread;
 
+        // Server-pushed state: the network worker only caches it here; the
+        // GUI thread applies it via syncRemoteState().
+        std::mutex pushedStateMtx;
         double currentSampleRate = 1000000.0;
+        // Remote tuning limits (native domain), last received from the server.
+        bool remoteTuningLimitsEnabled = false;
+        double remoteTuningLimitMin = 0.0;
+        double remoteTuningLimitMax = 0.0;
+        std::atomic<bool> samplerateDirty{false};
+        std::atomic<bool> tuningLimitsDirty{false};
     };
 
     std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out);

@@ -58,6 +58,14 @@ class QMXSourceModule : public ModuleManager::Instance {
 public:
     QMXSourceModule(std::string name) {
         this->name = std::move(name);
+
+        // Not served headless: the CAT status/VFO sync machinery is pumped by
+        // MainWindow::onFrameDraw, which never fires on a server, and the
+        // audio/serial device selection is local-hardware UI. Skip
+        // registration so the source doesn't appear in the server's list.
+        // Also we serve QMX with our own qmxserver module, which is more network efficient (UDP, lower latency).
+        if (core::args["server"].b()) { return; }
+
         sampleRate = qmx::kSampleRate;
         sync.setDevice(&device);
 
@@ -81,6 +89,8 @@ public:
     }
 
     ~QMXSourceModule() {
+        // Server mode: the constructor returned before binding/registering.
+        if (core::args["server"].b()) { return; }
         gui::mainWindow.onFrameDraw.unbindHandler(&frameDrawHandler);
         stop(this);
         sigpath::sourceManager.unregisterSource("QMX");
@@ -353,11 +363,9 @@ private:
 
     static void menuHandler(void* ctx) {
         auto* self = static_cast<QMXSourceModule*>(ctx);
-        // On a headless server there is no ImGui context, so pixel-measuring
-        // layout calls (CalcTextSize/GetStyle/GetContentRegionAvail) would
-        // dereference a null context. Skip the measured layout there and let
-        // the remote client auto-size (0 = auto for the button width).
-        const bool serverMode = core::args["server"].b();
+        // This source is never registered on a headless server (see the
+        // constructor), so this menu only ever renders locally with a live
+        // ImGui context.
 
 #ifndef __ANDROID__
         if (self->running)
@@ -373,12 +381,9 @@ private:
             config.release(true);
         }
 
-        float refreshBtnWidth = 0.0f;
-        if (!serverMode) {
-            refreshBtnWidth = std::max(90.0f, ImGui::CalcTextSize("Refresh").x + (ImGui::GetStyle().FramePadding.x * 2.0f) + 4.0f);
-            float serialComboWidth = ImGui::GetContentRegionAvail().x - refreshBtnWidth - ImGui::GetStyle().ItemSpacing.x;
-            SmGui::SetNextItemWidth(std::max(1.0f, serialComboWidth));
-        }
+        float refreshBtnWidth = std::max(90.0f, ImGui::CalcTextSize("Refresh").x + (ImGui::GetStyle().FramePadding.x * 2.0f) + 4.0f);
+        float serialComboWidth = ImGui::GetContentRegionAvail().x - refreshBtnWidth - ImGui::GetStyle().ItemSpacing.x;
+        SmGui::SetNextItemWidth(std::max(1.0f, serialComboWidth));
         SmGui::ForceSync();
         if (SmGui::Combo(CONCAT("##_qmx_serial_dev_", self->name), &self->serialPortId, self->serialPorts.txt)) {
             std::string port = self->serialPorts.key(self->serialPortId);
@@ -418,12 +423,9 @@ private:
         if (self->running)
             SmGui::BeginDisabled();
 
-        float refreshBtnWidth = 0.0f;
-        if (!serverMode) {
-            refreshBtnWidth = std::max(90.0f, ImGui::CalcTextSize("Refresh").x + (ImGui::GetStyle().FramePadding.x * 2.0f) + 4.0f);
-            float deviceComboWidth = ImGui::GetContentRegionAvail().x - refreshBtnWidth - ImGui::GetStyle().ItemSpacing.x;
-            SmGui::SetNextItemWidth(std::max(1.0f, deviceComboWidth));
-        }
+        float refreshBtnWidth = std::max(90.0f, ImGui::CalcTextSize("Refresh").x + (ImGui::GetStyle().FramePadding.x * 2.0f) + 4.0f);
+        float deviceComboWidth = ImGui::GetContentRegionAvail().x - refreshBtnWidth - ImGui::GetStyle().ItemSpacing.x;
+        SmGui::SetNextItemWidth(std::max(1.0f, deviceComboWidth));
         SmGui::ForceSync();
         if (SmGui::Combo(CONCAT("##_qmx_android_dev_", self->name), &self->androidDevId, self->androidDeviceListTxt.c_str())) {
             self->selectAndroidDeviceById(self->androidDevId);

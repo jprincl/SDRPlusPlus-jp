@@ -121,6 +121,14 @@ void SourceManager::clearTuningLimits() {
 }
 
 void SourceManager::applyTuningLimits() {
+    if (core::args["server"].b()) {
+        // Headless server: there is no local frequency selector. Forward the
+        // native-domain limit to the connected remote client, whose own
+        // SourceManager applies its local tuning offset before constraining
+        // its freqSelect.
+        server::setTuningLimits(tuningLimitEnabled, tuningLimitMin, tuningLimitMax);
+        return;
+    }
     if (!tuningLimitEnabled) {
         gui::freqSelect.limitFreq = false;
         return;

@@ -53,10 +53,20 @@ public:
         port = config.conf["port"];
         config.release();
 
+        // Per-frame GUI-thread pump for server-pushed state (samplerate,
+        // tuning limits) cached by the client's network worker. Bound in
+        // menuSelected, unbound in menuDeselected.
+        frameDrawHandler.ctx = this;
+        frameDrawHandler.handler = frameDraw;
+
         sigpath::sourceManager.registerSource("SDR++ Server", &handler);
     }
 
     ~SDRPPServerSourceModule() {
+        // Server mode: the constructor returned before registering.
+        if (core::args["server"].b()) { return; }
+        // If still selected, unregisterSource fires menuDeselected, which
+        // unbinds frameDrawHandler.
         stop(this);
         sigpath::sourceManager.unregisterSource("SDR++ Server");
     }
@@ -92,8 +102,15 @@ private:
 
     static void menuSelected(void* ctx) {
         SDRPPServerSourceModule* _this = (SDRPPServerSourceModule*)ctx;
+        // Select/deselect only ever runs on the GUI thread, outside
+        // onFrameDraw.emit() (source combo, startup, module unregister), so
+        // mutating the handler list here is safe. SourceManager strictly
+        // pairs the two calls, keeping bind/unbind balanced.
+        gui::mainWindow.onFrameDraw.bindHandler(&_this->frameDrawHandler);
         if (_this->client) {
-            core::setInputSampleRate(_this->client->getSampleRate());
+            // Force re-apply of samplerate and tuning limits; another local
+            // source may have overwritten them while it was selected.
+            _this->client->syncRemoteState(true);
         }
         gui::mainWindow.playButtonLocked = !(_this->client && _this->client->isOpen());
         flog::info("SDRPPServerSourceModule '{0}': Menu Select!", _this->name);
@@ -101,8 +118,20 @@ private:
 
     static void menuDeselected(void* ctx) {
         SDRPPServerSourceModule* _this = (SDRPPServerSourceModule*)ctx;
+        gui::mainWindow.onFrameDraw.unbindHandler(&_this->frameDrawHandler);
         gui::mainWindow.playButtonLocked = false;
+        // Release the remote limits so they don't leak into the next source.
+        sigpath::sourceManager.clearTuningLimits();
         flog::info("SDRPPServerSourceModule '{0}': Menu Deselect!", _this->name);
+    }
+
+    static void frameDraw(MainWindow::FrameDrawArgs, void* ctx) {
+        SDRPPServerSourceModule* _this = (SDRPPServerSourceModule*)ctx;
+        // Only bound while this source is selected, so this can't stomp
+        // another source's samplerate or tuning limits.
+        if (_this->connected()) {
+            _this->client->syncRemoteState();
+        }
     }
 
     static void start(void* ctx) {
@@ -144,6 +173,7 @@ private:
 
     static void menuHandler(void* ctx) {
         SDRPPServerSourceModule* _this = (SDRPPServerSourceModule*)ctx;
+
         float menuWidth = ImGui::GetContentRegionAvail().x;
 
         bool connected = _this->connected();
@@ -207,9 +237,8 @@ private:
             // Calculate datarate
             _this->frametimeCounter += ImGui::GetIO().DeltaTime;
             if (_this->frametimeCounter >= 0.2f) {
-                _this->datarate = ((float)_this->client->bytes / (_this->frametimeCounter * 1024.0f * 1024.0f)) * 8;
+                _this->datarate = ((float)_this->client->bytes.exchange(0) / (_this->frametimeCounter * 1024.0f * 1024.0f)) * 8;
                 _this->frametimeCounter = 0;
-                _this->client->bytes = 0;
             }
 
             ImGui::TextUnformatted("Status:");
@@ -267,7 +296,7 @@ private:
     std::string name;
     bool enabled = true;
     bool running = false;
-    
+
     double freq;
     bool serverBusy = false;
 
@@ -280,6 +309,7 @@ private:
 
     dsp::stream<dsp::complex_t> stream;
     SourceManager::SourceHandler handler;
+    EventHandler<MainWindow::FrameDrawArgs> frameDrawHandler;
 
     OptionList<std::string, dsp::compression::PCMType> sampleTypeList;
     int sampleTypeId;

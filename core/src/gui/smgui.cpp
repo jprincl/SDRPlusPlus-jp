@@ -140,10 +140,13 @@ namespace SmGui {
             }
             else if (elem.step == DRAW_STEP_INPUT_TEXT) {
                 // Both the initial text and buf_size arrive from the network;
-                // bound them to the local buffer instead of trusting the server.
+                // bound them to the local buffer instead of trusting the
+                // server. Truncate the text to the declared capacity too:
+                // ImGui requires the string to be NUL-terminated within
+                // buf_size, not just within the backing buffer.
                 char tmpBuf[4096];
-                snprintf(tmpBuf, sizeof(tmpBuf), "%s", elements[i+1].str.c_str());
                 int bufSize = std::clamp<int>(elements[i+2].i, 1, (int)sizeof(tmpBuf));
+                snprintf(tmpBuf, bufSize, "%s", elements[i+1].str.c_str());
                 if (InputText(elements[i].str.c_str(), tmpBuf, bufSize, elements[i+3].i)) {
                     elements[i+1].str = tmpBuf;
                     SET_DIFF_STRING(elements[i].str, tmpBuf);
@@ -251,25 +254,28 @@ namespace SmGui {
         int i = 0;
         elem.type = (DrawListElemType)data[i++];
 
-        // Read data depending on type
-        if (elem.type == DRAW_LIST_ELEM_TYPE_DRAW_STEP && len >= 2) {
+        // Read data depending on type. The length checks include the type
+        // byte already consumed above (i == 1), so e.g. a DRAW_STEP needs
+        // 3 bytes total (type + step + forceSync), not 2 — undersized checks
+        // let a truncated, network-supplied drawlist read past the buffer.
+        if (elem.type == DRAW_LIST_ELEM_TYPE_DRAW_STEP && len >= 3) {
             elem.step = (DrawStep)data[i++];
             elem.forceSync = data[i++];
         }
-        else if (elem.type == DRAW_LIST_ELEM_TYPE_BOOL && len-- >= 1) {
+        else if (elem.type == DRAW_LIST_ELEM_TYPE_BOOL && len >= 2) {
             elem.b = data[i++];
         }
-        else if (elem.type == DRAW_LIST_ELEM_TYPE_INT && len >= 4) {
+        else if (elem.type == DRAW_LIST_ELEM_TYPE_INT && len >= 5) {
             elem.i = *(int*)&data[i];
             i += 4;
         }
-        else if (elem.type == DRAW_LIST_ELEM_TYPE_FLOAT && len >= 4) {
+        else if (elem.type == DRAW_LIST_ELEM_TYPE_FLOAT && len >= 5) {
             elem.f = *(float*)&data[i];
             i += 4;
         }
-        else if (elem.type == DRAW_LIST_ELEM_TYPE_STRING && len >= 2) {
+        else if (elem.type == DRAW_LIST_ELEM_TYPE_STRING && len >= 3) {
             uint16_t slen = *(uint16_t*)&data[i];
-            if (len < slen + 2) { return -1; }
+            if (len < slen + 3) { return -1; }
             elem.str = std::string(&data[i + 2], &data[i + 2 + slen]);
             i += slen + 2;
         }

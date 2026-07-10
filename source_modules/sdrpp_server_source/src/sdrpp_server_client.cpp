@@ -1,8 +1,10 @@
 #include "sdrpp_server_client.h"
 #include <volk/volk.h>
 #include <cstring>
+#include <cmath>
 #include <utils/flog.h>
 #include <core.h>
+#include <signal_path/signal_path.h>
 
 using namespace std::chrono_literals;
 
@@ -92,13 +94,16 @@ namespace server {
                 auto waiter = awaitCommandAck(COMMAND_UI_ACTION);
                 sendCommand(COMMAND_UI_ACTION, size);
                 if (waiter->await(PROTOCOL_TIMEOUT_MS)) {
+                    const auto& payload = waiter->data();
                     std::lock_guard lck(dlMtx);
-                    dl.load(r_cmd_data, r_pkt_hdr->size - sizeof(PacketHeader) - sizeof(CommandHeader));
+                    dl.load((void*)payload.data(), (int)payload.size());
                 }
                 else {
+                    // Drop the abandoned waiter, otherwise a late ACK for this
+                    // request would be delivered to a later same-command waiter.
+                    forgetCommandAck(waiter);
                     flog::error("Timeout out after asking for UI");
                 }
-                waiter->handled();
                 flog::warn("Resync done");
             }
             else {
@@ -108,16 +113,55 @@ namespace server {
         }
     }
 
+    void Client::syncRemoteState(bool force) {
+        // Consume the dirty flags before snapshotting, so an update the
+        // worker publishes in between is not lost: it sets the flag again
+        // and the next frame picks it up.
+        bool applySamplerate = samplerateDirty.exchange(false) || force;
+        bool applyLimits = tuningLimitsDirty.exchange(false) || force;
+        if (!applySamplerate && !applyLimits) { return; }
+
+        double samplerate;
+        bool limitsEnabled;
+        double limitMin, limitMax;
+        {
+            std::lock_guard lck(pushedStateMtx);
+            samplerate = currentSampleRate;
+            limitsEnabled = remoteTuningLimitsEnabled;
+            limitMin = remoteTuningLimitMin;
+            limitMax = remoteTuningLimitMax;
+        }
+
+        // Apply outside the mutex: setInputSampleRate reconfigures the DSP
+        // chain and setTuningLimits touches GUI state.
+        if (applySamplerate) {
+            core::setInputSampleRate(samplerate);
+        }
+        if (applyLimits) {
+            if (limitsEnabled) {
+                // Native domain; the local SourceManager shifts by the local
+                // tuning offset before constraining gui::freqSelect.
+                sigpath::sourceManager.setTuningLimits(limitMin, limitMax);
+            }
+            else {
+                sigpath::sourceManager.clearTuningLimits();
+            }
+        }
+    }
+
     void Client::setFrequency(double freq) {
         if (!isOpen()) { return; }
-        *(double*)s_cmd_data = freq;
-        sendCommand(COMMAND_SET_FREQUENCY, sizeof(double));
+        // Register the waiter before sending, so an ACK arriving right away
+        // cannot be missed.
         auto waiter = awaitCommandAck(COMMAND_SET_FREQUENCY);
-        waiter->await(PROTOCOL_TIMEOUT_MS);
-        waiter->handled();
+        // memcpy: s_cmd_data is not 8-byte aligned (header offsets).
+        memcpy(s_cmd_data, &freq, sizeof(double));
+        sendCommand(COMMAND_SET_FREQUENCY, sizeof(double));
+        if (!waiter->await(PROTOCOL_TIMEOUT_MS)) { forgetCommandAck(waiter); }
     }
 
     double Client::getSampleRate() {
+        std::lock_guard lck(pushedStateMtx);
         return currentSampleRate;
     }
 
@@ -168,6 +212,15 @@ namespace server {
                 break;
             }
 
+            // Validate the server-supplied size before using it as a receive
+            // length: rbuffer is a fixed SERVER_MAX_PACKET_SIZE allocation, so
+            // an out-of-range size would overflow it (and a value below the
+            // header size would wrap the unsigned subtraction below).
+            if (r_pkt_hdr->size < sizeof(PacketHeader) || r_pkt_hdr->size > SERVER_MAX_PACKET_SIZE) {
+                flog::error("Invalid packet size from server: {0}", r_pkt_hdr->size);
+                break;
+            }
+
             // Receive remaining data
             if (sock->recv(&rbuffer[sizeof(PacketHeader)], r_pkt_hdr->size - sizeof(PacketHeader), true, PROTOCOL_TIMEOUT_MS) <= 0) {
                 break;
@@ -176,44 +229,61 @@ namespace server {
             // Increment data counter
             bytes += r_pkt_hdr->size;
 
-            // Decode packet
+            // Decode packet. Worker discipline: only parse and cache into
+            // mutex-protected client state; SourceManager/GUI applies happen
+            // on the GUI thread via syncRemoteState().
             if (r_pkt_hdr->type == PACKET_TYPE_COMMAND) {
                 // TODO: Move to command handler
                 if (r_cmd_hdr->cmd == COMMAND_SET_SAMPLERATE && r_pkt_hdr->size == sizeof(PacketHeader) + sizeof(CommandHeader) + sizeof(double)) {
-                    currentSampleRate = *(double*)r_cmd_data;
-                    core::setInputSampleRate(currentSampleRate);
+                    // memcpy: r_cmd_data is not 8-byte aligned (header offsets).
+                    double samplerate;
+                    memcpy(&samplerate, r_cmd_data, sizeof(double));
+                    {
+                        std::lock_guard lck(pushedStateMtx);
+                        currentSampleRate = samplerate;
+                    }
+                    samplerateDirty = true;
+                }
+                else if (r_cmd_hdr->cmd == COMMAND_SET_TUNING_LIMITS && r_pkt_hdr->size == sizeof(PacketHeader) + sizeof(CommandHeader) + 1 + 2 * sizeof(double)) {
+                    bool enabled = r_cmd_data[0];
+                    double limitMin, limitMax;
+                    memcpy(&limitMin, &r_cmd_data[1], sizeof(double));
+                    memcpy(&limitMax, &r_cmd_data[1 + sizeof(double)], sizeof(double));
+                    // Don't trust the server: non-finite or inverted limits
+                    // would become garbage (uint64_t) casts in the frequency
+                    // selector and could lock the user out of tuning.
+                    if (enabled && (!std::isfinite(limitMin) || !std::isfinite(limitMax) || limitMin > limitMax)) {
+                        flog::error("Ignoring invalid tuning limits from server: [{0}, {1}]", limitMin, limitMax);
+                    }
+                    else {
+                        {
+                            std::lock_guard lck(pushedStateMtx);
+                            remoteTuningLimitsEnabled = enabled;
+                            remoteTuningLimitMin = limitMin;
+                            remoteTuningLimitMax = limitMax;
+                        }
+                        tuningLimitsDirty = true;
+                    }
                 }
                 else if (r_cmd_hdr->cmd == COMMAND_DISCONNECT) {
                     flog::error("Asked to disconnect by the server");
                     serverBusy = true;
-
-                    // Cancel waiters
-                    std::vector<PacketWaiter*> toBeRemoved;
-                    for (auto& [waiter, cmd] : commandAckWaiters) {
-                        waiter->cancel();
-                        toBeRemoved.push_back(waiter);
-                    }
-
-                    // Remove handled waiters
-                    for (auto& waiter : toBeRemoved) {
-                        commandAckWaiters.erase(waiter);
-                        delete waiter;
-                    }
+                    cancelAllWaiters();
                 }
             }
             else if (r_pkt_hdr->type == PACKET_TYPE_COMMAND_ACK) {
-                // Notify waiters
-                std::vector<PacketWaiter*> toBeRemoved;
-                for (auto& [waiter, cmd] : commandAckWaiters) {
-                    if (cmd != r_cmd_hdr->cmd) { continue; }
-                    waiter->notify();
-                    toBeRemoved.push_back(waiter);
-                }
-
-                // Remove handled waiters
-                for (auto& waiter : toBeRemoved) {
-                    commandAckWaiters.erase(waiter);
-                    delete waiter;
+                // Copy the payload into the matching waiters and wake them.
+                int payloadSize = (int)r_pkt_hdr->size - (int)(sizeof(PacketHeader) + sizeof(CommandHeader));
+                if (payloadSize < 0) { payloadSize = 0; }
+                std::lock_guard lck(waitersMtx);
+                for (auto it = commandAckWaiters.begin(); it != commandAckWaiters.end();) {
+                    if (it->second == r_cmd_hdr->cmd) {
+                        it->first->notify(r_cmd_data, payloadSize);
+                        it = commandAckWaiters.erase(it);
+                    }
+                    else {
+                        ++it;
+                    }
                 }
             }
             else if (r_pkt_hdr->type == PACKET_TYPE_BASEBAND) {
@@ -233,22 +303,25 @@ namespace server {
                 flog::error("Invalid packet type: {0}", r_pkt_hdr->type);
             }
         }
+
+        // Connection is gone; release anyone still waiting for an ACK.
+        cancelAllWaiters();
     }
 
     int Client::getUI() {
         if (!isOpen()) { return -1; }
         auto waiter = awaitCommandAck(COMMAND_GET_UI);
         sendCommand(COMMAND_GET_UI, 0);
-        if (waiter->await(PROTOCOL_TIMEOUT_MS)) {
-            std::lock_guard lck(dlMtx);
-            dl.load(r_cmd_data, r_pkt_hdr->size - sizeof(PacketHeader) - sizeof(CommandHeader));
-        }
-        else {
+        if (!waiter->await(PROTOCOL_TIMEOUT_MS)) {
+            // Drop the abandoned waiter, otherwise a late ACK for this request
+            // would be delivered to a later same-command waiter.
+            forgetCommandAck(waiter);
             if (!serverBusy) { flog::error("Timeout out after asking for UI"); };
-            waiter->handled();
             return serverBusy ? CONN_ERR_BUSY : CONN_ERR_TIMEOUT;
         }
-        waiter->handled();
+        const auto& payload = waiter->data();
+        std::lock_guard lck(dlMtx);
+        dl.load((void*)payload.data(), (int)payload.size());
         return 0;
     }
 
@@ -268,10 +341,24 @@ namespace server {
         sendPacket(PACKET_TYPE_COMMAND_ACK, sizeof(CommandHeader) + len);
     }
 
-    PacketWaiter* Client::awaitCommandAck(Command cmd) {
-        PacketWaiter* waiter = new PacketWaiter;
+    std::shared_ptr<PacketWaiter> Client::awaitCommandAck(Command cmd) {
+        auto waiter = std::make_shared<PacketWaiter>();
+        std::lock_guard lck(waitersMtx);
         commandAckWaiters[waiter] = cmd;
         return waiter;
+    }
+
+    void Client::cancelAllWaiters() {
+        std::lock_guard lck(waitersMtx);
+        for (auto& [waiter, cmd] : commandAckWaiters) {
+            waiter->cancel();
+        }
+        commandAckWaiters.clear();
+    }
+
+    void Client::forgetCommandAck(const std::shared_ptr<PacketWaiter>& waiter) {
+        std::lock_guard lck(waitersMtx);
+        commandAckWaiters.erase(waiter);
     }
 
     void Client::dHandler(dsp::complex_t *data, int count, void *ctx) {

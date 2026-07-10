@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string>
 #include <vector>
+#include <atomic>
 #include <mutex>
 #include <inttypes.h>
 #include <memory>
@@ -63,7 +64,10 @@ namespace net {
         void writeWorker();
 
         bool stopWorkers = false;
-        bool connectionOpen = false;
+        // Read without a lock from isOpen()/read()/write() on several threads
+        // (accept, baseband, control), written under connectionOpenMtx; atomic
+        // so those reads aren't a data race.
+        std::atomic<bool> connectionOpen{false};
 
         std::mutex readMtx;
         std::mutex writeMtx;

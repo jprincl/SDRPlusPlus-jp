@@ -50,6 +50,11 @@ public:
     QmxServerSourceModule(std::string name) {
         this->name = name;
 
+        // Not served headless: chaining SDR++ server -> QMX server adds a
+        // pointless network hop; a client should connect to the QMX server
+        // directly. Skip registration like the file source does.
+        if (core::args["server"].b()) { return; }
+
         config.acquire();
         std::string host = config.conf["hostname"];
         port = config.conf["port"];
@@ -70,6 +75,8 @@ public:
     }
 
     ~QmxServerSourceModule() {
+        // Server mode: the constructor returned before registering.
+        if (core::args["server"].b()) { return; }
         stop(this);
         sigpath::sourceManager.unregisterSource("QMX Server");
     }
