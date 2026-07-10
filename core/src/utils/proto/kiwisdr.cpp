@@ -96,34 +96,25 @@ void KiwiSDRClient::init(const std::string& hostport) {
             const Modulation modulation = currentModulation.load();
             if (modulation == TUNE_REAL && msg.size() == 1024 + REAL_HEADER_SIZE) { // REAL data
                 const char* samples = msg.data() + REAL_HEADER_SIZE;
-                setConnectionStatus("Storing real..");
-                {
-                    std::lock_guard<std::mutex> lock(iqDataLock);
-                    for (int z = 0; z < 512; z++) {
-                        const int16_t sample = readBE16(samples + (z * 2));
-                        iqData.emplace_back(sample / 32767.0f, 0.0f);
-                    }
-                    while (iqData.size() > NETWORK_BUFFER_SIZE * 1.5) {
-                        iqData.erase(iqData.begin(), iqData.begin() + 200);
-                    }
+                dsp::complex_t decoded[512];
+                for (int z = 0; z < 512; z++) {
+                    const int16_t sample = readBE16(samples + (z * 2));
+                    decoded[z] = dsp::complex_t{ sample / 32767.0f, 0.0f };
                 }
+                onSamples(decoded, 512);
                 snprintf(status, sizeof status, "Cont Recv. %d KB/sec (%d)", (lastSecondCount * ((int)msg.size())) / 1024, lastSecondCount);
                 setConnectionStatus(status);
             }
             if (modulation == TUNE_IQ && msg.size() == 2048 + IQ_HEADER_SIZE && msg[3] == 0x08) { // IQ data
                 const char* samples = msg.data() + IQ_HEADER_SIZE;
-                {
-                    std::lock_guard<std::mutex> lock(iqDataLock);
-                    for (int z = 0; z < 512; z++) {
-                        const char* iqsample = samples + (z * 4);
-                        const int16_t i = readBE16(iqsample);
-                        const int16_t q = readBE16(iqsample + 2);
-                        iqData.emplace_back(i / 32767.0f, q / 32767.0f);
-                    }
-                    while (iqData.size() > NETWORK_BUFFER_SIZE * 1.5) {
-                        iqData.erase(iqData.begin(), iqData.begin() + 200);
-                    }
+                dsp::complex_t decoded[512];
+                for (int z = 0; z < 512; z++) {
+                    const char* iqsample = samples + (z * 4);
+                    const int16_t i = readBE16(iqsample);
+                    const int16_t q = readBE16(iqsample + 2);
+                    decoded[z] = dsp::complex_t{ i / 32767.0f, q / 32767.0f };
                 }
+                onSamples(decoded, 512);
                 //                    flog::info("{} Got sound: bytes={} , {} samples, buflen now = {} (erased {})", (int64_t)currentTimeMillis(), msg.size(), (msg.size() - HEADER_SIZE) / 4, buflen, erased);
             }
         }
@@ -327,10 +318,6 @@ uint64_t KiwiSDRClient::fetchServerTimestamp(const std::string& host, int port) 
 }
 
 void KiwiSDRClient::resetSessionState() {
-    {
-        std::lock_guard<std::mutex> lock(iqDataLock);
-        iqData.clear();
-    }
     keyValues.clear();
     times.clear();
     serverFrequencyOffset.store(0);

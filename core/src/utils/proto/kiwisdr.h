@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <complex>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -11,7 +10,8 @@
 #include <optional>
 #include <string>
 #include <thread>
-#include <vector>
+
+#include "dsp/types.h"
 
 #include "utils/proto/websock.h"
 
@@ -83,9 +83,8 @@ public:
     // from "came up and then went away". The wsClient still fires
     // onDisconnected too, so handlers don't need to subscribe to both.
     std::function<void(const std::string&)> onError = [](const std::string&) {};
-    std::vector<std::complex<float>> iqData;
-    std::mutex iqDataLock;
     std::thread looperThread;
+    std::function<void(const dsp::complex_t*, int)> onSamples = [](const dsp::complex_t*, int) {};
 
     static int16_t readBE16(const char* data);
 
@@ -95,10 +94,6 @@ public:
     virtual ~KiwiSDRClient();
 
     int IQDATA_FREQUENCY = 12000;
-    // Backstop cap for iqData growth (consumers pace/trim themselves; this
-    // only bounds memory when nobody drains, e.g. an idle tester session).
-    int NETWORK_BUFFER_SECONDS = 5;
-    int NETWORK_BUFFER_SIZE = NETWORK_BUFFER_SECONDS * IQDATA_FREQUENCY;
 
     void init(const std::string& hostport);
 

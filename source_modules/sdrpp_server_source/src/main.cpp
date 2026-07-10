@@ -10,6 +10,7 @@
 #include <gui/widgets/stepped_slider.h>
 #include <utils/optionlist.h>
 #include <gui/dialogs/dialog_box.h>
+#include <cstring>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -37,6 +38,14 @@ public:
         sampleTypeList.define("Float32", dsp::compression::PCM_TYPE_F32);
         sampleTypeId = sampleTypeList.valueId(dsp::compression::PCM_TYPE_I16);
 
+        prebufferList.define("Disabled", 0);
+        prebufferList.define("50 ms", 50);
+        prebufferList.define("100 ms", 100);
+        prebufferList.define("250 ms", 250);
+        prebufferList.define("500 ms", 500);
+        prebufferList.define("1000 ms", 1000);
+        rxPrebufferId = prebufferList.valueId(100);
+
         handler.ctx = this;
         handler.selectHandler = menuSelected;
         handler.deselectHandler = menuDeselected;
@@ -52,6 +61,7 @@ public:
         strcpy(hostname, hostStr.c_str());
         port = config.conf["port"];
         config.release();
+        loadPasswordForHost();
 
         // Per-frame GUI-thread pump for server-pushed state (samplerate,
         // tuning limits) cached by the client's network worker. Bound in
@@ -182,18 +192,29 @@ private:
         ImGui::GenericDialog("##sdrpp_srv_src_err_dialog", _this->serverBusy, GENERIC_DIALOG_BUTTONS_OK, [=](){
             ImGui::TextUnformatted("This server is already in use.");
         });
+        ImGui::GenericDialog("##sdrpp_srv_src_auth_dialog", _this->authFailed, GENERIC_DIALOG_BUTTONS_OK, [=](){
+            ImGui::TextUnformatted("Authentication failed.");
+        });
 
         if (connected) { style::beginDisabled(); }
         if (ImGui::InputText(CONCAT("##sdrpp_srv_srv_host_", _this->name), _this->hostname, 1023)) {
             config.acquire();
             config.conf["hostname"] = _this->hostname;
             config.release(true);
+            _this->loadPasswordForHost();
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
         if (ImGui::InputInt(CONCAT("##sdrpp_srv_srv_port_", _this->name), &_this->port, 0, 0)) {
             config.acquire();
             config.conf["port"] = _this->port;
+            config.release(true);
+        }
+        ImGui::LeftLabel("Password");
+        ImGui::FillWidth();
+        if (ImGui::InputText(CONCAT("##sdrpp_srv_srv_password_", _this->name), _this->password, sizeof(_this->password), ImGuiInputTextFlags_Password)) {
+            config.acquire();
+            config.conf["hosts"][std::string(_this->hostname)]["password"] = std::string(_this->password);
             config.release(true);
         }
         if (connected) { style::endDisabled(); }
@@ -229,6 +250,16 @@ private:
                 config.release(true);
             }
 
+            ImGui::LeftLabel("RX prebuffer");
+            ImGui::FillWidth();
+            if (ImGui::Combo("##sdrpp_srv_source_rx_prebuf", &_this->rxPrebufferId, _this->prebufferList.txt)) {
+                int prebufferMsec = _this->prebufferList[_this->rxPrebufferId];
+                _this->client->setRxPrebufferMsec(prebufferMsec);
+                config.acquire();
+                config.conf["servers"][_this->devConfName]["rxPrebuffer"] = prebufferMsec;
+                config.release(true);
+            }
+
             bool dummy = true;
             style::beginDisabled();
             ImGui::Checkbox("Full IQ", &dummy);
@@ -243,7 +274,7 @@ private:
 
             ImGui::TextUnformatted("Status:");
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%.3f Mbit/s)", _this->datarate);
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%.3f Mbit/s, %d%% buffer)", _this->datarate, _this->client->getRxPrebufferPercent());
 
             ImGui::CollapsingHeader("Source [REMOTE]", ImGuiTreeNodeFlags_DefaultOpen);
 
@@ -262,13 +293,16 @@ private:
 
     void tryConnect() {
         try {
+            serverBusy = false;
+            authFailed = false;
             if (client) { client.reset(); }
-            client = server::connect(hostname, port, &stream);
+            client = server::connect(hostname, port, &stream, password);
             deviceInit();
         }
         catch (const std::exception& e) {
             flog::error("Could not connect to SDR: {}", e.what());
             if (!strcmp(e.what(), "Server busy")) { serverBusy = true; }
+            if (!strcmp(e.what(), "Authentication failed")) { authFailed = true; }
         }
     }
 
@@ -287,10 +321,28 @@ private:
         if (config.conf["servers"][devConfName].contains("compression")) {
             compression = config.conf["servers"][devConfName]["compression"];
         }
+        rxPrebufferId = prebufferList.valueId(100);
+        if (config.conf["servers"][devConfName].contains("rxPrebuffer")) {
+            int prebufferMsec = config.conf["servers"][devConfName]["rxPrebuffer"];
+            if (prebufferList.valueExists(prebufferMsec)) { rxPrebufferId = prebufferList.valueId(prebufferMsec); }
+        }
 
         // Set settings
         client->setSampleType(sampleTypeList[sampleTypeId]);
         client->setCompression(compression);
+        client->setRxPrebufferMsec(prebufferList[rxPrebufferId]);
+    }
+
+    void loadPasswordForHost() {
+        config.acquire();
+        password[0] = 0;
+        std::string host = hostname;
+        if (config.conf["hosts"].contains(host) && config.conf["hosts"][host].contains("password")) {
+            std::string savedPassword = config.conf["hosts"][host]["password"];
+            strncpy(password, savedPassword.c_str(), sizeof(password) - 1);
+            password[sizeof(password) - 1] = 0;
+        }
+        config.release();
     }
 
     std::string name;
@@ -299,11 +351,13 @@ private:
 
     double freq;
     bool serverBusy = false;
+    bool authFailed = false;
 
     float datarate = 0;
     float frametimeCounter = 0;
 
     char hostname[1024];
+    char password[256] = {};
     int port = 50000;
     std::string devConfName = "";
 
@@ -312,7 +366,9 @@ private:
     EventHandler<MainWindow::FrameDrawArgs> frameDrawHandler;
 
     OptionList<std::string, dsp::compression::PCMType> sampleTypeList;
+    OptionList<std::string, int> prebufferList;
     int sampleTypeId;
+    int rxPrebufferId;
     bool compression = false;
 
     std::shared_ptr<server::Client> client;
@@ -323,6 +379,7 @@ MOD_EXPORT void _INIT_() {
     def["hostname"] = "localhost";
     def["port"] = 5259;
     def["servers"] = json::object();
+    def["hosts"] = json::object();
     config.setPath(core::args["root"].s() + "/sdrpp_server_source_config.json");
     config.load(def);
     config.enableAutoSave();

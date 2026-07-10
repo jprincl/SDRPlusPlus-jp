@@ -1,15 +1,33 @@
 #include "sdrpp_server_client.h"
 #include <volk/volk.h>
+#include <algorithm>
 #include <cstring>
 #include <cmath>
 #include <utils/flog.h>
 #include <core.h>
 #include <signal_path/signal_path.h>
+#include <utils/proto/pbkdf2_sha256.h>
 
 using namespace std::chrono_literals;
 
 namespace server {
-    Client::Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out) {
+    static HelloPayload makeHelloPayload() {
+        HelloPayload hello = {};
+        hello.magic = SERVER_PROTOCOL_MAGIC;
+        hello.protocolMajor = SERVER_PROTOCOL_MAJOR;
+        hello.protocolMinor = SERVER_PROTOCOL_MINOR;
+        hello.capabilities = SERVER_PROTOCOL_CAP_HEARTBEAT | SERVER_PROTOCOL_CAP_AUTH;
+        memcpy(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(SERVER_PROTOCOL_FORK_ID) - 1);
+        return hello;
+    }
+
+    static bool isCompatibleHello(const HelloPayload& hello) {
+        return hello.magic == SERVER_PROTOCOL_MAGIC &&
+            hello.protocolMajor == SERVER_PROTOCOL_MAJOR &&
+            memcmp(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(hello.forkId)) == 0;
+    }
+
+    Client::Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const std::string& password) {
         this->sock = sock;
         output = out;
 
@@ -35,15 +53,17 @@ namespace server {
         decompIn.setBufferSize(STREAM_BUFFER_SIZE*sizeof(dsp::complex_t) + 8);
         decompIn.clearWriteStop();
         decomp.init(&decompIn);
-        link.init(&decomp.out, output);
+        prebuffer.init(&decomp.out);
+        link.init(&prebuffer.out, output);
         decomp.start();
+        prebuffer.start();
         link.start();
 
         // Start worker thread
         workerThread = std::thread(&Client::worker, this);
 
-        // Ask for a UI
-        int res = getUI();
+        int res = hello(password);
+        if (res == 0) { res = getUI(); }
         if (res < 0) {
             // Close client
             close();
@@ -54,6 +74,10 @@ namespace server {
                 throw std::runtime_error("Timed out");
             case CONN_ERR_BUSY:
                 throw std::runtime_error("Server busy");
+            case CONN_ERR_PROTOCOL:
+                throw std::runtime_error("Incompatible SDR++ server protocol/fork");
+            case CONN_ERR_AUTH:
+                throw std::runtime_error("Authentication failed");
             default:
                 throw std::runtime_error("Unknown error");
             }
@@ -82,17 +106,19 @@ namespace server {
             elemId.type = SmGui::DRAW_LIST_ELEM_TYPE_STRING;
             elemId.str = diffId;
 
-            // Encore packet
-            int size = 0;
-            s_cmd_data[size++] = syncRequired;
-            size += SmGui::DrawList::storeItem(elemId, &s_cmd_data[size], SERVER_MAX_PACKET_SIZE - size);
-            size += SmGui::DrawList::storeItem(diffValue, &s_cmd_data[size], SERVER_MAX_PACKET_SIZE - size);
+            auto sendUIAction = [&]() {
+                std::lock_guard lck(sendMtx);
+                int size = 0;
+                s_cmd_data[size++] = syncRequired;
+                size += SmGui::DrawList::storeItem(elemId, &s_cmd_data[size], SERVER_MAX_PACKET_SIZE - size);
+                size += SmGui::DrawList::storeItem(diffValue, &s_cmd_data[size], SERVER_MAX_PACKET_SIZE - size);
+                sendCommandLocked(COMMAND_UI_ACTION, size);
+            };
 
-            // Send
             if (syncRequired) {
                 flog::warn("Action requires resync");
                 auto waiter = awaitCommandAck(COMMAND_UI_ACTION);
-                sendCommand(COMMAND_UI_ACTION, size);
+                sendUIAction();
                 if (waiter->await(PROTOCOL_TIMEOUT_MS)) {
                     const auto& payload = waiter->data();
                     std::lock_guard lck(dlMtx);
@@ -108,7 +134,7 @@ namespace server {
             }
             else {
                 flog::warn("Action does not require resync");
-                sendCommand(COMMAND_UI_ACTION, size);
+                sendUIAction();
             }
         }
     }
@@ -154,9 +180,12 @@ namespace server {
         // Register the waiter before sending, so an ACK arriving right away
         // cannot be missed.
         auto waiter = awaitCommandAck(COMMAND_SET_FREQUENCY);
-        // memcpy: s_cmd_data is not 8-byte aligned (header offsets).
-        memcpy(s_cmd_data, &freq, sizeof(double));
-        sendCommand(COMMAND_SET_FREQUENCY, sizeof(double));
+        {
+            std::lock_guard lck(sendMtx);
+            // memcpy: s_cmd_data is not 8-byte aligned (header offsets).
+            memcpy(s_cmd_data, &freq, sizeof(double));
+            sendCommandLocked(COMMAND_SET_FREQUENCY, sizeof(double));
+        }
         if (!waiter->await(PROTOCOL_TIMEOUT_MS)) { forgetCommandAck(waiter); }
     }
 
@@ -167,18 +196,31 @@ namespace server {
 
     void Client::setSampleType(dsp::compression::PCMType type) {
         if (!isOpen()) { return; }
+        std::lock_guard lck(sendMtx);
         s_cmd_data[0] = type;
-        sendCommand(COMMAND_SET_SAMPLE_TYPE, 1);
+        sendCommandLocked(COMMAND_SET_SAMPLE_TYPE, 1);
     }
 
     void Client::setCompression(bool enabled) {
         if (!isOpen()) { return; }
-         s_cmd_data[0] = enabled;
-        sendCommand(COMMAND_SET_COMPRESSION, 1);
+        std::lock_guard lck(sendMtx);
+        s_cmd_data[0] = enabled;
+        sendCommandLocked(COMMAND_SET_COMPRESSION, 1);
+    }
+
+    void Client::setRxPrebufferMsec(int msec) {
+        prebuffer.setPrebufferMsec(msec);
+        std::lock_guard lck(pushedStateMtx);
+        prebuffer.setSampleRate(currentSampleRate);
+    }
+
+    int Client::getRxPrebufferPercent() {
+        return prebuffer.getPercentFull();
     }
 
     void Client::start() {
         if (!isOpen()) { return; }
+        prebuffer.clear();
         sendCommand(COMMAND_START, 0);
         getUI();
     }
@@ -197,6 +239,7 @@ namespace server {
         decompIn.clearWriteStop();
 
         // Stop DSP
+        prebuffer.stop();
         decomp.stop();
         link.stop();
     }
@@ -242,6 +285,7 @@ namespace server {
                         std::lock_guard lck(pushedStateMtx);
                         currentSampleRate = samplerate;
                     }
+                    prebuffer.setSampleRate(samplerate);
                     samplerateDirty = true;
                 }
                 else if (r_cmd_hdr->cmd == COMMAND_SET_TUNING_LIMITS && r_pkt_hdr->size == sizeof(PacketHeader) + sizeof(CommandHeader) + 1 + 2 * sizeof(double)) {
@@ -270,6 +314,19 @@ namespace server {
                     serverBusy = true;
                     cancelAllWaiters();
                 }
+                else if (r_cmd_hdr->cmd == COMMAND_AUTH_CHALLENGE && r_pkt_hdr->size == sizeof(PacketHeader) + sizeof(CommandHeader) + SERVER_AUTH_CHALLENGE_SIZE) {
+                    {
+                        std::lock_guard lck(authMtx);
+                        memcpy(authChallenge.data(), r_cmd_data, authChallenge.size());
+                        authChallengeReady = true;
+                    }
+                    authCnd.notify_all();
+                }
+                else if (r_cmd_hdr->cmd == COMMAND_HEARTBEAT && r_pkt_hdr->size == sizeof(PacketHeader) + sizeof(CommandHeader) + sizeof(uint32_t)) {
+                    std::lock_guard lck(sendMtx);
+                    memcpy(s_cmd_data, r_cmd_data, sizeof(uint32_t));
+                    sendCommandAckLocked(COMMAND_HEARTBEAT, sizeof(uint32_t));
+                }
             }
             else if (r_pkt_hdr->type == PACKET_TYPE_COMMAND_ACK) {
                 // Copy the payload into the matching waiters and wake them.
@@ -297,7 +354,16 @@ namespace server {
                 };
             }
             else if (r_pkt_hdr->type == PACKET_TYPE_ERROR) {
-                flog::error("SDR++ Server Error: {0}", rbuffer[sizeof(PacketHeader)]);
+                uint8_t err = (r_pkt_hdr->size > sizeof(PacketHeader)) ? r_pkt_data[0] : ERROR_INVALID_PACKET;
+                flog::error("SDR++ Server Error: {0}", err);
+                if (err == ERROR_AUTH_REQUIRED || err == ERROR_AUTH_FAILED) {
+                    authFailed = true;
+                    authCnd.notify_all();
+                    cancelAllWaiters();
+                }
+                if (!protocolReady.load() && (err == ERROR_PROTOCOL_MISMATCH || err == ERROR_INVALID_COMMAND)) {
+                    cancelAllWaiters();
+                }
             }
             else {
                 flog::error("Invalid packet type: {0}", r_pkt_hdr->type);
@@ -306,6 +372,82 @@ namespace server {
 
         // Connection is gone; release anyone still waiting for an ACK.
         cancelAllWaiters();
+        authCnd.notify_all();
+    }
+
+    int Client::hello(const std::string& password) {
+        if (!isOpen()) { return CONN_ERR_TIMEOUT; }
+
+        auto waiter = awaitCommandAck(COMMAND_HELLO);
+        {
+            std::lock_guard lck(sendMtx);
+            HelloPayload hello = makeHelloPayload();
+            memcpy(s_cmd_data, &hello, sizeof(hello));
+            sendCommandLocked(COMMAND_HELLO, sizeof(hello));
+        }
+
+        if (!waiter->await(PROTOCOL_TIMEOUT_MS)) {
+            forgetCommandAck(waiter);
+            if (serverBusy) { return CONN_ERR_BUSY; }
+            return CONN_ERR_PROTOCOL;
+        }
+
+        const auto& payload = waiter->data();
+        if (payload.size() != sizeof(HelloPayload)) { return CONN_ERR_PROTOCOL; }
+
+        HelloPayload hello;
+        memcpy(&hello, payload.data(), sizeof(hello));
+        if (!isCompatibleHello(hello)) { return CONN_ERR_PROTOCOL; }
+
+        if ((hello.capabilities & SERVER_PROTOCOL_CAP_AUTH) != 0) {
+            int res = authenticate(password);
+            if (res < 0) { return res; }
+        }
+
+        protocolReady = true;
+        return 0;
+    }
+
+    int Client::authenticate(const std::string& password) {
+        if (password.empty()) { return CONN_ERR_AUTH; }
+
+        std::array<uint8_t, SERVER_AUTH_CHALLENGE_SIZE> challenge{};
+        {
+            std::unique_lock lck(authMtx);
+            if (!authCnd.wait_for(lck, std::chrono::milliseconds(PROTOCOL_TIMEOUT_MS), [this]() {
+                return authChallengeReady || authFailed.load() || !isOpen();
+            })) {
+                return CONN_ERR_TIMEOUT;
+            }
+            if (authFailed.load() || !authChallengeReady || !isOpen()) { return CONN_ERR_AUTH; }
+            challenge = authChallenge;
+            authChallengeReady = false;
+        }
+
+        std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> key{};
+        std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> response{};
+        crypto::pbkdf2Sha256((const uint8_t*)password.data(), password.size(),
+            (const uint8_t*)SERVER_AUTH_SALT, sizeof(SERVER_AUTH_SALT) - 1,
+            SERVER_AUTH_PBKDF2_ITERATIONS, key.data(), key.size());
+        crypto::hmacSha256(key.data(), key.size(), challenge.data(), challenge.size(), response.data());
+
+        authFailed = false;
+        auto waiter = awaitCommandAck(COMMAND_AUTH_RESPONSE);
+        {
+            std::lock_guard lck(sendMtx);
+            memcpy(s_cmd_data, response.data(), response.size());
+            sendCommandLocked(COMMAND_AUTH_RESPONSE, (int)response.size());
+        }
+
+        std::fill(key.begin(), key.end(), 0);
+        std::fill(response.begin(), response.end(), 0);
+
+        if (!waiter->await(PROTOCOL_TIMEOUT_MS)) {
+            forgetCommandAck(waiter);
+            return authFailed.load() ? CONN_ERR_AUTH : CONN_ERR_TIMEOUT;
+        }
+
+        return 0;
     }
 
     int Client::getUI() {
@@ -325,20 +467,30 @@ namespace server {
         return 0;
     }
 
-    void Client::sendPacket(PacketType type, int len) {
+    void Client::sendPacketLocked(PacketType type, int len) {
         s_pkt_hdr->type = type;
         s_pkt_hdr->size = sizeof(PacketHeader) + len;
         sock->send(sbuffer, s_pkt_hdr->size);
     }
 
-    void Client::sendCommand(Command cmd, int len) {
+    void Client::sendCommandLocked(Command cmd, int len) {
         s_cmd_hdr->cmd = cmd;
-        sendPacket(PACKET_TYPE_COMMAND, sizeof(CommandHeader) + len);
+        sendPacketLocked(PACKET_TYPE_COMMAND, sizeof(CommandHeader) + len);
+    }
+
+    void Client::sendCommandAckLocked(Command cmd, int len) {
+        s_cmd_hdr->cmd = cmd;
+        sendPacketLocked(PACKET_TYPE_COMMAND_ACK, sizeof(CommandHeader) + len);
+    }
+
+    void Client::sendCommand(Command cmd, int len) {
+        std::lock_guard lck(sendMtx);
+        sendCommandLocked(cmd, len);
     }
 
     void Client::sendCommandAck(Command cmd, int len) {
-        s_cmd_hdr->cmd = cmd;
-        sendPacket(PACKET_TYPE_COMMAND_ACK, sizeof(CommandHeader) + len);
+        std::lock_guard lck(sendMtx);
+        sendCommandAckLocked(cmd, len);
     }
 
     std::shared_ptr<PacketWaiter> Client::awaitCommandAck(Command cmd) {
@@ -367,7 +519,7 @@ namespace server {
         _this->output->swap(count);
     }
 
-    std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out) {
-        return std::make_shared<Client>(net::connect(host, port), out);
+    std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out, const std::string& password) {
+        return std::make_shared<Client>(net::connect(host, port), out, password);
     }
 }

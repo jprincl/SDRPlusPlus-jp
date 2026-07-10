@@ -8,14 +8,19 @@
 #include <signal_path/signal_path.h>
 #include <gui/smgui.h>
 #include <utils/optionlist.h>
+#include <utils/proto/pbkdf2_sha256.h>
 #include "dsp/compression/sample_stream_compressor.h"
 #include "dsp/sink/handler_sink.h"
 #include <zstd.h>
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <memory>
+#include <random>
 #include <vector>
 #include <cstring>
+#include <chrono>
 
 namespace server {
     dsp::stream<dsp::complex_t> dummyInput;
@@ -46,6 +51,39 @@ namespace server {
     bool tuningLimitEnabled = false;
     double tuningLimitMin = 0.0;
     double tuningLimitMax = 0.0;
+    bool authRequired = false;
+    std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> authKey{};
+
+    using SteadyClock = std::chrono::steady_clock;
+    static constexpr std::chrono::milliseconds HANDSHAKE_TIMEOUT{10000};
+    static constexpr std::chrono::milliseconds HEARTBEAT_INTERVAL{5000};
+    static constexpr std::chrono::milliseconds HEARTBEAT_TIMEOUT{15000};
+
+    static HelloPayload makeHelloPayload() {
+        HelloPayload hello = {};
+        hello.magic = SERVER_PROTOCOL_MAGIC;
+        hello.protocolMajor = SERVER_PROTOCOL_MAJOR;
+        hello.protocolMinor = SERVER_PROTOCOL_MINOR;
+        hello.capabilities = SERVER_PROTOCOL_CAP_HEARTBEAT | (authRequired ? SERVER_PROTOCOL_CAP_AUTH : 0);
+        memcpy(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(SERVER_PROTOCOL_FORK_ID) - 1);
+        return hello;
+    }
+
+    static bool isCompatibleHello(const HelloPayload& hello) {
+        return hello.magic == SERVER_PROTOCOL_MAGIC &&
+            hello.protocolMajor == SERVER_PROTOCOL_MAJOR &&
+            memcmp(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(hello.forkId)) == 0;
+    }
+
+    static void fillRandom(uint8_t* data, size_t len) {
+        std::random_device rd;
+        for (size_t i = 0; i < len;) {
+            unsigned int value = rd();
+            for (size_t j = 0; j < sizeof(value) && i < len; j++, i++) {
+                data[i] = (uint8_t)((value >> (j * 8)) & 0xff);
+            }
+        }
+    }
 
     // A connected client and everything scoped to that connection: the socket
     // plus its own receive and send buffers. Making the buffers per-session is
@@ -71,6 +109,15 @@ namespace server {
         uint8_t* s_cmd_data;
 
         std::shared_ptr<net::ConnClass> conn;
+        std::atomic<bool> protocolReady{false};
+        std::atomic<bool> authenticated{false};
+        std::atomic<bool> protocolRejected{false};
+        std::atomic<uint32_t> peerCapabilities{0};
+        SteadyClock::time_point connectedAt = SteadyClock::now();
+        uint32_t heartbeatSeq = 0;
+        bool heartbeatAwaitingAck = false;
+        SteadyClock::time_point heartbeatLastSend = SteadyClock::now();
+        std::array<uint8_t, SERVER_AUTH_CHALLENGE_SIZE> authChallenge{};
 
         ClientSession(net::Conn c)
             : rstore(SERVER_MAX_PACKET_SIZE), sstore(SERVER_MAX_PACKET_SIZE), conn(std::move(c)) {
@@ -92,39 +139,56 @@ namespace server {
         // Compose-and-send into this session's send buffer. The caller must
         // hold controlMtx (it serializes composition into sstore against the
         // other threads that send: the accept greeting and source modules).
-        void sendPacket(PacketType type, int len) {
+        bool sendPacket(PacketType type, int len) {
             s_pkt_hdr->type = type;
             s_pkt_hdr->size = sizeof(PacketHeader) + len;
-            if (conn) { conn->write(s_pkt_hdr->size, sstore.data()); }
+            return conn && conn->write(s_pkt_hdr->size, sstore.data());
         }
 
-        void sendCommand(Command cmd, int len) {
+        bool sendCommand(Command cmd, int len) {
             s_cmd_hdr->cmd = cmd;
-            sendPacket(PACKET_TYPE_COMMAND, sizeof(CommandHeader) + len);
+            return sendPacket(PACKET_TYPE_COMMAND, sizeof(CommandHeader) + len);
         }
 
-        void sendCommandAck(Command cmd, int len) {
+        bool sendCommandAck(Command cmd, int len) {
             s_cmd_hdr->cmd = cmd;
-            sendPacket(PACKET_TYPE_COMMAND_ACK, sizeof(CommandHeader) + len);
+            return sendPacket(PACKET_TYPE_COMMAND_ACK, sizeof(CommandHeader) + len);
         }
 
-        void sendError(Error err) {
+        bool sendError(Error err) {
             s_pkt_data[0] = err;
-            sendPacket(PACKET_TYPE_ERROR, 1);
+            return sendPacket(PACKET_TYPE_ERROR, 1);
         }
 
-        void sendSampleRate(double samplerate) {
+        bool sendSampleRate(double samplerate) {
             // memcpy: s_cmd_data is not 8-byte aligned (header offsets).
             memcpy(s_cmd_data, &samplerate, sizeof(double));
-            sendCommand(COMMAND_SET_SAMPLERATE, sizeof(double));
+            return sendCommand(COMMAND_SET_SAMPLERATE, sizeof(double));
         }
 
-        void sendTuningLimits(bool enabled, double minFreq, double maxFreq) {
+        bool sendTuningLimits(bool enabled, double minFreq, double maxFreq) {
             s_cmd_data[0] = enabled;
             // memcpy: s_cmd_data is not 8-byte aligned (header offsets).
             memcpy(&s_cmd_data[1], &minFreq, sizeof(double));
             memcpy(&s_cmd_data[1 + sizeof(double)], &maxFreq, sizeof(double));
-            sendCommand(COMMAND_SET_TUNING_LIMITS, 1 + 2 * sizeof(double));
+            return sendCommand(COMMAND_SET_TUNING_LIMITS, 1 + 2 * sizeof(double));
+        }
+
+        bool sendHeartbeat(uint32_t seq) {
+            memcpy(s_cmd_data, &seq, sizeof(seq));
+            return sendCommand(COMMAND_HEARTBEAT, sizeof(seq));
+        }
+
+        bool sendHelloAck() {
+            HelloPayload hello = makeHelloPayload();
+            memcpy(s_cmd_data, &hello, sizeof(hello));
+            return sendCommandAck(COMMAND_HELLO, sizeof(hello));
+        }
+
+        bool sendAuthChallenge() {
+            fillRandom(authChallenge.data(), authChallenge.size());
+            memcpy(s_cmd_data, authChallenge.data(), authChallenge.size());
+            return sendCommand(COMMAND_AUTH_CHALLENGE, (int)authChallenge.size());
         }
     };
 
@@ -152,10 +216,18 @@ namespace server {
     static void _clientHandler(net::Conn conn, void* ctx);
     static void _packetHandler(int count, uint8_t* buf, void* ctx);
     static void _testServerHandler(uint8_t* data, int count, void* ctx);
+    static bool handleHello(ClientSession* s, Command cmd, uint8_t* data, int len);
+    static bool activateSession(ClientSession* s);
+    static void rejectSession(ClientSession* s, const char* reason);
     static void commandHandler(ClientSession* s, Command cmd, uint8_t* data, int len);
+    static void commandAckHandler(ClientSession* s, Command cmd, uint8_t* data, int len);
     static void drawMenu();
     static void renderUI(SmGui::DrawList* dl, std::string diffId, SmGui::DrawListElem diffValue);
     static void sendUI(ClientSession* s, Command originCmd, std::string diffId, SmGui::DrawListElem diffValue);
+    static void sendInitialStateLocked(ClientSession* s);
+    static void stopRunningSourceLocked(const char* reason);
+    static void heartbeatTick();
+    static void clearSessionIfCurrent(const std::shared_ptr<ClientSession>& session);
 
     int main() {
         flog::info("=====| SERVER MODE |=====");
@@ -173,6 +245,16 @@ namespace server {
 
         // Initialize compressor
         cctx = ZSTD_createCCtx();
+
+        std::string password = core::args["password"].s();
+        if (!password.empty()) {
+            crypto::pbkdf2Sha256((const uint8_t*)password.data(), password.size(),
+                (const uint8_t*)SERVER_AUTH_SALT, sizeof(SERVER_AUTH_SALT) - 1,
+                SERVER_AUTH_PBKDF2_ITERATIONS, authKey.data(), authKey.size());
+            std::fill(password.begin(), password.end(), '\0');
+            authRequired = true;
+            flog::info("SDR++ server password authentication enabled");
+        }
 
         // Load config
         core::configManager.acquire();
@@ -254,7 +336,10 @@ namespace server {
         listener->acceptAsync(_clientHandler, NULL);
 
         flog::info("Ready, listening on {0}:{1}", host, port);
-        while(1) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
+        while(1) {
+            heartbeatTick();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
 
         return 0;
     }
@@ -262,25 +347,37 @@ namespace server {
     static void _clientHandler(net::Conn conn, void* ctx) {
         // Reject if someone else is already connected
         if (auto s = getSession(); s && s->isOpen()) {
-            flog::info("REJECTED Connection from {0}:{1}, another client is already connected.", "TODO", "TODO");
+            bool busy = false;
+            {
+                std::lock_guard lck(controlMtx);
+                busy = running;
+            }
+            if (!busy) {
+                flog::info("Closing idle SDR++ server client before accepting a replacement connection.");
+                if (s->conn) { s->conn->close(); }
+                clearSessionIfCurrent(s);
+            }
+            else {
+                flog::info("REJECTED Connection from {0}:{1}, another client is already connected.", "TODO", "TODO");
 
-            // Issue a disconnect command to the client
-            uint8_t buf[sizeof(PacketHeader) + sizeof(CommandHeader)];
-            PacketHeader* tmp_phdr = (PacketHeader*)buf;
-            CommandHeader* tmp_chdr = (CommandHeader*)&buf[sizeof(PacketHeader)];
-            tmp_phdr->size = sizeof(PacketHeader) + sizeof(CommandHeader);
-            tmp_phdr->type = PACKET_TYPE_COMMAND;
-            tmp_chdr->cmd = COMMAND_DISCONNECT;
-            conn->write(tmp_phdr->size, buf);
+                // Issue a disconnect command to the client
+                uint8_t buf[sizeof(PacketHeader) + sizeof(CommandHeader)];
+                PacketHeader* tmp_phdr = (PacketHeader*)buf;
+                CommandHeader* tmp_chdr = (CommandHeader*)&buf[sizeof(PacketHeader)];
+                tmp_phdr->size = sizeof(PacketHeader) + sizeof(CommandHeader);
+                tmp_phdr->type = PACKET_TYPE_COMMAND;
+                tmp_chdr->cmd = COMMAND_DISCONNECT;
+                conn->write(tmp_phdr->size, buf);
 
-            // TODO: Find something cleaner
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                // TODO: Find something cleaner
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-            conn->close();
+                conn->close();
 
-            // Start another async accept
-            listener->acceptAsync(_clientHandler, NULL);
-            return;
+                // Start another async accept
+                listener->acceptAsync(_clientHandler, NULL);
+                return;
+            }
         }
 
         flog::info("Connection from {0}:{1}", "TODO", "TODO");
@@ -298,19 +395,8 @@ namespace server {
         }
         old.reset();
 
-        // Perform settings reset
-        sigpath::sourceManager.stop();
-        comp.setPCMType(dsp::compression::PCM_TYPE_I16);
-        compression = false;
-
-        // Greet the client with the current samplerate and tuning limits.
-        {
-            std::lock_guard lck(controlMtx);
-            session->sendSampleRate(sampleRate);
-            session->sendTuningLimits(tuningLimitEnabled, tuningLimitMin, tuningLimitMax);
-        }
-
-        // Start reading commands from the new client.
+        // Start reading commands from the new client. The first command must
+        // be COMMAND_HELLO; only then do we reset source state or send UI data.
         session->conn->readAsync(sizeof(PacketHeader), session->rstore.data(), _packetHandler, session.get());
 
         listener->acceptAsync(_clientHandler, NULL);
@@ -331,6 +417,7 @@ namespace server {
         // size would wrap the unsigned subtraction below).
         if (hdr->size < sizeof(PacketHeader) || hdr->size > SERVER_MAX_PACKET_SIZE) {
             flog::error("Invalid packet size from client: {0}", hdr->size);
+            s->protocolRejected = true;
             return;
         }
 
@@ -344,9 +431,24 @@ namespace server {
             len += read;
         }
 
+        if (!s->protocolReady.load()) {
+            if (hdr->type == PACKET_TYPE_COMMAND && hdr->size >= sizeof(PacketHeader) + sizeof(CommandHeader)) {
+                handleHello(s, (Command)s->r_cmd_hdr->cmd, s->r_cmd_data, hdr->size - sizeof(PacketHeader) - sizeof(CommandHeader));
+            }
+            else {
+                rejectSession(s, "first packet was not a protocol hello");
+            }
+            if (s->protocolRejected.load()) { return; }
+            conn->readAsync(sizeof(PacketHeader), s->rstore.data(), _packetHandler, s);
+            return;
+        }
+
         // Parse and process
         if (hdr->type == PACKET_TYPE_COMMAND && hdr->size >= sizeof(PacketHeader) + sizeof(CommandHeader)) {
             commandHandler(s, (Command)s->r_cmd_hdr->cmd, s->r_cmd_data, hdr->size - sizeof(PacketHeader) - sizeof(CommandHeader));
+        }
+        else if (hdr->type == PACKET_TYPE_COMMAND_ACK && hdr->size >= sizeof(PacketHeader) + sizeof(CommandHeader)) {
+            commandAckHandler(s, (Command)s->r_cmd_hdr->cmd, s->r_cmd_data, hdr->size - sizeof(PacketHeader) - sizeof(CommandHeader));
         }
         else {
             std::lock_guard lck(controlMtx);
@@ -372,14 +474,100 @@ namespace server {
         // Write to network. Snapshot the session so a concurrent reconnect on
         // the accept thread can't free the connection mid-write.
         auto s = getSession();
-        if (s && s->isOpen()) { s->conn->write(bb_pkt_hdr->size, bbuf); }
+        if (s && s->protocolReady.load() && s->authenticated.load() && s->isOpen()) {
+            if (!s->conn->write(bb_pkt_hdr->size, bbuf)) { s->protocolRejected = true; }
+        }
+        else if (s && s->protocolReady.load()) {
+            s->protocolRejected = true;
+        }
     }
 
     void setInput(dsp::stream<dsp::complex_t>* stream) {
         comp.setInput(stream);
     }
 
+    static bool handleHello(ClientSession* s, Command cmd, uint8_t* data, int len) {
+        if (cmd != COMMAND_HELLO || len != sizeof(HelloPayload)) {
+            rejectSession(s, "first command was not a valid protocol hello");
+            return false;
+        }
+
+        HelloPayload hello;
+        memcpy(&hello, data, sizeof(hello));
+        if (!isCompatibleHello(hello)) {
+            rejectSession(s, "client protocol/fork ID is incompatible");
+            return false;
+        }
+        if (authRequired && (hello.capabilities & SERVER_PROTOCOL_CAP_AUTH) == 0) {
+            rejectSession(s, "client does not support password authentication");
+            return false;
+        }
+        if (getSession().get() != s) {
+            rejectSession(s, "client session is no longer active");
+            return false;
+        }
+
+        s->peerCapabilities = hello.capabilities;
+        return activateSession(s);
+    }
+
+    static bool activateSession(ClientSession* s) {
+        if (getSession().get() != s) {
+            rejectSession(s, "client session is no longer active");
+            return false;
+        }
+
+        std::lock_guard lck(controlMtx);
+        sigpath::sourceManager.stop();
+        comp.setPCMType(dsp::compression::PCM_TYPE_I16);
+        compression = false;
+
+        s->sendHelloAck();
+        s->authenticated = !authRequired;
+        s->protocolReady = true;
+        if (authRequired) {
+            s->sendAuthChallenge();
+        }
+        else {
+            sendInitialStateLocked(s);
+        }
+        return true;
+    }
+
+    static void rejectSession(ClientSession* s, const char* reason) {
+        flog::warn("Rejecting SDR++ server client: {0}", reason);
+        s->protocolRejected = true;
+        std::lock_guard lck(controlMtx);
+        if (s->isOpen()) { s->sendError(ERROR_PROTOCOL_MISMATCH); }
+    }
+
     static void commandHandler(ClientSession* s, Command cmd, uint8_t* data, int len) {
+        if (authRequired && !s->authenticated.load()) {
+            std::lock_guard lck(controlMtx);
+            if (cmd != COMMAND_AUTH_RESPONSE) {
+                s->sendError(ERROR_AUTH_REQUIRED);
+                return;
+            }
+            if (len != SERVER_AUTH_RESPONSE_SIZE) {
+                s->sendError(ERROR_INVALID_ARGUMENT);
+                return;
+            }
+
+            std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> expected{};
+            crypto::hmacSha256(authKey.data(), authKey.size(), s->authChallenge.data(), s->authChallenge.size(), expected.data());
+            if (!crypto::constantTimeEqual(expected.data(), data, expected.size())) {
+                flog::warn("SDR++ server client authentication failed");
+                s->sendError(ERROR_AUTH_FAILED);
+                s->sendAuthChallenge();
+                return;
+            }
+
+            s->authenticated = true;
+            s->sendCommandAck(COMMAND_AUTH_RESPONSE, 0);
+            sendInitialStateLocked(s);
+            return;
+        }
+
         if (cmd == COMMAND_GET_UI) {
             sendUI(s, COMMAND_GET_UI, "", dummyElem);
         }
@@ -452,6 +640,22 @@ namespace server {
         }
     }
 
+    static void commandAckHandler(ClientSession* s, Command cmd, uint8_t* data, int len) {
+        if (cmd != COMMAND_HEARTBEAT) { return; }
+        if (len != sizeof(uint32_t)) {
+            flog::warn("Ignoring malformed heartbeat ACK (len={0})", len);
+            return;
+        }
+
+        uint32_t seq;
+        memcpy(&seq, data, sizeof(seq));
+
+        std::lock_guard lck(controlMtx);
+        if (s->heartbeatAwaitingAck && seq == s->heartbeatSeq) {
+            s->heartbeatAwaitingAck = false;
+        }
+    }
+
     static void drawMenu() {
         if (running) { SmGui::BeginDisabled(); }
         SmGui::FillWidth();
@@ -503,19 +707,93 @@ namespace server {
         s->sendCommandAck(originCmd, size);
     }
 
+    static void sendInitialStateLocked(ClientSession* s) {
+        s->sendSampleRate(sampleRate);
+        s->sendTuningLimits(tuningLimitEnabled, tuningLimitMin, tuningLimitMax);
+    }
+
+    static void stopRunningSourceLocked(const char* reason) {
+        if (!running) { return; }
+        flog::warn("Stopping SDR source: {0}", reason);
+        sigpath::sourceManager.stop();
+        running = false;
+    }
+
     void setTuningLimits(bool enabled, double minFreq, double maxFreq) {
         std::lock_guard lck(controlMtx);
         tuningLimitEnabled = enabled;
         tuningLimitMin = minFreq;
         tuningLimitMax = maxFreq;
         auto s = getSession();
-        if (s && s->isOpen()) { s->sendTuningLimits(enabled, minFreq, maxFreq); }
+        if (s && s->protocolReady.load() && s->authenticated.load() && s->isOpen()) { s->sendTuningLimits(enabled, minFreq, maxFreq); }
     }
 
     void setInputSampleRate(double samplerate) {
         std::lock_guard lck(controlMtx);
         sampleRate = samplerate;
         auto s = getSession();
-        if (s && s->isOpen()) { s->sendSampleRate(samplerate); }
+        if (s && s->protocolReady.load() && s->authenticated.load() && s->isOpen()) { s->sendSampleRate(samplerate); }
+    }
+
+    static void heartbeatTick() {
+        auto s = getSession();
+        if (!s) { return; }
+
+        bool shouldClose = false;
+        bool timedOut = false;
+        bool handshakeTimedOut = false;
+        bool authTimedOut = false;
+        {
+            std::lock_guard lck(controlMtx);
+            auto now = SteadyClock::now();
+            if (s->protocolRejected.load() || !s->isOpen()) {
+                shouldClose = true;
+            }
+            else if (!s->protocolReady.load()) {
+                if ((now - s->connectedAt) >= HANDSHAKE_TIMEOUT) {
+                    shouldClose = true;
+                    handshakeTimedOut = true;
+                }
+            }
+            else {
+                if (authRequired && !s->authenticated.load() && (now - s->connectedAt) >= HANDSHAKE_TIMEOUT) {
+                    shouldClose = true;
+                    authTimedOut = true;
+                }
+                else if (s->heartbeatAwaitingAck && (now - s->heartbeatLastSend) >= HEARTBEAT_TIMEOUT) {
+                    shouldClose = true;
+                    timedOut = true;
+                }
+                else if ((s->peerCapabilities.load() & SERVER_PROTOCOL_CAP_HEARTBEAT) != 0 &&
+                    !s->heartbeatAwaitingAck && (now - s->heartbeatLastSend) >= HEARTBEAT_INTERVAL) {
+                    s->heartbeatAwaitingAck = true;
+                    s->heartbeatSeq++;
+                    s->heartbeatLastSend = now;
+                    s->sendHeartbeat(s->heartbeatSeq);
+                }
+            }
+        }
+
+        if (!shouldClose) { return; }
+        if (timedOut) {
+            flog::warn("SDR++ server client heartbeat timed out; closing orphaned session");
+        }
+        else if (handshakeTimedOut) {
+            flog::warn("SDR++ server client did not complete protocol hello; closing session");
+        }
+        else if (authTimedOut) {
+            flog::warn("SDR++ server client did not authenticate; closing session");
+        }
+        if (s->protocolReady.load()) {
+            std::lock_guard lck(controlMtx);
+            stopRunningSourceLocked(timedOut ? "client heartbeat timed out" : "client disconnected");
+        }
+        if (s->conn) { s->conn->close(); }
+        clearSessionIfCurrent(s);
+    }
+
+    static void clearSessionIfCurrent(const std::shared_ptr<ClientSession>& session) {
+        std::lock_guard lck(sessionMtx);
+        if (currentSession == session) { currentSession.reset(); }
     }
 }

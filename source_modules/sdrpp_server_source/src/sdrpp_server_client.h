@@ -2,6 +2,7 @@
 #include <utils/net.h>
 #include <dsp/stream.h>
 #include <dsp/types.h>
+#include <array>
 #include <atomic>
 #include <queue>
 #include <server_protocol.h>
@@ -9,7 +10,9 @@
 #include <memory>
 #include <mutex>
 #include <condition_variable>
+#include <string>
 #include <vector>
+#include <dsp/buffer/prebuffer.h>
 #include <dsp/compression/sample_stream_decompressor.h>
 #include <dsp/sink.h>
 #include <dsp/routing/stream_link.h>
@@ -66,12 +69,14 @@ namespace server {
 
     enum ConnectionError {
         CONN_ERR_TIMEOUT    = -1,
-        CONN_ERR_BUSY       = -2
+        CONN_ERR_BUSY       = -2,
+        CONN_ERR_PROTOCOL   = -3,
+        CONN_ERR_AUTH       = -4
     };
 
     class Client {
     public:
-        Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out);
+        Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const std::string& password);
         ~Client();
 
         void showMenu();
@@ -81,6 +86,8 @@ namespace server {
 
         void setSampleType(dsp::compression::PCMType type);
         void setCompression(bool enabled);
+        void setRxPrebufferMsec(int msec);
+        int getRxPrebufferPercent();
 
         void start();
         void stop();
@@ -96,13 +103,18 @@ namespace server {
 
         std::atomic<int> bytes{0};
         std::atomic<bool> serverBusy{false};
+        std::atomic<bool> protocolReady{false};
 
     private:
         void worker();
 
+        int hello(const std::string& password);
+        int authenticate(const std::string& password);
         int getUI();
 
-        void sendPacket(PacketType type, int len);
+        void sendPacketLocked(PacketType type, int len);
+        void sendCommandLocked(Command cmd, int len);
+        void sendCommandAckLocked(Command cmd, int len);
         void sendCommand(Command cmd, int len);
         void sendCommandAck(Command cmd, int len);
 
@@ -118,12 +130,19 @@ namespace server {
         std::mutex waitersMtx;
         std::map<std::shared_ptr<PacketWaiter>, Command> commandAckWaiters;
 
+        std::mutex authMtx;
+        std::condition_variable authCnd;
+        std::array<uint8_t, SERVER_AUTH_CHALLENGE_SIZE> authChallenge{};
+        bool authChallengeReady = false;
+        std::atomic<bool> authFailed{false};
+
         static void dHandler(dsp::complex_t *data, int count, void *ctx);
 
         std::shared_ptr<net::Socket> sock;
 
         dsp::stream<uint8_t> decompIn;
         dsp::compression::SampleStreamDecompressor decomp;
+        dsp::buffer::Prebuffer<dsp::complex_t> prebuffer;
         dsp::routing::StreamLink<dsp::complex_t> link;
         dsp::stream<dsp::complex_t>* output;
 
@@ -139,6 +158,7 @@ namespace server {
         uint8_t* s_pkt_data = NULL;
         CommandHeader* s_cmd_hdr = NULL;
         uint8_t* s_cmd_data = NULL;
+        std::mutex sendMtx;
 
         SmGui::DrawList dl;
         std::mutex dlMtx;
@@ -159,5 +179,5 @@ namespace server {
         std::atomic<bool> tuningLimitsDirty{false};
     };
 
-    std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out);
+    std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out, const std::string& password = "");
 }
