@@ -57,6 +57,7 @@ namespace server {
         link.init(&prebuffer.out, output);
         decomp.start();
         prebuffer.start();
+        rxPrebufferActive = true;
         link.start();
 
         // Start worker thread
@@ -194,6 +195,30 @@ namespace server {
         return currentSampleRate;
     }
 
+    void Client::applyRxPrebufferModeLocked(bool resetBuffer) {
+        prebuffer.setSampleRate(currentSampleRate);
+        prebuffer.setPrebufferMsec(rxPrebufferMsec);
+
+        if (rxPrebufferMsec > 0) {
+            if (!rxPrebufferActive) {
+                link.setInput(&prebuffer.out);
+                if (resetBuffer) { prebuffer.clear(); }
+                prebuffer.start();
+                rxPrebufferActive = true;
+            }
+            else if (resetBuffer) {
+                prebuffer.clear();
+            }
+            return;
+        }
+
+        if (rxPrebufferActive) {
+            prebuffer.stop();
+            link.setInput(&decomp.out);
+            rxPrebufferActive = false;
+        }
+    }
+
     void Client::setSampleType(dsp::compression::PCMType type) {
         if (!isOpen()) { return; }
         std::lock_guard lck(sendMtx);
@@ -209,9 +234,9 @@ namespace server {
     }
 
     void Client::setRxPrebufferMsec(int msec) {
-        prebuffer.setPrebufferMsec(msec);
         std::lock_guard lck(pushedStateMtx);
-        prebuffer.setSampleRate(currentSampleRate);
+        rxPrebufferMsec = std::max(0, msec);
+        applyRxPrebufferModeLocked(true);
     }
 
     int Client::getRxPrebufferPercent() {
@@ -220,7 +245,10 @@ namespace server {
 
     void Client::start() {
         if (!isOpen()) { return; }
-        prebuffer.clear();
+        {
+            std::lock_guard lck(pushedStateMtx);
+            applyRxPrebufferModeLocked(true);
+        }
         sendCommand(COMMAND_START, 0);
         getUI();
     }
@@ -239,9 +267,9 @@ namespace server {
         decompIn.clearWriteStop();
 
         // Stop DSP
+        link.stop();
         prebuffer.stop();
         decomp.stop();
-        link.stop();
     }
 
     bool Client::isOpen() {
@@ -284,8 +312,8 @@ namespace server {
                     {
                         std::lock_guard lck(pushedStateMtx);
                         currentSampleRate = samplerate;
+                        prebuffer.setSampleRate(samplerate);
                     }
-                    prebuffer.setSampleRate(samplerate);
                     samplerateDirty = true;
                 }
                 else if (r_cmd_hdr->cmd == COMMAND_SET_TUNING_LIMITS && r_pkt_hdr->size == sizeof(PacketHeader) + sizeof(CommandHeader) + 1 + 2 * sizeof(double)) {

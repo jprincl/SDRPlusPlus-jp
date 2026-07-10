@@ -107,6 +107,7 @@ namespace server {
 
     private:
         void worker();
+        void applyRxPrebufferModeLocked(bool resetBuffer);
 
         int hello(const std::string& password);
         int authenticate(const std::string& password);
@@ -171,6 +172,8 @@ namespace server {
         // GUI thread applies it via syncRemoteState().
         std::mutex pushedStateMtx;
         double currentSampleRate = 1000000.0;
+        int rxPrebufferMsec = 100;
+        bool rxPrebufferActive = true;
         // Remote tuning limits (native domain), last received from the server.
         bool remoteTuningLimitsEnabled = false;
         double remoteTuningLimitMin = 0.0;

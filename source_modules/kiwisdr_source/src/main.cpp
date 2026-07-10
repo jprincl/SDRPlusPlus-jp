@@ -17,6 +17,7 @@
 #include <core.h>
 #include <config.h>
 #include <dsp/buffer/prebuffer.h>
+#include <dsp/routing/stream_link.h>
 #include "utils/proto/kiwisdr.h"
 #include "utils/url.h"
 #include "gui/smgui.h"
@@ -54,7 +55,7 @@ static std::tm safeLocalTime(std::time_t t) {
 }
 
 struct KiwiSDRSourceModule : public ModuleManager::Instance {
-    static constexpr int BUFFER_MS_MIN = 100;
+    static constexpr int BUFFER_MS_MIN = 0;
     static constexpr int BUFFER_MS_MAX = 2000;
 
     // Fallback tuning range for a plain (converter-less) KiwiSDR when the
@@ -120,11 +121,13 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         config.release(false);
 
         kiwiSdrClient.init(kiwisdrHostPort());
-        prebuffer.init();
+        prebuffer.init(&rawStream);
+        link.init(&rawStream, &stream);
         prebuffer.setSampleRate(kiwiSdrClient.IQDATA_FREQUENCY);
         prebuffer.setPrebufferMsec(bufferMs.load());
         kiwiSdrClient.onSamples = [this](const dsp::complex_t* samples, int count) {
-            prebuffer.push(samples, count);
+            memcpy(rawStream.writeBuf, samples, count * sizeof(dsp::complex_t));
+            rawStream.swap(count);
         };
 
         // Yeah no server-ception, sorry...
@@ -136,7 +139,7 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         handler.startHandler = start;
         handler.stopHandler = stop;
         handler.tuneHandler = tune;
-        handler.stream = &prebuffer.out;
+        handler.stream = &stream;
 
         kiwiSdrClient.onConnected = [&]() {
             connected = true;
@@ -237,10 +240,9 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
         if (_this->running.load()) { return; }
         if (_this->running.exchange(true)) { return; }
-        _this->prebuffer.setSampleRate(_this->kiwiSdrClient.IQDATA_FREQUENCY);
-        _this->prebuffer.setPrebufferMsec(_this->bufferMs.load());
-        _this->prebuffer.clear();
-        _this->prebuffer.start();
+        _this->rawStream.clearWriteStop();
+        _this->applyBufferMode(true);
+        _this->link.start();
         _this->kiwiSdrClient.start();
         flog::info("KiwiSDRSourceModule '{0}': Start!", _this->name);
     }
@@ -249,9 +251,52 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
         bool wasRunning = _this->running.exchange(false);
         if (!wasRunning && !_this->kiwiSdrClient.running.load()) { return; }
+        _this->rawStream.stopWriter();
         _this->kiwiSdrClient.stop();
+        _this->link.stop();
         _this->prebuffer.stop();
+        _this->prebufferActive = false;
+        _this->rawStream.clearWriteStop();
         flog::info("KiwiSDRSourceModule '{0}': Stop!", _this->name);
+    }
+
+    void applyBufferMode(bool resetBuffer) {
+        prebuffer.setSampleRate(kiwiSdrClient.IQDATA_FREQUENCY);
+        prebuffer.setPrebufferMsec(bufferMs.load());
+
+        if (bufferMs.load() > 0) {
+            if (running.load()) {
+                if (!prebufferActive) {
+                    rawStream.stopWriter();
+                    link.setInput(&prebuffer.out);
+                    if (resetBuffer) { prebuffer.clear(); }
+                    prebuffer.start();
+                    prebufferActive = true;
+                    rawStream.clearWriteStop();
+                }
+                else if (resetBuffer) {
+                    prebuffer.clear();
+                }
+            }
+            else {
+                link.setInput(&prebuffer.out);
+                if (resetBuffer) { prebuffer.clear(); }
+            }
+            return;
+        }
+
+        if (running.load()) {
+            if (prebufferActive) {
+                rawStream.stopWriter();
+                prebuffer.stop();
+                link.setInput(&rawStream);
+                prebufferActive = false;
+                rawStream.clearWriteStop();
+            }
+        }
+        else {
+            link.setInput(&rawStream);
+        }
     }
 
 
@@ -365,7 +410,7 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         SmGui::FillWidth();
         if (SmGui::SliderInt(("##_kiwisdr_buffer_ms_" + _this->name).c_str(), &bufMs, BUFFER_MS_MIN, BUFFER_MS_MAX)) {
             _this->bufferMs.store(bufMs);
-            _this->prebuffer.setPrebufferMsec(bufMs);
+            _this->applyBufferMode(true);
             config.acquire();
             config.conf["kiwisdr_buffer_ms"] = bufMs;
             config.release(true);
@@ -411,6 +456,10 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     bool serverBusy = false;
 
     dsp::buffer::Prebuffer<dsp::complex_t> prebuffer;
+    dsp::stream<dsp::complex_t> rawStream;
+    dsp::stream<dsp::complex_t> stream;
+    dsp::routing::StreamLink<dsp::complex_t> link;
+    bool prebufferActive = false;
     SourceManager::SourceHandler handler;
 
     std::shared_ptr<KiwiSDRClient> client;
