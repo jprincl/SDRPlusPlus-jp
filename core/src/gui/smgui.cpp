@@ -250,6 +250,8 @@ namespace SmGui {
     }
 
     int DrawList::loadItem(DrawListElem& elem, uint8_t* data, int len) {
+        if (len < 1) { return -1; }
+
         // Get type
         int i = 0;
         elem.type = (DrawListElemType)data[i++];

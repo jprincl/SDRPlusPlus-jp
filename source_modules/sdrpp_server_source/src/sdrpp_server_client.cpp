@@ -303,6 +303,11 @@ namespace server {
             // mutex-protected client state; SourceManager/GUI applies happen
             // on the GUI thread via syncRemoteState().
             if (r_pkt_hdr->type == PACKET_TYPE_COMMAND) {
+                if (r_pkt_hdr->size < sizeof(PacketHeader) + sizeof(CommandHeader)) {
+                    flog::error("Invalid command packet size from server: {0}", r_pkt_hdr->size);
+                    break;
+                }
+
                 // TODO: Move to command handler
                 if (r_cmd_hdr->cmd == COMMAND_SET_SAMPLERATE && r_pkt_hdr->size == sizeof(PacketHeader) + sizeof(CommandHeader) + sizeof(double)) {
                     // memcpy: r_cmd_data is not 8-byte aligned (header offsets).
@@ -356,6 +361,11 @@ namespace server {
                 }
             }
             else if (r_pkt_hdr->type == PACKET_TYPE_COMMAND_ACK) {
+                if (r_pkt_hdr->size < sizeof(PacketHeader) + sizeof(CommandHeader)) {
+                    flog::error("Invalid command ACK packet size from server: {0}", r_pkt_hdr->size);
+                    break;
+                }
+
                 // Copy the payload into the matching waiters and wake them.
                 int payloadSize = (int)r_pkt_hdr->size - (int)(sizeof(PacketHeader) + sizeof(CommandHeader));
                 if (payloadSize < 0) { payloadSize = 0; }

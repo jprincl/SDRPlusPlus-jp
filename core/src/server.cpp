@@ -661,6 +661,10 @@ namespace server {
 
             // Load id
             SmGui::DrawListElem diffId;
+            if (len <= 0) {
+                s->sendError(ERROR_INVALID_ARGUMENT);
+                return;
+            }
             int count = SmGui::DrawList::loadItem(diffId, &data[i], len);
             if (count < 0 || diffId.type != SmGui::DRAW_LIST_ELEM_TYPE_STRING) {
                 s->sendError(ERROR_INVALID_ARGUMENT);
@@ -671,6 +675,10 @@ namespace server {
 
             // Load value
             SmGui::DrawListElem diffValue;
+            if (len <= 0) {
+                s->sendError(ERROR_INVALID_ARGUMENT);
+                return;
+            }
             count = SmGui::DrawList::loadItem(diffValue, &data[i], len);
             if (count < 0) {
                 s->sendError(ERROR_INVALID_ARGUMENT);
