@@ -65,11 +65,10 @@ namespace server {
     static constexpr std::chrono::milliseconds HANDSHAKE_TIMEOUT{10000};
     static constexpr std::chrono::milliseconds HEARTBEAT_INTERVAL{5000};
     static constexpr std::chrono::milliseconds HEARTBEAT_TIMEOUT{15000};
-    // Online password guessing brakes: a few tries per connection and a
-    // global cooldown after any failure (a reconnect doesn't reset it).
+    // Online password guessing brake: disconnect after a bad response and
+    // keep a short global cooldown so reconnects do not reset the guess rate.
     // Offline brute force of a captured challenge/response pair is only
     // slowed by the PBKDF2 iteration count.
-    static constexpr int MAX_AUTH_ATTEMPTS = 3;
     static constexpr std::chrono::milliseconds AUTH_FAIL_COOLDOWN{1000};
     // Guarded by controlMtx, like the rest of the auth handling.
     SteadyClock::time_point authCooldownUntil{};
@@ -107,8 +106,6 @@ namespace server {
         bool heartbeatAwaitingAck = false;
         SteadyClock::time_point heartbeatLastSend = SteadyClock::now();
         std::array<uint8_t, SERVER_AUTH_CHALLENGE_SIZE> authChallenge{};
-        // Failed AUTH_RESPONSEs on this session; guarded by controlMtx.
-        int authAttempts = 0;
 
         ClientSession(net::Conn c)
             : rstore(SERVER_MAX_PACKET_SIZE), sstore(SERVER_MAX_PACKET_SIZE), conn(std::move(c)) {
@@ -637,15 +634,9 @@ namespace server {
             }
             if (!ok) {
                 authCooldownUntil = now + AUTH_FAIL_COOLDOWN;
-                if (++s->authAttempts >= MAX_AUTH_ATTEMPTS) {
-                    flog::warn("Rejecting SDR++ server client: too many failed authentication attempts");
-                    s->sendError(ERROR_AUTH_FAILED);
-                    s->protocolRejected = true; // heartbeatTick closes the session
-                    return;
-                }
-                flog::warn("SDR++ server client authentication failed{0}", throttled ? " (throttled)" : "");
+                flog::warn("Rejecting SDR++ server client: authentication failed{0}", throttled ? " (throttled)" : "");
                 s->sendError(ERROR_AUTH_FAILED);
-                s->sendAuthChallenge();
+                s->protocolRejected = true; // heartbeatTick closes the session
                 return;
             }
 

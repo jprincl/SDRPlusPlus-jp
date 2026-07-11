@@ -20,8 +20,8 @@
 #include "utils/proto/kiwisdr.h"
 #include <algorithm>
 #include <chrono>
-#include <complex>
 #include <mutex>
+#include <vector>
 
 #define MAX_COMMAND_LENGTH 8192
 
@@ -56,6 +56,8 @@ public:
         Clock::time_point startTime;
         ReportsMonitorModule *mod;
         uint64_t lastTunedFrequency = 0;
+        std::mutex sampleMtx;
+        std::vector<dsp::complex_t> samples;
 
 
         explicit SingleReceiver(const std::string &id, const std::string &url, const std::string &loc, ReportsMonitorModule *mod) : id(id), url(url), loc(loc), mod(mod) {
@@ -69,8 +71,16 @@ public:
 
         void start() {
             if (!started) {
+                {
+                    std::lock_guard<std::mutex> lock(sampleMtx);
+                    samples.clear();
+                }
                 client = std::make_shared<KiwiSDRClient>();
                 client->init(url);
+                client->onSamples = [this](const dsp::complex_t* data, int count) {
+                    std::lock_guard<std::mutex> lock(sampleMtx);
+                    samples.insert(samples.end(), data, data + count);
+                };
                 started = true;
                 startTime = Clock::now();
                 client->onConnected = [=]() {
@@ -91,6 +101,10 @@ public:
             if (client) {
                 client->stop();
                 client.reset();
+            }
+            {
+                std::lock_guard<std::mutex> lock(sampleMtx);
+                samples.clear();
             }
             if (wf) {
                 peaks = wf->peaks;
@@ -219,15 +233,15 @@ public:
                 if (remains <= 0) {
                     stop();
                 } else if (client) {
-                    std::vector<std::complex<float>> iqData;
+                    std::vector<dsp::complex_t> sampleData;
                     {
-                        std::lock_guard<std::mutex> lock(client->iqDataLock);
-                        iqData.swap(client->iqData);
+                        std::lock_guard<std::mutex> lock(sampleMtx);
+                        sampleData.swap(samples);
                     }
-                    if (!iqData.empty()) {
-                        std::vector<dsp::stereo_t> vec(iqData.size(), {0, 0});
-                        for (int i = 0; i < iqData.size(); i++) {
-                            vec[i].r = vec[i].l = iqData[i].real();
+                    if (!sampleData.empty()) {
+                        std::vector<dsp::stereo_t> vec(sampleData.size(), {0, 0});
+                        for (int i = 0; i < sampleData.size(); i++) {
+                            vec[i].r = vec[i].l = sampleData[i].re;
                         }
                         //                            flog::info("addAudioSamples: {}", vec.size());
                         wf->addAudioSamples(vec.data(), vec.size(), client->IQDATA_FREQUENCY);
