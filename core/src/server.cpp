@@ -17,7 +17,6 @@
 #include <atomic>
 #include <mutex>
 #include <memory>
-#include <random>
 #include <vector>
 #include <cstring>
 #include <chrono>
@@ -45,12 +44,20 @@ namespace server {
     // Written by the command handler, read by the baseband DSP thread.
     std::atomic<bool> compression{false};
 
-    // Cached server-side state, guarded by controlMtx, re-sent to every client
-    // that connects (a later client still gets the current samplerate/limits).
+    // Cached server-side state pushed to the client, guarded by its own leaf
+    // mutex (never held while taking another lock). setInputSampleRate() and
+    // setTuningLimits() only record here — they are called from source-module
+    // code both while the render path already holds controlMtx and from
+    // module worker threads, so they must not touch controlMtx themselves.
+    // flushPushedStateLocked() sends dirty state to the client, and the
+    // greeting re-sends it all, so a later client still gets current values.
+    std::mutex pushedStateMtx;
     double sampleRate = 1000000.0;
     bool tuningLimitEnabled = false;
     double tuningLimitMin = 0.0;
     double tuningLimitMax = 0.0;
+    bool samplerateDirty = false;
+    bool tuningLimitsDirty = false;
     bool authRequired = false;
     std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> authKey{};
 
@@ -58,32 +65,14 @@ namespace server {
     static constexpr std::chrono::milliseconds HANDSHAKE_TIMEOUT{10000};
     static constexpr std::chrono::milliseconds HEARTBEAT_INTERVAL{5000};
     static constexpr std::chrono::milliseconds HEARTBEAT_TIMEOUT{15000};
-
-    static HelloPayload makeHelloPayload() {
-        HelloPayload hello = {};
-        hello.magic = SERVER_PROTOCOL_MAGIC;
-        hello.protocolMajor = SERVER_PROTOCOL_MAJOR;
-        hello.protocolMinor = SERVER_PROTOCOL_MINOR;
-        hello.capabilities = SERVER_PROTOCOL_CAP_HEARTBEAT | (authRequired ? SERVER_PROTOCOL_CAP_AUTH : 0);
-        memcpy(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(SERVER_PROTOCOL_FORK_ID) - 1);
-        return hello;
-    }
-
-    static bool isCompatibleHello(const HelloPayload& hello) {
-        return hello.magic == SERVER_PROTOCOL_MAGIC &&
-            hello.protocolMajor == SERVER_PROTOCOL_MAJOR &&
-            memcmp(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(hello.forkId)) == 0;
-    }
-
-    static void fillRandom(uint8_t* data, size_t len) {
-        std::random_device rd;
-        for (size_t i = 0; i < len;) {
-            unsigned int value = rd();
-            for (size_t j = 0; j < sizeof(value) && i < len; j++, i++) {
-                data[i] = (uint8_t)((value >> (j * 8)) & 0xff);
-            }
-        }
-    }
+    // Online password guessing brakes: a few tries per connection and a
+    // global cooldown after any failure (a reconnect doesn't reset it).
+    // Offline brute force of a captured challenge/response pair is only
+    // slowed by the PBKDF2 iteration count.
+    static constexpr int MAX_AUTH_ATTEMPTS = 3;
+    static constexpr std::chrono::milliseconds AUTH_FAIL_COOLDOWN{1000};
+    // Guarded by controlMtx, like the rest of the auth handling.
+    SteadyClock::time_point authCooldownUntil{};
 
     // A connected client and everything scoped to that connection: the socket
     // plus its own receive and send buffers. Making the buffers per-session is
@@ -118,6 +107,8 @@ namespace server {
         bool heartbeatAwaitingAck = false;
         SteadyClock::time_point heartbeatLastSend = SteadyClock::now();
         std::array<uint8_t, SERVER_AUTH_CHALLENGE_SIZE> authChallenge{};
+        // Failed AUTH_RESPONSEs on this session; guarded by controlMtx.
+        int authAttempts = 0;
 
         ClientSession(net::Conn c)
             : rstore(SERVER_MAX_PACKET_SIZE), sstore(SERVER_MAX_PACKET_SIZE), conn(std::move(c)) {
@@ -137,8 +128,9 @@ namespace server {
         bool isOpen() { return conn && conn->isOpen(); }
 
         // Compose-and-send into this session's send buffer. The caller must
-        // hold controlMtx (it serializes composition into sstore against the
-        // other threads that send: the accept greeting and source modules).
+        // hold controlMtx (it serializes composition into sstore between the
+        // threads that send: the session's read worker and the main loop's
+        // heartbeat/state flush).
         bool sendPacket(PacketType type, int len) {
             s_pkt_hdr->type = type;
             s_pkt_hdr->size = sizeof(PacketHeader) + len;
@@ -180,22 +172,32 @@ namespace server {
         }
 
         bool sendHelloAck() {
-            HelloPayload hello = makeHelloPayload();
+            HelloPayload hello = makeHelloPayload(SERVER_PROTOCOL_CAP_HEARTBEAT | (authRequired ? SERVER_PROTOCOL_CAP_AUTH : 0));
             memcpy(s_cmd_data, &hello, sizeof(hello));
             return sendCommandAck(COMMAND_HELLO, sizeof(hello));
         }
 
         bool sendAuthChallenge() {
-            fillRandom(authChallenge.data(), authChallenge.size());
+            crypto::randomBytes(authChallenge.data(), authChallenge.size());
             memcpy(s_cmd_data, authChallenge.data(), authChallenge.size());
             return sendCommand(COMMAND_AUTH_CHALLENGE, (int)authChallenge.size());
         }
     };
 
-    // The active session and the mutex guarding the handle itself. Every user
-    // snapshots the shared_ptr under sessionMtx so a reconnect on the accept
-    // thread can't free the connection out from under a send/receive in flight.
+    // The client sessions and the mutex guarding the handles themselves.
+    // Every user snapshots the shared_ptr under sessionMtx so a reconnect on
+    // the accept thread can't free a connection out from under a send/receive
+    // in flight. A newly accepted connection starts as pendingSession and is
+    // only promoted to currentSession — the one that receives baseband and
+    // state pushes — after it completes the hello (and authentication), so an
+    // unauthenticated TCP connect can never displace an authenticated client.
     std::shared_ptr<ClientSession> currentSession;
+    std::shared_ptr<ClientSession> pendingSession;
+    // Sessions displaced by a promotion, kept alive until heartbeatTick
+    // destroys them: promotion runs on the new session's read worker while
+    // holding controlMtx, and destroying a session joins its read worker,
+    // which may itself be blocked on controlMtx — a deadlock if done in place.
+    std::vector<std::shared_ptr<ClientSession>> retiredSessions;
     std::mutex sessionMtx;
 
     static std::shared_ptr<ClientSession> getSession() {
@@ -203,28 +205,43 @@ namespace server {
         return currentSession;
     }
 
+    // Whether the session is still one of the two live slots (current or
+    // pending), i.e. not superseded by a newer connection.
+    static bool isActiveSession(ClientSession* s) {
+        std::lock_guard lck(sessionMtx);
+        return currentSession.get() == s || pendingSession.get() == s;
+    }
+
     // Serializes the whole control plane: the global SmGui rendering
-    // (renderUI/drawMenu and the source menus they invoke), the cached
-    // samplerate/tuning-limit state, and all command/state sends into a
-    // session's send buffer. Recursive because rendering a source menu can
-    // re-enter this path (a source's menuSelected calls core::setInputSampleRate,
-    // which sends). The baseband path deliberately does NOT take this lock: it
-    // uses its own bbuf and only snapshots the session to write.
-    std::recursive_mutex controlMtx;
+    // (renderUI/drawMenu and the source menus they invoke), the `running`
+    // flag, the auth state, and all command/state sends into a session's
+    // send buffer. Acquired exactly once at each entry point (_clientHandler,
+    // _packetHandler dispatch, handleHello, commandHandler,
+    // commandAckHandler, heartbeatTick); everything below runs in *Locked
+    // helpers that require it but never take it. Source-module code invoked
+    // from the render path never loops back into this lock: the state-push
+    // helpers it calls (setInputSampleRate/setTuningLimits) only record
+    // under pushedStateMtx. The baseband path deliberately does NOT take
+    // this lock: it uses its own bbuf and only snapshots the session.
+    std::mutex controlMtx;
 
     // Internal handlers/helpers (never called from outside this file).
     static void _clientHandler(net::Conn conn, void* ctx);
     static void _packetHandler(int count, uint8_t* buf, void* ctx);
     static void _testServerHandler(uint8_t* data, int count, void* ctx);
     static bool handleHello(ClientSession* s, Command cmd, uint8_t* data, int len);
-    static bool activateSession(ClientSession* s);
-    static void rejectSession(ClientSession* s, const char* reason);
+    static bool activateSessionLocked(ClientSession* s);
+    static bool promoteSessionLocked(ClientSession* s);
+    static bool promoteAndResetLocked(ClientSession* s);
+    static void rejectBusyLocked(ClientSession* s);
+    static void rejectSessionLocked(ClientSession* s, const char* reason);
     static void commandHandler(ClientSession* s, Command cmd, uint8_t* data, int len);
     static void commandAckHandler(ClientSession* s, Command cmd, uint8_t* data, int len);
     static void drawMenu();
     static void renderUI(SmGui::DrawList* dl, std::string diffId, SmGui::DrawListElem diffValue);
-    static void sendUI(ClientSession* s, Command originCmd, std::string diffId, SmGui::DrawListElem diffValue);
+    static void sendUILocked(ClientSession* s, Command originCmd, std::string diffId, SmGui::DrawListElem diffValue);
     static void sendInitialStateLocked(ClientSession* s);
+    static void flushPushedStateLocked();
     static void stopRunningSourceLocked(const char* reason);
     static void heartbeatTick();
     static void clearSessionIfCurrent(const std::shared_ptr<ClientSession>& session);
@@ -251,7 +268,11 @@ namespace server {
             crypto::pbkdf2Sha256((const uint8_t*)password.data(), password.size(),
                 (const uint8_t*)SERVER_AUTH_SALT, sizeof(SERVER_AUTH_SALT) - 1,
                 SERVER_AUTH_PBKDF2_ITERATIONS, authKey.data(), authKey.size());
+            // Scrub both the local copy and the parser's stored original.
+            // The OS-level command line (argv / GetCommandLine) is beyond
+            // reach and may still expose it.
             std::fill(password.begin(), password.end(), '\0');
+            core::args.scrubString("password");
             authRequired = true;
             flog::info("SDR++ server password authentication enabled");
         }
@@ -345,19 +366,14 @@ namespace server {
     }
 
     static void _clientHandler(net::Conn conn, void* ctx) {
-        // Reject if someone else is already connected
+        // A streaming client keeps its slot: reject the newcomer outright.
         if (auto s = getSession(); s && s->isOpen()) {
             bool busy = false;
             {
                 std::lock_guard lck(controlMtx);
                 busy = running;
             }
-            if (!busy) {
-                flog::info("Closing idle SDR++ server client before accepting a replacement connection.");
-                if (s->conn) { s->conn->close(); }
-                clearSessionIfCurrent(s);
-            }
-            else {
+            if (busy) {
                 flog::info("REJECTED Connection from {0}:{1}, another client is already connected.", "TODO", "TODO");
 
                 // Issue a disconnect command to the client
@@ -378,20 +394,26 @@ namespace server {
                 listener->acceptAsync(_clientHandler, NULL);
                 return;
             }
+            // An idle client may be replaced, but only by a connection that
+            // completes the hello (and authentication): a takeover at accept
+            // time would let any unauthenticated TCP connect (a port scan, a
+            // monitoring probe) evict a legitimate client. The newcomer
+            // therefore starts as a pending session and only displaces the
+            // current one in promoteSessionLocked().
         }
 
         flog::info("Connection from {0}:{1}", "TODO", "TODO");
         auto session = std::make_shared<ClientSession>(std::move(conn));
 
-        // Publish the new session and drop the previous one outside the lock.
-        // Destroying the old session joins its read worker, so any callback
-        // still draining on it finishes (against its own buffers) before the
-        // new session starts reading — old and new never render concurrently.
+        // Publish the new session as pending and drop any previous
+        // half-handshaken connection outside the lock. Destroying it joins
+        // its read worker, so any callback still draining on it finishes
+        // (against its own buffers) before it goes away.
         std::shared_ptr<ClientSession> old;
         {
             std::lock_guard lck(sessionMtx);
-            old = std::move(currentSession);
-            currentSession = session;
+            old = std::move(pendingSession);
+            pendingSession = session;
         }
         old.reset();
 
@@ -404,9 +426,10 @@ namespace server {
 
     static void _packetHandler(int count, uint8_t* buf, void* ctx) {
         // The session is passed as a raw ctx. It stays valid for this whole
-        // call: a reconnect destroys the session on the accept thread, but that
-        // runs the conn destructor first, which joins this very worker before
-        // freeing the buffers below. Grab the conn pointer once here.
+        // call: whichever thread destroys the session (accept thread replacing
+        // a pending one, or heartbeatTick reaping a retired one) runs the conn
+        // destructor first, which joins this very worker before freeing the
+        // buffers below. Grab the conn pointer once here.
         ClientSession* s = (ClientSession*)ctx;
         net::ConnClass* conn = s->conn.get();
         PacketHeader* hdr = s->r_pkt_hdr;
@@ -436,7 +459,8 @@ namespace server {
                 handleHello(s, (Command)s->r_cmd_hdr->cmd, s->r_cmd_data, hdr->size - sizeof(PacketHeader) - sizeof(CommandHeader));
             }
             else {
-                rejectSession(s, "first packet was not a protocol hello");
+                std::lock_guard lck(controlMtx);
+                rejectSessionLocked(s, "first packet was not a protocol hello");
             }
             if (s->protocolRejected.load()) { return; }
             conn->readAsync(sizeof(PacketHeader), s->rstore.data(), _packetHandler, s);
@@ -472,12 +496,12 @@ namespace server {
         }
 
         // Write to network. Snapshot the session so a concurrent reconnect on
-        // the accept thread can't free the connection mid-write.
+        // the accept thread can't free the connection mid-write. The current
+        // session is always fully handshaken and authenticated (promotion
+        // gate), so only liveness needs checking here.
         auto s = getSession();
-        if (s && s->protocolReady.load() && s->authenticated.load() && s->isOpen()) {
-            if (!s->conn->write(bb_pkt_hdr->size, bbuf)) { s->protocolRejected = true; }
-        }
-        else if (s && s->protocolReady.load()) {
+        if (!s) { return; }
+        if (!s->isOpen() || !s->conn->write(bb_pkt_hdr->size, bbuf)) {
             s->protocolRejected = true;
         }
     }
@@ -487,63 +511,110 @@ namespace server {
     }
 
     static bool handleHello(ClientSession* s, Command cmd, uint8_t* data, int len) {
+        std::lock_guard lck(controlMtx);
         if (cmd != COMMAND_HELLO || len != sizeof(HelloPayload)) {
-            rejectSession(s, "first command was not a valid protocol hello");
+            rejectSessionLocked(s, "first command was not a valid protocol hello");
             return false;
         }
 
         HelloPayload hello;
         memcpy(&hello, data, sizeof(hello));
         if (!isCompatibleHello(hello)) {
-            rejectSession(s, "client protocol/fork ID is incompatible");
+            rejectSessionLocked(s, "client protocol/fork ID is incompatible");
             return false;
         }
         if (authRequired && (hello.capabilities & SERVER_PROTOCOL_CAP_AUTH) == 0) {
-            rejectSession(s, "client does not support password authentication");
+            rejectSessionLocked(s, "client does not support password authentication");
             return false;
         }
-        if (getSession().get() != s) {
-            rejectSession(s, "client session is no longer active");
+        if (!isActiveSession(s)) {
+            rejectSessionLocked(s, "client session is no longer active");
             return false;
         }
 
         s->peerCapabilities = hello.capabilities;
-        return activateSession(s);
+        return activateSessionLocked(s);
     }
 
-    static bool activateSession(ClientSession* s) {
-        if (getSession().get() != s) {
-            rejectSession(s, "client session is no longer active");
+    static bool activateSessionLocked(ClientSession* s) {
+        if (authRequired) {
+            // Stay pending: an unauthenticated connection must not displace
+            // the current client or touch shared state. Promotion happens
+            // once the challenge is answered (commandHandler).
+            s->sendHelloAck();
+            s->protocolReady = true;
+            s->sendAuthChallenge();
+            return true;
+        }
+
+        if (!promoteAndResetLocked(s)) {
+            rejectBusyLocked(s);
             return false;
         }
-
-        std::lock_guard lck(controlMtx);
-        sigpath::sourceManager.stop();
-        comp.setPCMType(dsp::compression::PCM_TYPE_I16);
-        compression = false;
-
         s->sendHelloAck();
-        s->authenticated = !authRequired;
+        s->authenticated = true;
         s->protocolReady = true;
-        if (authRequired) {
-            s->sendAuthChallenge();
-        }
-        else {
-            sendInitialStateLocked(s);
-        }
+        sendInitialStateLocked(s);
         return true;
     }
 
-    static void rejectSession(ClientSession* s, const char* reason) {
+    // Promote a session that completed its handshake to being THE client.
+    // Fails if the session was superseded by a newer connection or the
+    // current client started streaming meanwhile. The caller must hold
+    // controlMtx (it reads `running`; the nested lock order is always
+    // controlMtx -> sessionMtx).
+    static bool promoteSessionLocked(ClientSession* s) {
+        std::lock_guard lck(sessionMtx);
+        if (currentSession.get() == s) { return true; }
+        if (pendingSession.get() != s) { return false; }
+        if (currentSession && currentSession->isOpen() && running) { return false; }
+        if (currentSession) {
+            flog::info("Closing previous SDR++ server client, displaced by a newly handshaken connection.");
+            // Closed and destroyed by heartbeatTick: destroying it here would
+            // join its read worker, which may be blocked on the controlMtx we
+            // hold.
+            retiredSessions.push_back(std::move(currentSession));
+        }
+        currentSession = std::move(pendingSession);
+        return true;
+    }
+
+    // Promote and reset the per-client settings for the new client.
+    static bool promoteAndResetLocked(ClientSession* s) {
+        if (!promoteSessionLocked(s)) { return false; }
+        sigpath::sourceManager.stop();
+        running = false;
+        comp.setPCMType(dsp::compression::PCM_TYPE_I16);
+        compression = false;
+        return true;
+    }
+
+    // The handshake finished, but a competing client holds the slot.
+    // COMMAND_DISCONNECT is what the client maps to "server busy".
+    static void rejectBusyLocked(ClientSession* s) {
+        flog::info("Rejecting handshaken SDR++ server client: the server is in use.");
+        s->protocolRejected = true;
+        s->sendCommand(COMMAND_DISCONNECT, 0);
+    }
+
+    static void rejectSessionLocked(ClientSession* s, const char* reason) {
         flog::warn("Rejecting SDR++ server client: {0}", reason);
         s->protocolRejected = true;
-        std::lock_guard lck(controlMtx);
         if (s->isOpen()) { s->sendError(ERROR_PROTOCOL_MISMATCH); }
     }
 
     static void commandHandler(ClientSession* s, Command cmd, uint8_t* data, int len) {
+        // Everything below acts on shared control state, so hold controlMtx
+        // for the whole dispatch. A displaced session's socket may live for
+        // a moment after promotion (it is closed by heartbeatTick); checking
+        // isActiveSession under the same lock as the command's effects makes
+        // the guard atomic with a concurrent promotion (which also holds
+        // controlMtx), so a displaced session's in-flight command can't slip
+        // through the check and act on the new client's state.
+        std::lock_guard lck(controlMtx);
+        if (!isActiveSession(s)) { return; }
+
         if (authRequired && !s->authenticated.load()) {
-            std::lock_guard lck(controlMtx);
             if (cmd != COMMAND_AUTH_RESPONSE) {
                 s->sendError(ERROR_AUTH_REQUIRED);
                 return;
@@ -553,15 +624,35 @@ namespace server {
                 return;
             }
 
-            std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> expected{};
-            crypto::hmacSha256(authKey.data(), authKey.size(), s->authChallenge.data(), s->authChallenge.size(), expected.data());
-            if (!crypto::constantTimeEqual(expected.data(), data, expected.size())) {
-                flog::warn("SDR++ server client authentication failed");
+            // During the post-failure cooldown, fail responses unverified so
+            // reconnecting can't buy an attacker a faster guess rate.
+            auto now = SteadyClock::now();
+            bool throttled = now < authCooldownUntil;
+
+            bool ok = false;
+            if (!throttled) {
+                std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> expected{};
+                crypto::hmacSha256(authKey.data(), authKey.size(), s->authChallenge.data(), s->authChallenge.size(), expected.data());
+                ok = crypto::constantTimeEqual(expected.data(), data, expected.size());
+            }
+            if (!ok) {
+                authCooldownUntil = now + AUTH_FAIL_COOLDOWN;
+                if (++s->authAttempts >= MAX_AUTH_ATTEMPTS) {
+                    flog::warn("Rejecting SDR++ server client: too many failed authentication attempts");
+                    s->sendError(ERROR_AUTH_FAILED);
+                    s->protocolRejected = true; // heartbeatTick closes the session
+                    return;
+                }
+                flog::warn("SDR++ server client authentication failed{0}", throttled ? " (throttled)" : "");
                 s->sendError(ERROR_AUTH_FAILED);
                 s->sendAuthChallenge();
                 return;
             }
 
+            if (!promoteAndResetLocked(s)) {
+                rejectBusyLocked(s);
+                return;
+            }
             s->authenticated = true;
             s->sendCommandAck(COMMAND_AUTH_RESPONSE, 0);
             sendInitialStateLocked(s);
@@ -569,7 +660,7 @@ namespace server {
         }
 
         if (cmd == COMMAND_GET_UI) {
-            sendUI(s, COMMAND_GET_UI, "", dummyElem);
+            sendUILocked(s, COMMAND_GET_UI, "", dummyElem);
         }
         else if (cmd == COMMAND_UI_ACTION && len >= 3) {
             // Check if sending back data is needed
@@ -581,7 +672,6 @@ namespace server {
             SmGui::DrawListElem diffId;
             int count = SmGui::DrawList::loadItem(diffId, &data[i], len);
             if (count < 0 || diffId.type != SmGui::DRAW_LIST_ELEM_TYPE_STRING) {
-                std::lock_guard lck(controlMtx);
                 s->sendError(ERROR_INVALID_ARGUMENT);
                 return;
             }
@@ -592,7 +682,6 @@ namespace server {
             SmGui::DrawListElem diffValue;
             count = SmGui::DrawList::loadItem(diffValue, &data[i], len);
             if (count < 0) {
-                std::lock_guard lck(controlMtx);
                 s->sendError(ERROR_INVALID_ARGUMENT);
                 return;
             }
@@ -601,20 +690,17 @@ namespace server {
 
             // Render and send back
             if (sendback) {
-                sendUI(s, COMMAND_UI_ACTION, diffId.str, diffValue);
+                sendUILocked(s, COMMAND_UI_ACTION, diffId.str, diffValue);
             }
             else {
-                std::lock_guard lck(controlMtx);
                 renderUI(NULL, diffId.str, diffValue);
             }
         }
         else if (cmd == COMMAND_START) {
-            std::lock_guard lck(controlMtx);
             sigpath::sourceManager.start();
             running = true;
         }
         else if (cmd == COMMAND_STOP) {
-            std::lock_guard lck(controlMtx);
             sigpath::sourceManager.stop();
             running = false;
         }
@@ -622,7 +708,6 @@ namespace server {
             // memcpy: data is not 8-byte aligned (header offsets).
             double freq;
             memcpy(&freq, data, sizeof(double));
-            std::lock_guard lck(controlMtx);
             sigpath::sourceManager.tune(freq);
             s->sendCommandAck(COMMAND_SET_FREQUENCY, 0);
         }
@@ -635,9 +720,13 @@ namespace server {
         }
         else {
             flog::error("Invalid Command: {0} (len = {1})", (int)cmd, len);
-            std::lock_guard lck(controlMtx);
             s->sendError(ERROR_INVALID_COMMAND);
         }
+
+        // Module menu code run by the dispatch above can only record state
+        // changes (setInputSampleRate/setTuningLimits); push them now so the
+        // client learns about a change its own action just caused.
+        flushPushedStateLocked();
     }
 
     static void commandAckHandler(ClientSession* s, Command cmd, uint8_t* data, int len) {
@@ -691,12 +780,7 @@ namespace server {
         }
     }
 
-    static void sendUI(ClientSession* s, Command originCmd, std::string diffId, SmGui::DrawListElem diffValue) {
-        // renderUI touches global SmGui state and can re-enter the send path
-        // (a source menu's selection calls setInputSampleRate), so the whole
-        // render-and-send runs under controlMtx.
-        std::lock_guard lck(controlMtx);
-
+    static void sendUILocked(ClientSession* s, Command originCmd, std::string diffId, SmGui::DrawListElem diffValue) {
         // Render UI
         SmGui::DrawList dl;
         renderUI(&dl, diffId, diffValue);
@@ -708,8 +792,49 @@ namespace server {
     }
 
     static void sendInitialStateLocked(ClientSession* s) {
-        s->sendSampleRate(sampleRate);
-        s->sendTuningLimits(tuningLimitEnabled, tuningLimitMin, tuningLimitMax);
+        double sr;
+        bool limitsEnabled;
+        double limitMin, limitMax;
+        {
+            std::lock_guard lck(pushedStateMtx);
+            sr = sampleRate;
+            limitsEnabled = tuningLimitEnabled;
+            limitMin = tuningLimitMin;
+            limitMax = tuningLimitMax;
+            // The greeting sends the freshest values; drop pending pushes so
+            // the next flush doesn't immediately duplicate them.
+            samplerateDirty = false;
+            tuningLimitsDirty = false;
+        }
+        s->sendSampleRate(sr);
+        s->sendTuningLimits(limitsEnabled, limitMin, limitMax);
+    }
+
+    // Push samplerate/tuning-limit changes recorded by setInputSampleRate()
+    // and setTuningLimits() to the connected client. Called after a command
+    // dispatch (so a change a client action just caused goes out with it)
+    // and from the heartbeat tick (for changes from module worker threads).
+    static void flushPushedStateLocked() {
+        auto s = getSession();
+        if (!s || !s->isOpen()) { return; }
+
+        bool sendSamplerate, sendLimits;
+        double sr;
+        bool limitsEnabled;
+        double limitMin, limitMax;
+        {
+            std::lock_guard lck(pushedStateMtx);
+            sendSamplerate = samplerateDirty;
+            sendLimits = tuningLimitsDirty;
+            samplerateDirty = false;
+            tuningLimitsDirty = false;
+            sr = sampleRate;
+            limitsEnabled = tuningLimitEnabled;
+            limitMin = tuningLimitMin;
+            limitMax = tuningLimitMax;
+        }
+        if (sendSamplerate) { s->sendSampleRate(sr); }
+        if (sendLimits) { s->sendTuningLimits(limitsEnabled, limitMin, limitMax); }
     }
 
     static void stopRunningSourceLocked(const char* reason) {
@@ -719,58 +844,82 @@ namespace server {
         running = false;
     }
 
+    // Record-only: called from source-module code both while the render path
+    // already holds controlMtx and from module worker threads, so it must
+    // only touch the pushedStateMtx leaf. flushPushedStateLocked() sends.
     void setTuningLimits(bool enabled, double minFreq, double maxFreq) {
-        std::lock_guard lck(controlMtx);
+        std::lock_guard lck(pushedStateMtx);
         tuningLimitEnabled = enabled;
         tuningLimitMin = minFreq;
         tuningLimitMax = maxFreq;
-        auto s = getSession();
-        if (s && s->protocolReady.load() && s->authenticated.load() && s->isOpen()) { s->sendTuningLimits(enabled, minFreq, maxFreq); }
+        tuningLimitsDirty = true;
     }
 
+    // Record-only; see setTuningLimits.
     void setInputSampleRate(double samplerate) {
-        std::lock_guard lck(controlMtx);
+        std::lock_guard lck(pushedStateMtx);
         sampleRate = samplerate;
-        auto s = getSession();
-        if (s && s->protocolReady.load() && s->authenticated.load() && s->isOpen()) { s->sendSampleRate(samplerate); }
+        samplerateDirty = true;
     }
 
     static void heartbeatTick() {
+        // Destroy sessions displaced by a promotion. Deferred to here because
+        // destroying a session joins its read worker; this thread holds no
+        // locks, so a worker still draining a command can finish and exit.
+        std::vector<std::shared_ptr<ClientSession>> retired;
+        {
+            std::lock_guard lck(sessionMtx);
+            retired.swap(retiredSessions);
+        }
+        retired.clear();
+
+        // Reap a pending (handshaking) session that was rejected, died, or
+        // ran out its window without completing hello + authentication. The
+        // expiry check runs under sessionMtx so it can't race a concurrent
+        // promotion into reaping a session that just became current.
+        std::shared_ptr<ClientSession> expired;
+        {
+            std::lock_guard lck(sessionMtx);
+            if (pendingSession &&
+                (pendingSession->protocolRejected.load() || !pendingSession->isOpen() ||
+                 (SteadyClock::now() - pendingSession->connectedAt) >= HANDSHAKE_TIMEOUT)) {
+                expired = std::move(pendingSession);
+            }
+        }
+        if (expired) {
+            if (!expired->protocolRejected.load() && expired->isOpen()) {
+                flog::warn("SDR++ server client did not complete the handshake in time; closing session");
+            }
+            if (expired->conn) { expired->conn->close(); }
+            expired.reset();
+        }
+
         auto s = getSession();
         if (!s) { return; }
 
+        // The current session completed hello and authentication before it
+        // was promoted, so only liveness needs tracking here.
         bool shouldClose = false;
         bool timedOut = false;
-        bool handshakeTimedOut = false;
-        bool authTimedOut = false;
         {
             std::lock_guard lck(controlMtx);
+            // Push state changes recorded by module worker threads (command
+            // dispatch flushes its own; this covers everything else).
+            flushPushedStateLocked();
             auto now = SteadyClock::now();
             if (s->protocolRejected.load() || !s->isOpen()) {
                 shouldClose = true;
             }
-            else if (!s->protocolReady.load()) {
-                if ((now - s->connectedAt) >= HANDSHAKE_TIMEOUT) {
-                    shouldClose = true;
-                    handshakeTimedOut = true;
-                }
+            else if (s->heartbeatAwaitingAck && (now - s->heartbeatLastSend) >= HEARTBEAT_TIMEOUT) {
+                shouldClose = true;
+                timedOut = true;
             }
-            else {
-                if (authRequired && !s->authenticated.load() && (now - s->connectedAt) >= HANDSHAKE_TIMEOUT) {
-                    shouldClose = true;
-                    authTimedOut = true;
-                }
-                else if (s->heartbeatAwaitingAck && (now - s->heartbeatLastSend) >= HEARTBEAT_TIMEOUT) {
-                    shouldClose = true;
-                    timedOut = true;
-                }
-                else if ((s->peerCapabilities.load() & SERVER_PROTOCOL_CAP_HEARTBEAT) != 0 &&
-                    !s->heartbeatAwaitingAck && (now - s->heartbeatLastSend) >= HEARTBEAT_INTERVAL) {
-                    s->heartbeatAwaitingAck = true;
-                    s->heartbeatSeq++;
-                    s->heartbeatLastSend = now;
-                    s->sendHeartbeat(s->heartbeatSeq);
-                }
+            else if ((s->peerCapabilities.load() & SERVER_PROTOCOL_CAP_HEARTBEAT) != 0 &&
+                !s->heartbeatAwaitingAck && (now - s->heartbeatLastSend) >= HEARTBEAT_INTERVAL) {
+                s->heartbeatAwaitingAck = true;
+                s->heartbeatSeq++;
+                s->heartbeatLastSend = now;
+                s->sendHeartbeat(s->heartbeatSeq);
             }
         }
 
@@ -778,13 +927,7 @@ namespace server {
         if (timedOut) {
             flog::warn("SDR++ server client heartbeat timed out; closing orphaned session");
         }
-        else if (handshakeTimedOut) {
-            flog::warn("SDR++ server client did not complete protocol hello; closing session");
-        }
-        else if (authTimedOut) {
-            flog::warn("SDR++ server client did not authenticate; closing session");
-        }
-        if (s->protocolReady.load()) {
+        {
             std::lock_guard lck(controlMtx);
             stopRunningSourceLocked(timedOut ? "client heartbeat timed out" : "client disconnected");
         }

@@ -17,7 +17,6 @@
 #include <core.h>
 #include <config.h>
 #include <dsp/buffer/prebuffer.h>
-#include <dsp/routing/stream_link.h>
 #include "utils/proto/kiwisdr.h"
 #include "utils/url.h"
 #include "gui/smgui.h"
@@ -30,6 +29,7 @@
 #include <cstring>
 #include <fstream>
 #include <atomic>
+#include <mutex>
 #include <gui/brown/kiwisdr_map.h>
 
 
@@ -121,10 +121,9 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         config.release(false);
 
         kiwiSdrClient.init(kiwisdrHostPort());
-        prebuffer.init(&rawStream);
-        link.init(&rawStream, &stream);
-        prebuffer.setSampleRate(kiwiSdrClient.IQDATA_FREQUENCY);
-        prebuffer.setPrebufferMsec(bufferMs.load());
+        chain.init(&rawStream, &stream);
+        chain.setSampleRate(kiwiSdrClient.IQDATA_FREQUENCY);
+        chain.setPrebufferMsec(bufferMs.load(), false, false);
         kiwiSdrClient.onSamples = [this](const dsp::complex_t* samples, int count) {
             memcpy(rawStream.writeBuf, samples, count * sizeof(dsp::complex_t));
             rawStream.swap(count);
@@ -240,9 +239,12 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
         if (_this->running.load()) { return; }
         if (_this->running.exchange(true)) { return; }
-        _this->rawStream.clearWriteStop();
-        _this->applyBufferMode(true);
-        _this->link.start();
+        {
+            std::lock_guard lck(_this->bufferModeMtx);
+            _this->rawStream.clearWriteStop();
+            _this->applyBufferModeLocked(true);
+            _this->chain.start();
+        }
         _this->kiwiSdrClient.start();
         flog::info("KiwiSDRSourceModule '{0}': Start!", _this->name);
     }
@@ -251,52 +253,39 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         KiwiSDRSourceModule* _this = (KiwiSDRSourceModule*)ctx;
         bool wasRunning = _this->running.exchange(false);
         if (!wasRunning && !_this->kiwiSdrClient.running.load()) { return; }
+        // Unblock a writer stuck in rawStream.swap() before stopping the
+        // client (whose network thread is that writer), and outside the mode
+        // mutex so a concurrent applyBufferMode can finish its switch.
         _this->rawStream.stopWriter();
         _this->kiwiSdrClient.stop();
-        _this->link.stop();
-        _this->prebuffer.stop();
-        _this->prebufferActive = false;
-        _this->rawStream.clearWriteStop();
+        {
+            std::lock_guard lck(_this->bufferModeMtx);
+            _this->chain.stop();
+            _this->rawStream.clearWriteStop();
+        }
         flog::info("KiwiSDRSourceModule '{0}': Stop!", _this->name);
     }
 
+    // Serialized against stop(): the slider applies the mode on the GUI
+    // thread, while stop() can arrive on the client's network thread
+    // (onDisconnected -> setPlayState(false) -> SourceManager::stop). An
+    // unsynchronized interleaving could restart the prebuffer after stop()
+    // already tore it down.
     void applyBufferMode(bool resetBuffer) {
-        prebuffer.setSampleRate(kiwiSdrClient.IQDATA_FREQUENCY);
-        prebuffer.setPrebufferMsec(bufferMs.load());
+        std::lock_guard lck(bufferModeMtx);
+        applyBufferModeLocked(resetBuffer);
+    }
 
-        if (bufferMs.load() > 0) {
-            if (running.load()) {
-                if (!prebufferActive) {
-                    rawStream.stopWriter();
-                    link.setInput(&prebuffer.out);
-                    if (resetBuffer) { prebuffer.clear(); }
-                    prebuffer.start();
-                    prebufferActive = true;
-                    rawStream.clearWriteStop();
-                }
-                else if (resetBuffer) {
-                    prebuffer.clear();
-                }
-            }
-            else {
-                link.setInput(&prebuffer.out);
-                if (resetBuffer) { prebuffer.clear(); }
-            }
-            return;
-        }
-
-        if (running.load()) {
-            if (prebufferActive) {
-                rawStream.stopWriter();
-                prebuffer.stop();
-                link.setInput(&rawStream);
-                prebufferActive = false;
-                rawStream.clearWriteStop();
-            }
-        }
-        else {
-            link.setInput(&rawStream);
-        }
+    void applyBufferModeLocked(bool resetBuffer) {
+        chain.setSampleRate(kiwiSdrClient.IQDATA_FREQUENCY);
+        // A live mode switch re-plumbs the link while the KiwiSDR network
+        // thread may sit blocked in rawStream.swap(); release it for the
+        // duration of the switch (it tolerates the dropped block).
+        const bool live = running.load();
+        const bool replumb = live && (bufferMs.load() > 0) != chain.prebuffering();
+        if (replumb) { rawStream.stopWriter(); }
+        chain.setPrebufferMsec(bufferMs.load(), resetBuffer, live);
+        if (replumb) { rawStream.clearWriteStop(); }
     }
 
 
@@ -455,11 +444,13 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     double freq;
     bool serverBusy = false;
 
-    dsp::buffer::Prebuffer<dsp::complex_t> prebuffer;
     dsp::stream<dsp::complex_t> rawStream;
     dsp::stream<dsp::complex_t> stream;
-    dsp::routing::StreamLink<dsp::complex_t> link;
-    bool prebufferActive = false;
+    dsp::buffer::PrebufferedLink<dsp::complex_t> chain;
+    // Guards the prebuffer/bypass mode switch (the chain's routing and
+    // start/stop) between the GUI thread and a stop() arriving on the
+    // client's network thread.
+    std::mutex bufferModeMtx;
     SourceManager::SourceHandler handler;
 
     std::shared_ptr<KiwiSDRClient> client;

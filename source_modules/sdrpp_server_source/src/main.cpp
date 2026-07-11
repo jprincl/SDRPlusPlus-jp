@@ -274,7 +274,14 @@ private:
 
             ImGui::TextUnformatted("Status:");
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%.3f Mbit/s, %d%% buffer)", _this->datarate, _this->client->getRxPrebufferPercent());
+            int bufferPercent = _this->client->getRxPrebufferPercent();
+            if (bufferPercent >= 0) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%.3f Mbit/s, %d%% buffer)", _this->datarate, bufferPercent);
+            }
+            else {
+                // Prebuffer disabled: the stream is a live bypass.
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%.3f Mbit/s, live)", _this->datarate);
+            }
 
             ImGui::CollapsingHeader("Source [REMOTE]", ImGuiTreeNodeFlags_DefaultOpen);
 

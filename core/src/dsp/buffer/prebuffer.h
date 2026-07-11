@@ -1,9 +1,9 @@
 #pragma once
 #include "../block.h"
+#include "../routing/stream_link.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <mutex>
 #include <vector>
 
@@ -17,12 +17,6 @@ namespace dsp::buffer {
         Prebuffer() = default;
         Prebuffer(stream<T>* in) { init(in); }
 
-        void init() {
-            input = nullptr;
-            registerOutput(&out);
-            _block_init = true;
-        }
-
         void init(stream<T>* in) {
             input = in;
             registerInput(input);
@@ -30,52 +24,23 @@ namespace dsp::buffer {
             _block_init = true;
         }
 
-        void setInput(stream<T>* in) {
-            assert(_block_init);
-            std::lock_guard<std::recursive_mutex> lck(ctrlMtx);
-            tempStop();
-            if (input) { unregisterInput(input); }
-            input = in;
-            if (input) { registerInput(input); }
-            clear();
-            tempStart();
-        }
-
-        void push(const T* data, int count) {
-            if (count <= 0) { return; }
-            {
-                std::lock_guard lck(bufferMtx);
-                pushLocked(data, (size_t)count);
-            }
-            bufferCnd.notify_all();
-        }
-
         void setPrebufferMsec(int msec) {
-            {
-                std::lock_guard lck(bufferMtx);
-                prebufferMsec = std::max(0, msec);
-                trimLocked();
-                resizeRingLocked(maxBufferedSamplesLocked());
-            }
-            bufferCnd.notify_all();
+            std::lock_guard lck(bufferMtx);
+            prebufferMsec = std::max(0, msec);
+            trimLocked();
+            resizeRingLocked(maxBufferedSamplesLocked());
         }
 
         void setSampleRate(double sr) {
-            {
-                std::lock_guard lck(bufferMtx);
-                sampleRate = std::max(1.0, sr);
-                clearLocked();
-                resizeRingLocked(maxBufferedSamplesLocked());
-            }
-            bufferCnd.notify_all();
+            std::lock_guard lck(bufferMtx);
+            sampleRate = std::max(1.0, sr);
+            clearLocked();
+            resizeRingLocked(maxBufferedSamplesLocked());
         }
 
         void clear() {
-            {
-                std::lock_guard lck(bufferMtx);
-                clearLocked();
-            }
-            bufferCnd.notify_all();
+            std::lock_guard lck(bufferMtx);
+            clearLocked();
         }
 
         int getPercentFull() {
@@ -160,39 +125,24 @@ namespace dsp::buffer {
         }
 
         void doStop() override {
-            {
-                std::lock_guard lck(bufferMtx);
-                stopRequested = true;
-            }
-            bufferCnd.notify_all();
+            stopRequested = true;
             base_type::doStop();
-            {
-                std::lock_guard lck(bufferMtx);
-                stopRequested = false;
-                clearLocked();
-            }
+            std::lock_guard lck(bufferMtx);
+            stopRequested = false;
+            clearLocked();
         }
 
         int waitForProducer(std::chrono::milliseconds timeout) {
-            if (input) {
-                int count = input->read_for(timeout);
-                if (count < 0) { return -1; }
-                if (count > 0) {
-                    {
-                        std::lock_guard lck(bufferMtx);
-                        pushLocked(input->readBuf, (size_t)count);
-                    }
-                    input->flush();
-                    bufferCnd.notify_all();
+            int count = input->read_for(timeout);
+            if (count < 0) { return -1; }
+            if (count > 0) {
+                {
+                    std::lock_guard lck(bufferMtx);
+                    pushLocked(input->readBuf, (size_t)count);
                 }
-                return count;
+                input->flush();
             }
-
-            std::unique_lock lck(bufferMtx);
-            bufferCnd.wait_for(lck, timeout, [this]() {
-                return stopRequested.load() || bufferedSamples > 0;
-            });
-            return stopRequested.load() ? -1 : (bufferedSamples > 0 ? 1 : 0);
+            return count;
         }
 
         std::chrono::steady_clock::duration sliceDuration(size_t samples) const {
@@ -320,6 +270,73 @@ namespace dsp::buffer {
         size_t head = 0;
         size_t bufferedSamples = 0;
         std::mutex bufferMtx;
-        std::condition_variable bufferCnd;
+    };
+
+    // A Prebuffer with a live bypass, feeding a StreamLink: `in` is routed
+    // through the prebuffer when the target is nonzero, or straight into the
+    // link when it is zero, so a zero-length prebuffer is a true live path
+    // instead of a still-active buffering hop.
+    //
+    // Not thread-safe on its own: the caller serializes setPrebufferMsec()
+    // against its own start()/stop() (see the KiwiSDR source's bufferModeMtx
+    // and the SDR++ server client's pushedStateMtx). If `in` has a manual
+    // writer that can sit blocked in swap(), the caller is responsible for
+    // releasing it around a live mode switch (see the KiwiSDR source).
+    template <class T>
+    class PrebufferedLink {
+    public:
+        void init(stream<T>* in, stream<T>* out) {
+            input = in;
+            prebuffer.init(in);
+            link.init(in, out);
+        }
+
+        void setSampleRate(double sr) { prebuffer.setSampleRate(sr); }
+
+        bool prebuffering() const { return prebufferActive; }
+
+        // Percent of the prebuffer target currently held, or -1 in bypass
+        // mode (there is no buffer to fill).
+        int getPercentFull() { return prebufferActive ? prebuffer.getPercentFull() : -1; }
+
+        // Route through the prebuffer (msec > 0) or bypass it (msec == 0).
+        // `chainLive` says whether the surrounding DSP chain is running, i.e.
+        // whether the prebuffer worker must be started/stopped now or merely
+        // re-plumbed for the next start().
+        void setPrebufferMsec(int msec, bool resetBuffer, bool chainLive) {
+            prebuffer.setPrebufferMsec(msec);
+            if (msec > 0) {
+                if (!prebufferActive) {
+                    link.setInput(&prebuffer.out);
+                    prebufferActive = true;
+                }
+                if (resetBuffer) { prebuffer.clear(); }
+                if (chainLive) { prebuffer.start(); }
+                return;
+            }
+            if (prebufferActive) {
+                prebuffer.stop();
+                link.setInput(input);
+                prebufferActive = false;
+            }
+        }
+
+        // Start/stop the whole segment (the prebuffer too when routed
+        // through it). Both are idempotent, like the blocks they wrap.
+        void start() {
+            if (prebufferActive) { prebuffer.start(); }
+            link.start();
+        }
+
+        void stop() {
+            link.stop();
+            prebuffer.stop();
+        }
+
+    private:
+        stream<T>* input = nullptr;
+        Prebuffer<T> prebuffer;
+        routing::StreamLink<T> link;
+        bool prebufferActive = false;
     };
 }

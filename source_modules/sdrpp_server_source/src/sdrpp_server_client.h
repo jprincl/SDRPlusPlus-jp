@@ -15,7 +15,6 @@
 #include <dsp/buffer/prebuffer.h>
 #include <dsp/compression/sample_stream_decompressor.h>
 #include <dsp/sink.h>
-#include <dsp/routing/stream_link.h>
 #include <zstd.h>
 #include <chrono>
 
@@ -143,8 +142,7 @@ namespace server {
 
         dsp::stream<uint8_t> decompIn;
         dsp::compression::SampleStreamDecompressor decomp;
-        dsp::buffer::Prebuffer<dsp::complex_t> prebuffer;
-        dsp::routing::StreamLink<dsp::complex_t> link;
+        dsp::buffer::PrebufferedLink<dsp::complex_t> chain;
         dsp::stream<dsp::complex_t>* output;
 
         uint8_t* rbuffer = NULL;
@@ -173,7 +171,6 @@ namespace server {
         std::mutex pushedStateMtx;
         double currentSampleRate = 1000000.0;
         int rxPrebufferMsec = 100;
-        bool rxPrebufferActive = true;
         // Remote tuning limits (native domain), last received from the server.
         bool remoteTuningLimitsEnabled = false;
         double remoteTuningLimitMin = 0.0;

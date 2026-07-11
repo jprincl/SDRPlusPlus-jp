@@ -1,22 +1,24 @@
 #pragma once
 #include <stdint.h>
+#include <cstring>
 #include <gui/smgui.h>
 #include <dsp/types.h>
 
 #define SERVER_MAX_PACKET_SIZE  (STREAM_BUFFER_SIZE * sizeof(dsp::complex_t) * 2)
 
 namespace server {
-    static constexpr uint32_t SERVER_PROTOCOL_MAGIC = 0x494B5053; // "SPKI": SDR++ iak
-    static constexpr uint16_t SERVER_PROTOCOL_MAJOR = 1;
-    static constexpr uint16_t SERVER_PROTOCOL_MINOR = 0;
-    static constexpr uint32_t SERVER_PROTOCOL_CAP_HEARTBEAT = 1u << 0;
-    static constexpr uint32_t SERVER_PROTOCOL_CAP_AUTH = 1u << 1;
-    static constexpr int SERVER_PROTOCOL_FORK_ID_SIZE = 32;
-    static constexpr char SERVER_PROTOCOL_FORK_ID[] = "sdrpp-iak";
-    static constexpr int SERVER_AUTH_CHALLENGE_SIZE = 32;
-    static constexpr int SERVER_AUTH_RESPONSE_SIZE = 32;
-    static constexpr uint32_t SERVER_AUTH_PBKDF2_ITERATIONS = 20000;
-    static constexpr char SERVER_AUTH_SALT[] = "sdrpp-iak-server-auth-v1";
+    // inline (not static): the helpers below odr-use these from a header.
+    inline constexpr uint32_t SERVER_PROTOCOL_MAGIC = 0x494B5053; // "SPKI": SDR++ iak
+    inline constexpr uint16_t SERVER_PROTOCOL_MAJOR = 1;
+    inline constexpr uint16_t SERVER_PROTOCOL_MINOR = 0;
+    inline constexpr uint32_t SERVER_PROTOCOL_CAP_HEARTBEAT = 1u << 0;
+    inline constexpr uint32_t SERVER_PROTOCOL_CAP_AUTH = 1u << 1;
+    inline constexpr int SERVER_PROTOCOL_FORK_ID_SIZE = 32;
+    inline constexpr char SERVER_PROTOCOL_FORK_ID[] = "sdrpp-iak";
+    inline constexpr int SERVER_AUTH_CHALLENGE_SIZE = 32;
+    inline constexpr int SERVER_AUTH_RESPONSE_SIZE = 32;
+    inline constexpr uint32_t SERVER_AUTH_PBKDF2_ITERATIONS = 20000;
+    inline constexpr char SERVER_AUTH_SALT[] = "sdrpp-iak-server-auth-v1";
 
     enum PacketType {
         // Client to Server
@@ -87,4 +89,20 @@ namespace server {
         char forkId[SERVER_PROTOCOL_FORK_ID_SIZE];
     };
 #pragma pack(pop)
+
+    inline HelloPayload makeHelloPayload(uint32_t capabilities) {
+        HelloPayload hello = {};
+        hello.magic = SERVER_PROTOCOL_MAGIC;
+        hello.protocolMajor = SERVER_PROTOCOL_MAJOR;
+        hello.protocolMinor = SERVER_PROTOCOL_MINOR;
+        hello.capabilities = capabilities;
+        memcpy(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(SERVER_PROTOCOL_FORK_ID) - 1);
+        return hello;
+    }
+
+    inline bool isCompatibleHello(const HelloPayload& hello) {
+        return hello.magic == SERVER_PROTOCOL_MAGIC &&
+            hello.protocolMajor == SERVER_PROTOCOL_MAJOR &&
+            memcmp(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(hello.forkId)) == 0;
+    }
 }

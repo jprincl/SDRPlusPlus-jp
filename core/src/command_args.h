@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <string>
 #include <map>
 #include <stdexcept>
@@ -145,6 +146,17 @@ public:
 
     CLIArg operator[](std::string name) {
         return args[name];
+    }
+
+    // Best-effort scrub of a sensitive string argument (e.g. a password)
+    // after it has been consumed. The OS may still expose the original in
+    // the process command line (argv / GetCommandLine), so this only clears
+    // our parsed copy.
+    void scrubString(const std::string& name) {
+        auto it = args.find(name);
+        if (it == args.end() || it->second.type != CLI_ARG_TYPE_STRING) { return; }
+        std::fill(it->second.sval.begin(), it->second.sval.end(), '\0');
+        it->second.sval.clear();
     }
 
 private:

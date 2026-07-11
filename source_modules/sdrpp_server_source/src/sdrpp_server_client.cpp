@@ -11,22 +11,6 @@
 using namespace std::chrono_literals;
 
 namespace server {
-    static HelloPayload makeHelloPayload() {
-        HelloPayload hello = {};
-        hello.magic = SERVER_PROTOCOL_MAGIC;
-        hello.protocolMajor = SERVER_PROTOCOL_MAJOR;
-        hello.protocolMinor = SERVER_PROTOCOL_MINOR;
-        hello.capabilities = SERVER_PROTOCOL_CAP_HEARTBEAT | SERVER_PROTOCOL_CAP_AUTH;
-        memcpy(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(SERVER_PROTOCOL_FORK_ID) - 1);
-        return hello;
-    }
-
-    static bool isCompatibleHello(const HelloPayload& hello) {
-        return hello.magic == SERVER_PROTOCOL_MAGIC &&
-            hello.protocolMajor == SERVER_PROTOCOL_MAJOR &&
-            memcmp(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(hello.forkId)) == 0;
-    }
-
     Client::Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const std::string& password) {
         this->sock = sock;
         output = out;
@@ -53,12 +37,10 @@ namespace server {
         decompIn.setBufferSize(STREAM_BUFFER_SIZE*sizeof(dsp::complex_t) + 8);
         decompIn.clearWriteStop();
         decomp.init(&decompIn);
-        prebuffer.init(&decomp.out);
-        link.init(&prebuffer.out, output);
+        chain.init(&decomp.out, output);
+        chain.setPrebufferMsec(rxPrebufferMsec, false, false);
         decomp.start();
-        prebuffer.start();
-        rxPrebufferActive = true;
-        link.start();
+        chain.start();
 
         // Start worker thread
         workerThread = std::thread(&Client::worker, this);
@@ -196,27 +178,10 @@ namespace server {
     }
 
     void Client::applyRxPrebufferModeLocked(bool resetBuffer) {
-        prebuffer.setSampleRate(currentSampleRate);
-        prebuffer.setPrebufferMsec(rxPrebufferMsec);
-
-        if (rxPrebufferMsec > 0) {
-            if (!rxPrebufferActive) {
-                link.setInput(&prebuffer.out);
-                if (resetBuffer) { prebuffer.clear(); }
-                prebuffer.start();
-                rxPrebufferActive = true;
-            }
-            else if (resetBuffer) {
-                prebuffer.clear();
-            }
-            return;
-        }
-
-        if (rxPrebufferActive) {
-            prebuffer.stop();
-            link.setInput(&decomp.out);
-            rxPrebufferActive = false;
-        }
+        chain.setSampleRate(currentSampleRate);
+        // The chain runs from the constructor until close(), so the mode
+        // switch is always live here.
+        chain.setPrebufferMsec(rxPrebufferMsec, resetBuffer, true);
     }
 
     void Client::setSampleType(dsp::compression::PCMType type) {
@@ -240,7 +205,8 @@ namespace server {
     }
 
     int Client::getRxPrebufferPercent() {
-        return prebuffer.getPercentFull();
+        // -1 when the prebuffer is bypassed (no buffer to fill).
+        return chain.getPercentFull();
     }
 
     void Client::start() {
@@ -267,8 +233,7 @@ namespace server {
         decompIn.clearWriteStop();
 
         // Stop DSP
-        link.stop();
-        prebuffer.stop();
+        chain.stop();
         decomp.stop();
     }
 
@@ -312,7 +277,7 @@ namespace server {
                     {
                         std::lock_guard lck(pushedStateMtx);
                         currentSampleRate = samplerate;
-                        prebuffer.setSampleRate(samplerate);
+                        chain.setSampleRate(samplerate);
                     }
                     samplerateDirty = true;
                 }
@@ -409,7 +374,7 @@ namespace server {
         auto waiter = awaitCommandAck(COMMAND_HELLO);
         {
             std::lock_guard lck(sendMtx);
-            HelloPayload hello = makeHelloPayload();
+            HelloPayload hello = makeHelloPayload(SERVER_PROTOCOL_CAP_HEARTBEAT | SERVER_PROTOCOL_CAP_AUTH);
             memcpy(s_cmd_data, &hello, sizeof(hello));
             sendCommandLocked(COMMAND_HELLO, sizeof(hello));
         }
@@ -472,6 +437,9 @@ namespace server {
 
         if (!waiter->await(PROTOCOL_TIMEOUT_MS)) {
             forgetCommandAck(waiter);
+            // The server answers a valid response with COMMAND_DISCONNECT if
+            // another client claimed the slot during the handshake.
+            if (serverBusy.load()) { return CONN_ERR_BUSY; }
             return authFailed.load() ? CONN_ERR_AUTH : CONN_ERR_TIMEOUT;
         }
 
