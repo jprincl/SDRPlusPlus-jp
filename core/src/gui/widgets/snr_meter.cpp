@@ -60,9 +60,19 @@ namespace ImGui {
 
         ImU32 text = ImGui::GetColorU32(ImGuiCol_Text);
 
+        ImGuiID id = window->GetID("##level_meter");
         ItemSize(size, style.FramePadding.y);
-        if (!ItemAdd(bb, 0)) {
+        if (!ItemAdd(bb, id)) {
             return;
+        }
+
+        // Click the scale to toggle between the dBFS scale (0 dB at the right
+        // edge, negative to the left) and the positive scale (0 at the left,
+        // increasing to the right — the original SNR-style reading). Starts in
+        // dBFS mode on every launch.
+        static bool dbfsMode = true;
+        if (ButtonBehavior(bb, id, nullptr, nullptr)) {
+            dbfsMode = !dbfsMode;
         }
 
         updateWidthCache();
@@ -97,16 +107,30 @@ namespace ImGui {
         window->DrawList->AddLine(min, min + ImVec2(0, barHeight - 1), text, style::uiScale);
         window->DrawList->AddLine(min + ImVec2(0, barHeight - 1), min + ImVec2(barWidth + 1, barHeight - 1), text, style::uiScale);
 
+        // Which ticks get a numeric label: all of them at full density, else
+        // every other one — odd ticks in dBFS mode (…-20, 0), even ticks in
+        // positive mode (0, 20, 40, 60, 80). The leftmost (0) is dropped below
+        // if it does not fit; see skipFirstLabel.
+        auto tickLabeled = [&](int i) {
+            if (fullLabels) { return true; }
+            return dbfsMode ? (i % 2) == 1 : (i % 2) == 0;
+        };
+        auto tickLabelValue = [&](int i) { return dbfsMode ? (i - 9) * 10 : i * 10; };
+
         // The leftmost label is left-aligned to its tick (it cannot center
         // without spilling off the left edge). Drop it if that pushes it into
         // the next label.
-        int firstLabelIdx = fullLabels ? 0 : 1;
-        int secondLabelIdx = fullLabels ? 1 : 3;
+        int firstLabelIdx = -1, secondLabelIdx = -1;
+        for (int i = 0; i < 10; i++) {
+            if (!tickLabeled(i)) { continue; }
+            if (firstLabelIdx < 0) { firstLabelIdx = i; }
+            else { secondLabelIdx = i; break; }
+        }
         bool skipFirstLabel = false;
         {
             char b0[32], b1[32];
-            sprintf(b0, "%d", (firstLabelIdx - 9) * 10);
-            sprintf(b1, "%d", (secondLabelIdx - 9) * 10);
+            sprintf(b0, "%d", tickLabelValue(firstLabelIdx));
+            sprintf(b1, "%d", tickLabelValue(secondLabelIdx));
             float w0 = ImGui::CalcTextSize(b0).x;
             float w1 = ImGui::CalcTextSize(b1).x;
             float x0 = std::max(roundf((float)firstLabelIdx * it - w0 / 2.0f) + 1, 0.0f);
@@ -115,14 +139,13 @@ namespace ImGui {
         }
 
         for (int i = 0; i < 10; i++) {
-            // In sparse mode label only odd ticks (0, -20, -40, -60, -80 dB);
-            // the unlabeled 10 dB ticks in between are drawn shorter.
-            bool labeled = fullLabels || (i % 2) == 1;
+            // Sparse mode draws the unlabeled 10 dB ticks in between shorter.
+            bool labeled = tickLabeled(i);
             float tickBottom = labeled ? style::dp(15.0f) : style::dp(12.5f);
             window->DrawList->AddLine(min + ImVec2(roundf((float)i * it), barHeight - 1), min + ImVec2(roundf((float)i * it), tickBottom - 1), text, style::uiScale);
             if (!labeled) { continue; }
             if (i == firstLabelIdx && skipFirstLabel) { continue; }
-            sprintf(buf, "%d", (i - 9) * 10);
+            sprintf(buf, "%d", tickLabelValue(i));
             ImVec2 sz = ImGui::CalcTextSize(buf);
             // Center the label on the tick, but keep the first one inside the widget
             float labelX = std::max(roundf(((float)i * it) - (sz.x / 2.0f)) + 1, 0.0f);
@@ -133,7 +156,7 @@ namespace ImGui {
         // is too narrow to reserve the column without starving the bar.
         if (showReadout) {
             if (std::isfinite(levelMax)) {
-                sprintf(buf, "%+.1f dB", levelMax);
+                sprintf(buf, dbfsMode ? "%+.1f dB" : "%.1f dB", dbfsMode ? levelMax : levelMax + METER_RANGE);
             }
             else {
                 strcpy(buf, "--.- dB");
