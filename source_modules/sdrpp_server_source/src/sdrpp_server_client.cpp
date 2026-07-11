@@ -277,7 +277,7 @@ namespace server {
     void Client::worker() {
         while (true) {
             // Receive header
-            if (sock->recv(rbuffer, sizeof(PacketHeader), true) <= 0) {
+            if (sock->recv(rbuffer.get(), sizeof(PacketHeader), true) <= 0) {
                 break;
             }
 
@@ -506,7 +506,7 @@ namespace server {
     void Client::sendPacketLocked(PacketType type, int len) {
         s_pkt_hdr->type = type;
         s_pkt_hdr->size = sizeof(PacketHeader) + len;
-        sock->send(sbuffer, s_pkt_hdr->size);
+        sock->send(sbuffer.get(), s_pkt_hdr->size);
     }
 
     void Client::sendCommandLocked(Command cmd, int len) {
