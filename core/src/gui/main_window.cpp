@@ -501,7 +501,7 @@ void MainWindow::draw() {
 
     float meterOffset = 87.0f * style::uiScale;
     float meterMinWidth = ImGui::GetLevelMeterMinWidth();
-    float meterMaxWidth = std::max(300.0f * style::uiScale, meterMinWidth);
+    float meterMaxWidth = std::max(375.0f * style::uiScale, meterMinWidth);
 
     float meterAvailWidth = topBarWidth - ImGui::GetCursorPosX() - meterOffset;
     float meterWidth = std::clamp(meterAvailWidth, meterMinWidth, meterMaxWidth);
