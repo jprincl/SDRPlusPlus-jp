@@ -161,7 +161,7 @@ endif ()
 
 if (MSVC)
     # WinSock2
-    target_link_libraries(sdrpp_core PUBLIC wsock32 ws2_32 iphlpapi)
+    target_link_libraries(sdrpp_core PUBLIC wsock32 ws2_32 iphlpapi advapi32)
 elseif (ANDROID)
     target_include_directories(sdrpp_core PUBLIC
         ${ANDROID_NDK}/sources/android/native_app_glue

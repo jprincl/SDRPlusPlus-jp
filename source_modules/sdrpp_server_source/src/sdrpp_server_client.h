@@ -79,6 +79,12 @@ namespace server {
 
     class Client {
     public:
+        struct ZstdDCtxDeleter {
+            void operator()(ZSTD_DCtx* ctx) const {
+                if (ctx) { ZSTD_freeDCtx(ctx); }
+            }
+        };
+
         Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const std::string& password);
         Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const AuthKey& authKey);
         ~Client();
@@ -151,8 +157,8 @@ namespace server {
         dsp::buffer::PrebufferedLink<dsp::complex_t> chain;
         dsp::stream<dsp::complex_t>* output;
 
-        uint8_t* rbuffer = NULL;
-        uint8_t* sbuffer = NULL;
+        std::unique_ptr<uint8_t[]> rbuffer;
+        std::unique_ptr<uint8_t[]> sbuffer;
 
         PacketHeader* r_pkt_hdr = NULL;
         uint8_t* r_pkt_data = NULL;
@@ -168,7 +174,7 @@ namespace server {
         SmGui::DrawList dl;
         std::mutex dlMtx;
 
-        ZSTD_DCtx* dctx;
+        std::unique_ptr<ZSTD_DCtx, ZstdDCtxDeleter> dctx;
 
         std::thread workerThread;
 

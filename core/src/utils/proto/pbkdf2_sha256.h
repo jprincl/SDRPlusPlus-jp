@@ -11,7 +11,7 @@
 
 #if defined(_WIN32)
 // RtlGenRandom. Declared by hand so <windows.h> stays out of this header;
-// advapi32 is in the default link set of both MSVC and MinGW.
+// core/CMakeLists.txt links advapi32 on Windows.
 extern "C" unsigned char __stdcall SystemFunction036(void* buffer, unsigned long length);
 #endif
 

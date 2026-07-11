@@ -100,16 +100,18 @@ namespace dsp::buffer {
                 }
 
                 int count = 0;
+                double sampleRateSnapshot = 1.0;
                 {
                     std::lock_guard lck(bufferMtx);
                     count = (int)popLocked(out.writeBuf, std::min({ bufferedSamples, slice, (size_t)STREAM_BUFFER_SIZE }));
+                    sampleRateSnapshot = sampleRate;
                     if (bufferedSamples < slice) { primed = false; }
                 }
                 if (count <= 0) {
                     continue;
                 }
 
-                nextTick += sliceDuration(count);
+                nextTick += sliceDuration(count, sampleRateSnapshot);
                 if (!out.swap(count)) { return -1; }
             }
 
@@ -145,7 +147,7 @@ namespace dsp::buffer {
             return count;
         }
 
-        std::chrono::steady_clock::duration sliceDuration(size_t samples) const {
+        static std::chrono::steady_clock::duration sliceDuration(size_t samples, double sampleRate) {
             return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(samples / sampleRate));
         }
 

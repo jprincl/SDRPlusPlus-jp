@@ -10,6 +10,11 @@
 
 using namespace std::chrono_literals;
 
+namespace {
+    constexpr int SAMPLE_STREAM_HEADER_SIZE = 8;
+    constexpr int DECOMP_INPUT_BUFFER_SIZE = STREAM_BUFFER_SIZE * sizeof(dsp::complex_t) + SAMPLE_STREAM_HEADER_SIZE;
+}
+
 namespace server {
     Client::Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const std::string& password) {
         AuthKey authKey{};
@@ -44,25 +49,28 @@ namespace server {
         output = out;
 
         // Allocate buffers
-        rbuffer = new uint8_t[SERVER_MAX_PACKET_SIZE];
-        sbuffer = new uint8_t[SERVER_MAX_PACKET_SIZE];
+        rbuffer = std::make_unique<uint8_t[]>(SERVER_MAX_PACKET_SIZE);
+        sbuffer = std::make_unique<uint8_t[]>(SERVER_MAX_PACKET_SIZE);
 
         // Initialize headers
-        r_pkt_hdr = (PacketHeader*)rbuffer;
-        r_pkt_data = &rbuffer[sizeof(PacketHeader)];
+        r_pkt_hdr = reinterpret_cast<PacketHeader*>(rbuffer.get());
+        r_pkt_data = rbuffer.get() + sizeof(PacketHeader);
         r_cmd_hdr = (CommandHeader*)r_pkt_data;
-        r_cmd_data = &rbuffer[sizeof(PacketHeader) + sizeof(CommandHeader)];
+        r_cmd_data = rbuffer.get() + sizeof(PacketHeader) + sizeof(CommandHeader);
 
-        s_pkt_hdr = (PacketHeader*)sbuffer;
-        s_pkt_data = &sbuffer[sizeof(PacketHeader)];
+        s_pkt_hdr = reinterpret_cast<PacketHeader*>(sbuffer.get());
+        s_pkt_data = sbuffer.get() + sizeof(PacketHeader);
         s_cmd_hdr = (CommandHeader*)s_pkt_data;
-        s_cmd_data = &sbuffer[sizeof(PacketHeader) + sizeof(CommandHeader)];
+        s_cmd_data = sbuffer.get() + sizeof(PacketHeader) + sizeof(CommandHeader);
 
         // Initialize decompressor
-        dctx = ZSTD_createDCtx();
+        dctx.reset(ZSTD_createDCtx());
+        if (!dctx) {
+            throw std::runtime_error("Failed to create ZSTD decompressor context");
+        }
 
         // Initialize DSP
-        decompIn.setBufferSize(STREAM_BUFFER_SIZE*sizeof(dsp::complex_t) + 8);
+        decompIn.setBufferSize(DECOMP_INPUT_BUFFER_SIZE);
         decompIn.clearWriteStop();
         decomp.init(&decompIn);
         chain.init(&decomp.out, output);
@@ -97,9 +105,6 @@ namespace server {
 
     Client::~Client() {
         close();
-        ZSTD_freeDCtx(dctx);
-        delete[] rbuffer;
-        delete[] sbuffer;
     }
 
     void Client::showMenu() {
@@ -292,6 +297,7 @@ namespace server {
 
             // Increment data counter
             bytes += r_pkt_hdr->size;
+            const size_t payloadSize = (size_t)r_pkt_hdr->size - sizeof(PacketHeader);
 
             // Decode packet. Worker discipline: only parse and cache into
             // mutex-protected client state; SourceManager/GUI applies happen
@@ -365,14 +371,26 @@ namespace server {
                 }
             }
             else if (r_pkt_hdr->type == PACKET_TYPE_BASEBAND) {
-                memcpy(decompIn.writeBuf, &rbuffer[sizeof(PacketHeader)], r_pkt_hdr->size - sizeof(PacketHeader));
-                if (!decompIn.swap(r_pkt_hdr->size - sizeof(PacketHeader))) { break; }
+                if (payloadSize < SAMPLE_STREAM_HEADER_SIZE || payloadSize > (size_t)DECOMP_INPUT_BUFFER_SIZE) {
+                    flog::error("Invalid baseband packet size from server: {0}", payloadSize);
+                    break;
+                }
+                memcpy(decompIn.writeBuf, r_pkt_data, payloadSize);
+                if (!decompIn.swap((int)payloadSize)) { break; }
             }
             else if (r_pkt_hdr->type == PACKET_TYPE_BASEBAND_COMPRESSED) {
-                size_t outCount = ZSTD_decompressDCtx(dctx, decompIn.writeBuf, STREAM_BUFFER_SIZE*sizeof(dsp::complex_t)+8, r_pkt_data, r_pkt_hdr->size - sizeof(PacketHeader));
+                size_t outCount = ZSTD_decompressDCtx(dctx.get(), decompIn.writeBuf, (size_t)DECOMP_INPUT_BUFFER_SIZE, r_pkt_data, payloadSize);
+                if (ZSTD_isError(outCount)) {
+                    flog::error("Failed to decompress server baseband packet: {0}", ZSTD_getErrorName(outCount));
+                    break;
+                }
+                if (outCount > (size_t)DECOMP_INPUT_BUFFER_SIZE || (outCount != 0 && outCount < SAMPLE_STREAM_HEADER_SIZE)) {
+                    flog::error("Invalid decompressed baseband size from server: {0}", outCount);
+                    break;
+                }
                 if (outCount) {
-                    if (!decompIn.swap(outCount)) { break; }
-                };
+                    if (!decompIn.swap((int)outCount)) { break; }
+                }
             }
             else if (r_pkt_hdr->type == PACKET_TYPE_ERROR) {
                 uint8_t err = (r_pkt_hdr->size > sizeof(PacketHeader)) ? r_pkt_data[0] : ERROR_INVALID_PACKET;

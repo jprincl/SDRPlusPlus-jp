@@ -101,8 +101,9 @@ namespace server {
     }
 
     inline bool isCompatibleHello(const HelloPayload& hello) {
+        const HelloPayload expected = makeHelloPayload(0);
         return hello.magic == SERVER_PROTOCOL_MAGIC &&
             hello.protocolMajor == SERVER_PROTOCOL_MAJOR &&
-            memcmp(hello.forkId, SERVER_PROTOCOL_FORK_ID, sizeof(hello.forkId)) == 0;
+            memcmp(hello.forkId, expected.forkId, sizeof(hello.forkId)) == 0;
     }
 }
