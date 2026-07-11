@@ -12,6 +12,34 @@ using namespace std::chrono_literals;
 
 namespace server {
     Client::Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const std::string& password) {
+        AuthKey authKey{};
+        AuthKey* authKeyPtr = nullptr;
+        if (!password.empty()) {
+            deriveAuthKey(password, authKey);
+            authKeyPtr = &authKey;
+        }
+
+        try {
+            init(sock, out, authKeyPtr);
+        }
+        catch (...) {
+            std::fill(authKey.begin(), authKey.end(), 0);
+            throw;
+        }
+        std::fill(authKey.begin(), authKey.end(), 0);
+    }
+
+    Client::Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const AuthKey& authKey) {
+        init(sock, out, &authKey);
+    }
+
+    void deriveAuthKey(const std::string& password, AuthKey& authKey) {
+        crypto::pbkdf2Sha256((const uint8_t*)password.data(), password.size(),
+            (const uint8_t*)SERVER_AUTH_SALT, sizeof(SERVER_AUTH_SALT) - 1,
+            SERVER_AUTH_PBKDF2_ITERATIONS, authKey.data(), authKey.size());
+    }
+
+    void Client::init(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const AuthKey* authKey) {
         this->sock = sock;
         output = out;
 
@@ -45,7 +73,7 @@ namespace server {
         // Start worker thread
         workerThread = std::thread(&Client::worker, this);
 
-        int res = hello(password);
+        int res = hello(authKey);
         if (res == 0) { res = getUI(); }
         if (res < 0) {
             // Close client
@@ -368,7 +396,7 @@ namespace server {
         authCnd.notify_all();
     }
 
-    int Client::hello(const std::string& password) {
+    int Client::hello(const AuthKey* authKey) {
         if (!isOpen()) { return CONN_ERR_TIMEOUT; }
 
         auto waiter = awaitCommandAck(COMMAND_HELLO);
@@ -393,7 +421,8 @@ namespace server {
         if (!isCompatibleHello(hello)) { return CONN_ERR_PROTOCOL; }
 
         if ((hello.capabilities & SERVER_PROTOCOL_CAP_AUTH) != 0) {
-            int res = authenticate(password);
+            if (!authKey) { return CONN_ERR_AUTH; }
+            int res = authenticate(*authKey);
             if (res < 0) { return res; }
         }
 
@@ -401,9 +430,7 @@ namespace server {
         return 0;
     }
 
-    int Client::authenticate(const std::string& password) {
-        if (password.empty()) { return CONN_ERR_AUTH; }
-
+    int Client::authenticate(const AuthKey& authKey) {
         std::array<uint8_t, SERVER_AUTH_CHALLENGE_SIZE> challenge{};
         {
             std::unique_lock lck(authMtx);
@@ -417,12 +444,8 @@ namespace server {
             authChallengeReady = false;
         }
 
-        std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> key{};
         std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE> response{};
-        crypto::pbkdf2Sha256((const uint8_t*)password.data(), password.size(),
-            (const uint8_t*)SERVER_AUTH_SALT, sizeof(SERVER_AUTH_SALT) - 1,
-            SERVER_AUTH_PBKDF2_ITERATIONS, key.data(), key.size());
-        crypto::hmacSha256(key.data(), key.size(), challenge.data(), challenge.size(), response.data());
+        crypto::hmacSha256(authKey.data(), authKey.size(), challenge.data(), challenge.size(), response.data());
 
         authFailed = false;
         auto waiter = awaitCommandAck(COMMAND_AUTH_RESPONSE);
@@ -432,7 +455,6 @@ namespace server {
             sendCommandLocked(COMMAND_AUTH_RESPONSE, (int)response.size());
         }
 
-        std::fill(key.begin(), key.end(), 0);
         std::fill(response.begin(), response.end(), 0);
 
         if (!waiter->await(PROTOCOL_TIMEOUT_MS)) {
@@ -517,5 +539,9 @@ namespace server {
 
     std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out, const std::string& password) {
         return std::make_shared<Client>(net::connect(host, port), out, password);
+    }
+
+    std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out, const AuthKey& authKey) {
+        return std::make_shared<Client>(net::connect(host, port), out, authKey);
     }
 }

@@ -10,6 +10,9 @@
 #include <gui/widgets/stepped_slider.h>
 #include <utils/optionlist.h>
 #include <gui/dialogs/dialog_box.h>
+#include <algorithm>
+#include <array>
+#include <cstdio>
 #include <cstring>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -61,7 +64,7 @@ public:
         strcpy(hostname, hostStr.c_str());
         port = config.conf["port"];
         config.release();
-        loadPasswordForHost();
+        loadPasswordForServer();
 
         // Per-frame GUI-thread pump for server-pushed state (samplerate,
         // tuning limits) cached by the client's network worker. Bound in
@@ -201,7 +204,7 @@ private:
             config.acquire();
             config.conf["hostname"] = _this->hostname;
             config.release(true);
-            _this->loadPasswordForHost();
+            _this->loadPasswordForServer();
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
@@ -209,13 +212,17 @@ private:
             config.acquire();
             config.conf["port"] = _this->port;
             config.release(true);
+            _this->loadPasswordForServer();
         }
         ImGui::LeftLabel("Password");
         ImGui::FillWidth();
-        if (ImGui::InputText(CONCAT("##sdrpp_srv_srv_password_", _this->name), _this->password, sizeof(_this->password), ImGuiInputTextFlags_Password)) {
-            config.acquire();
-            config.conf["hosts"][std::string(_this->hostname)]["password"] = std::string(_this->password);
-            config.release(true);
+        if (ImGui::InputTextWithHint(CONCAT("##sdrpp_srv_srv_password_", _this->name), _this->savedAuthKeyValid ? "Saved" : "", _this->password, sizeof(_this->password), ImGuiInputTextFlags_Password)) {
+            _this->savePasswordForServer();
+        }
+        if (_this->savedAuthKeyValid && _this->password[0] == 0) {
+            if (ImGui::Button(CONCAT("Forget saved password##sdrpp_srv_srv_password_forget_", _this->name), ImVec2(menuWidth, 0))) {
+                _this->clearPasswordForServer();
+            }
         }
         if (connected) { style::endDisabled(); }
 
@@ -303,7 +310,18 @@ private:
             serverBusy = false;
             authFailed = false;
             if (client) { client.reset(); }
-            client = server::connect(hostname, port, &stream, password);
+            if (savedAuthKeyValid) {
+                client = server::connect(hostname, port, &stream, savedAuthKey);
+            }
+            else if (password[0] != 0) {
+                server::AuthKey authKey{};
+                server::deriveAuthKey(std::string(password), authKey);
+                client = server::connect(hostname, port, &stream, authKey);
+                std::fill(authKey.begin(), authKey.end(), 0);
+            }
+            else {
+                client = server::connect(hostname, port, &stream);
+            }
             deviceInit();
         }
         catch (const std::exception& e) {
@@ -315,9 +333,7 @@ private:
 
     void deviceInit() {
         // Generate the config name
-        char buf[4096];
-        sprintf(buf, "%s:%05d", hostname, port);
-        devConfName = buf;
+        devConfName = serverConfigName();
 
         // Load settings
         sampleTypeId = sampleTypeList.valueId(dsp::compression::PCM_TYPE_I16);
@@ -340,16 +356,130 @@ private:
         client->setRxPrebufferMsec(prebufferList[rxPrebufferId]);
     }
 
-    void loadPasswordForHost() {
+    static std::string makeServerConfigName(const char* host, int port) {
+        char buf[4096];
+        snprintf(buf, sizeof(buf), "%s:%05d", host, port);
+        return std::string(buf);
+    }
+
+    std::string serverConfigName() const {
+        return makeServerConfigName(hostname, port);
+    }
+
+    static std::string authRecordVersion() {
+        return std::string(server::SERVER_AUTH_SALT);
+    }
+
+    static std::string authKeyToHex(const server::AuthKey& authKey) {
+        static const char* hex = "0123456789abcdef";
+        std::string out;
+        out.resize(authKey.size() * 2);
+        for (size_t i = 0; i < authKey.size(); i++) {
+            out[i * 2] = hex[(authKey[i] >> 4) & 0x0f];
+            out[i * 2 + 1] = hex[authKey[i] & 0x0f];
+        }
+        return out;
+    }
+
+    static int hexDigit(char c) {
+        if (c >= '0' && c <= '9') { return c - '0'; }
+        if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+        if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+        return -1;
+    }
+
+    static bool authKeyFromHex(const std::string& hex, server::AuthKey& authKey) {
+        if (hex.size() != authKey.size() * 2) { return false; }
+        for (size_t i = 0; i < authKey.size(); i++) {
+            int hi = hexDigit(hex[i * 2]);
+            int lo = hexDigit(hex[i * 2 + 1]);
+            if (hi < 0 || lo < 0) {
+                std::fill(authKey.begin(), authKey.end(), 0);
+                return false;
+            }
+            authKey[i] = (uint8_t)((hi << 4) | lo);
+        }
+        return true;
+    }
+
+    static json makePasswordRecord(const server::AuthKey& authKey) {
+        json record = json::object();
+        record["version"] = authRecordVersion();
+        record["key"] = authKeyToHex(authKey);
+        return record;
+    }
+
+    static bool loadPasswordRecord(const json& record, server::AuthKey& authKey) {
+        if (!record.is_object() ||
+            !record.contains("version") || !record["version"].is_string() ||
+            !record.contains("key") || !record["key"].is_string()) {
+            return false;
+        }
+
+        std::string version = record["version"];
+        if (version != authRecordVersion()) { return false; }
+
+        std::string key = record["key"];
+        return authKeyFromHex(key, authKey);
+    }
+
+    void clearSavedAuthKey() {
+        std::fill(savedAuthKey.begin(), savedAuthKey.end(), 0);
+        savedAuthKeyValid = false;
+    }
+
+    void savePasswordForServer() {
+        config.acquire();
+        std::string serverKey = serverConfigName();
+        if (password[0] == 0) {
+            clearSavedAuthKey();
+            if (config.conf["servers"].contains(serverKey) && config.conf["servers"][serverKey].is_object()) {
+                config.conf["servers"][serverKey].erase("password");
+            }
+        }
+        else {
+            server::deriveAuthKey(std::string(password), savedAuthKey);
+            savedAuthKeyValid = true;
+            config.conf["servers"][serverKey]["password"] = makePasswordRecord(savedAuthKey);
+        }
+        config.release(true);
+    }
+
+    void clearPasswordForServer() {
+        password[0] = 0;
+        savePasswordForServer();
+    }
+
+    void loadPasswordForServer() {
         config.acquire();
         password[0] = 0;
-        std::string host = hostname;
-        if (config.conf["hosts"].contains(host) && config.conf["hosts"][host].contains("password")) {
-            std::string savedPassword = config.conf["hosts"][host]["password"];
-            strncpy(password, savedPassword.c_str(), sizeof(password) - 1);
-            password[sizeof(password) - 1] = 0;
+        clearSavedAuthKey();
+
+        bool changed = false;
+        std::string serverKey = serverConfigName();
+        if (config.conf["servers"].contains(serverKey) &&
+            config.conf["servers"][serverKey].is_object() &&
+            config.conf["servers"][serverKey].contains("password")) {
+            json& record = config.conf["servers"][serverKey]["password"];
+            if (record.is_object()) {
+                server::AuthKey authKey{};
+                if (loadPasswordRecord(record, authKey)) {
+                    savedAuthKey = authKey;
+                    savedAuthKeyValid = true;
+                    std::fill(authKey.begin(), authKey.end(), 0);
+                }
+                else {
+                    config.conf["servers"][serverKey].erase("password");
+                    changed = true;
+                }
+            }
+            else {
+                config.conf["servers"][serverKey].erase("password");
+                changed = true;
+            }
         }
-        config.release();
+
+        config.release(changed);
     }
 
     std::string name;
@@ -365,6 +495,8 @@ private:
 
     char hostname[1024];
     char password[256] = {};
+    server::AuthKey savedAuthKey{};
+    bool savedAuthKeyValid = false;
     int port = 50000;
     std::string devConfName = "";
 
@@ -386,7 +518,6 @@ MOD_EXPORT void _INIT_() {
     def["hostname"] = "localhost";
     def["port"] = 5259;
     def["servers"] = json::object();
-    def["hosts"] = json::object();
     config.setPath(core::args["root"].s() + "/sdrpp_server_source_config.json");
     config.load(def);
     config.enableAutoSave();

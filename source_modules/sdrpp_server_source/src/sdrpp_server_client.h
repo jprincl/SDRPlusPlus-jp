@@ -21,6 +21,10 @@
 #define PROTOCOL_TIMEOUT_MS             10000
 
 namespace server {
+    using AuthKey = std::array<uint8_t, SERVER_AUTH_RESPONSE_SIZE>;
+
+    void deriveAuthKey(const std::string& password, AuthKey& authKey);
+
     // One-shot ACK rendezvous between the GUI thread and the network worker.
     // The worker copies the ACK payload into the waiter, so the waiter stays
     // valid on its own: notify() never blocks and the worker never has to
@@ -76,6 +80,7 @@ namespace server {
     class Client {
     public:
         Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const std::string& password);
+        Client(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const AuthKey& authKey);
         ~Client();
 
         void showMenu();
@@ -105,11 +110,12 @@ namespace server {
         std::atomic<bool> protocolReady{false};
 
     private:
+        void init(std::shared_ptr<net::Socket> sock, dsp::stream<dsp::complex_t>* out, const AuthKey* authKey);
         void worker();
         void applyRxPrebufferModeLocked(bool resetBuffer);
 
-        int hello(const std::string& password);
-        int authenticate(const std::string& password);
+        int hello(const AuthKey* authKey);
+        int authenticate(const AuthKey& authKey);
         int getUI();
 
         void sendPacketLocked(PacketType type, int len);
@@ -180,4 +186,5 @@ namespace server {
     };
 
     std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out, const std::string& password = "");
+    std::shared_ptr<Client> connect(std::string host, uint16_t port, dsp::stream<dsp::complex_t>* out, const AuthKey& authKey);
 }
