@@ -261,6 +261,18 @@ jobs:
                       volk_package: libvolk-dev
                       extra_apt: ''
                       curl_source: system
+                    - base_image: ubuntu:resolute
+                      runner: ubuntu-latest
+                      artifact: ubuntu-resolute-amd64
+                      volk_package: libvolk-dev
+                      extra_apt: ''
+                      curl_source: system
+                    - base_image: ubuntu:resolute
+                      runner: ubuntu-24.04-arm
+                      artifact: ubuntu-resolute-aarch64
+                      volk_package: libvolk-dev
+                      extra_apt: ''
+                      curl_source: system
         needs: [prepare]
         uses: ./.github/workflows/build_linux.yml
         with:

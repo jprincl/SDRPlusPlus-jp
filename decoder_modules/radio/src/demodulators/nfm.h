@@ -21,12 +21,11 @@ namespace demod {
             _config->acquire();
             auto& cfg = config->conf[name][getName()];
             loadConf(cfg, "lowPass", _lowPass);
-            loadConf(cfg, "highPass", _highPass);
             _config->release();
 
 
             // Define structure
-            demod.init(input, getIFSampleRate(), bandwidth, _lowPass, _highPass);
+            demod.init(input, getIFSampleRate(), bandwidth, _lowPass);
         }
 
         void start() { demod.start(); }
@@ -37,10 +36,6 @@ namespace demod {
             if (ImGui::Checkbox(("Low Pass##_radio_wfm_lowpass_" + name).c_str(), &_lowPass)) {
                 demod.setLowPass(_lowPass);
                 saveConf("lowPass", _lowPass);
-            }
-            if (ImGui::Checkbox(("High Pass##_radio_wfm_highpass_" + name).c_str(), &_highPass)) {
-                demod.setHighPass(_highPass);
-                saveConf("highPass", _highPass);
             }
         }
 
@@ -68,12 +63,13 @@ namespace demod {
         int getDefaultDeemphasisMode() { return DEEMP_MODE_NONE; }
         bool getFMIFNRAllowed() { return true; }
         bool getNBAllowed() { return false; }
+        bool getHighPassAllowed() { return true; }
+        bool getSquelchAllowed() { return true; }
         dsp::stream<dsp::stereo_t>* getOutput() { return &demod.out; }
 
     private:
         dsp::demod::FM<dsp::stereo_t> demod;
 
         bool _lowPass = true;
-        bool _highPass = false;
     };
 }

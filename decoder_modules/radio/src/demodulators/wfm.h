@@ -47,6 +47,7 @@ namespace demod {
             loadConf(cfg, "stereo", _stereo);
             loadConf(cfg, "lowPass", _lowPass);
             loadConf(cfg, "rds", _rds);
+            loadConf(cfg, "rdsIncremental", _rdsIncremental);
             loadConf(cfg, "rdsInfo", _rdsInfo);
             loadConf(cfg, "rdsRegion", rdsRegionStr);
             _config->release();
@@ -90,13 +91,13 @@ namespace demod {
         }
 
         void showMenu() {
-            if (ImGui::Checkbox(("Stereo##_radio_wfm_stereo_" + name).c_str(), &_stereo)) {
-                setStereo(_stereo);
-                saveConf("stereo", _stereo);
-            }
             if (ImGui::Checkbox(("Low Pass##_radio_wfm_lowpass_" + name).c_str(), &_lowPass)) {
                 demod.setLowPass(_lowPass);
                 saveConf("lowPass", _lowPass);
+            }
+            if (ImGui::Checkbox(("Stereo##_radio_wfm_stereo_" + name).c_str(), &_stereo)) {
+                setStereo(_stereo);
+                saveConf("stereo", _stereo);
             }
             if (ImGui::Checkbox(("Decode RDS##_radio_wfm_rds_" + name).c_str(), &_rds)) {
                 demod.setRDSOut(_rds);
@@ -105,6 +106,9 @@ namespace demod {
 
             // TODO: This might break when the entire radio module is disabled
             if (!_rds) { ImGui::BeginDisabled(); }
+            if (ImGui::Checkbox(("RDS Incremental Update##_radio_wfm_rds_inc_" + name).c_str(), &_rdsIncremental)) {
+                saveConf("rdsIncremental", _rdsIncremental);
+            }
             if (ImGui::Checkbox(("Advanced RDS Info##_radio_wfm_rds_info_" + name).c_str(), &_rdsInfo)) {
                 setAdvancedRds(_rdsInfo);
                 saveConf("rdsInfo", _rdsInfo);
@@ -250,6 +254,8 @@ namespace demod {
         int getDefaultDeemphasisMode() { return DEEMP_MODE_50US; }
         bool getFMIFNRAllowed() { return true; }
         bool getNBAllowed() { return false; }
+        bool getHighPassAllowed() { return true; }
+        bool getSquelchAllowed() { return true; }
         dsp::stream<dsp::stereo_t>* getOutput() { return &demod.out; }
 
         // ============= DEDICATED FUNCTIONS =============
@@ -284,13 +290,13 @@ namespace demod {
             // Generate string depending on RDS mode
             char buf[256];
             if (_this->rdsDecode.PSNameValid() && _this->rdsDecode.radioTextValid()) {
-                sprintf(buf, "RDS: %s - %s", _this->rdsDecode.getPSName().c_str(), _this->rdsDecode.getRadioText().c_str());
+                sprintf(buf, "RDS: %s - %s", _this->rdsDecode.getPSName(_this->_rdsIncremental).c_str(), _this->rdsDecode.getRadioText(_this->_rdsIncremental).c_str());
             }
             else if (_this->rdsDecode.PSNameValid()) {
-                sprintf(buf, "RDS: %s", _this->rdsDecode.getPSName().c_str());
+                sprintf(buf, "RDS: %s", _this->rdsDecode.getPSName(_this->_rdsIncremental).c_str());
             }
             else if (_this->rdsDecode.radioTextValid()) {
-                sprintf(buf, "RDS: %s", _this->rdsDecode.getRadioText().c_str());
+                sprintf(buf, "RDS: %s", _this->rdsDecode.getRadioText(_this->_rdsIncremental).c_str());
             }
             else {
                 return;
@@ -332,6 +338,7 @@ namespace demod {
         bool _lowPass = true;
         bool _rds = false;
         bool _rdsInfo = false;
+        bool _rdsIncremental = true;
         float muGain = 0.01;
         float omegaGain = (0.01*0.01)/4.0;
 

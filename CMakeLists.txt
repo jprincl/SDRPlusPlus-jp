@@ -28,6 +28,7 @@ option(OPT_BUILD_AIRSPYHF_SOURCE "Build Airspy HF+ Source Module (Dependencies: 
 option(OPT_BUILD_AUDIO_SOURCE "Build Audio Source Module (Dependencies: rtaudio)" ON)
 option(OPT_BUILD_BADGESDR_SOURCE "Build BadgeSDR Source Module (Dependencies: libusb)" OFF)
 option(OPT_BUILD_BLADERF_SOURCE "Build BladeRF Source Module (Dependencies: libbladeRF)" OFF)
+option(OPT_BUILD_DRAGONLABS_SOURCE "Build Dragon Labs Source Module (Dependencies: libdlcr)" OFF)
 option(OPT_BUILD_FILE_SOURCE "Wav file source" ON)
 option(OPT_BUILD_FOBOSSDR_SOURCE "Build FobosSDR Source Module (Dependencies: libfobos)" OFF)
 option(OPT_BUILD_HACKRF_SOURCE "Build HackRF Source Module (Dependencies: libhackrf)" ON)
@@ -211,6 +212,7 @@ sdrpp_add_optional_modules(
     AUDIO_SOURCE:source_modules/audio_source
     BADGESDR_SOURCE:source_modules/badgesdr_source
     BLADERF_SOURCE:source_modules/bladerf_source
+    DRAGONLABS_SOURCE:source_modules/dragonlabs_source
     FILE_SOURCE:source_modules/file_source
     FOBOSSDR_SOURCE:source_modules/fobossdr_source
     HACKRF_SOURCE:source_modules/hackrf_source

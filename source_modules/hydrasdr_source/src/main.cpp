@@ -56,6 +56,8 @@ public:
 
         // Default ports (will be updated dynamically when device is selected)
         ports.define("rx0", "RX0", HYDRASDR_RF_PORT_RX0);
+        ports.define("rx1", "RX1", HYDRASDR_RF_PORT_RX1);
+        ports.define("rx2", "RX2", HYDRASDR_RF_PORT_RX2);
 
         // Populate DDC algorithms list
         refreshAlgorithms();

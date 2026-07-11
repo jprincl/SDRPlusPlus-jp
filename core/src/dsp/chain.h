@@ -163,10 +163,10 @@ namespace dsp {
 
     private:
         Processor<T, T>* blockBefore(Processor<T, T>* block) {
-            Processor<T, T>* last = NULL;
+            Processor<T, T>* prev = NULL;
             for (auto& ln : links) {
-                if (ln == block) { return last; }
-                if (states[ln]) { last = ln; }
+                if (ln == block) { return prev; }
+                if (states[ln]) { prev = ln; }
             }
             return NULL;
         }
