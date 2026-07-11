@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.2.2-beta2 - 2026-07-11
+
+### Breaking change
+- Due to the change in network protocol (authentization, source tuning range synchronization) the SDR++-iak network protocol is no more compatible with the upstream SDR++. SDR++-iak therefore rejects connection to non-iak SDR++ forks.
+
+### Added
+
+- Dragon Labs source module, merged from upstream SDR++: CR8-1725 device discovery/selection through `libdlcr`, 12.5 MS/s input, internal/external clock selection, channel selection, and LNA/mixer/VGA gain controls.
+- Radio squelch mode system from upstream SDR++: `Power`, `CTCSS (Mute)` and `CTCSS (Decode Only)` modes, a full CTCSS tone table with `Any`, received-tone diagnostics, and radio-module interface commands for squelch mode/level, CTCSS tone and high-pass control.
+- Recorder filename timestamps can now be generated in either local time or UTC.
+- SDR++ server password authentication: protocol hello/fork compatibility checks, PBKDF2/HMAC challenge-response ported from SDRPlusPlusBrown by @sannysanoff, per-server saved auth keys, explicit server-busy/auth-failed dialogs, and a "Forget saved password" control.
+- Shared RX prebuffer implementation for networked sources. The SDR++ server source now exposes Disabled/50/100/250/500/1000 ms RX prebuffer choices, with Disabled acting as a true live bypass instead of a zero-length buffering path.
+- Android release CI now builds a signed universal Play Store `.aab` and splits the universal APK into the published arm and x86 APK artifacts.
+
+### Changed
+
+- Merged the current upstream SDR++ master into this fork, preserving the fork-specific modules and dependency/build-system work while bringing in upstream radio, recorder, rigctl, Dragon Labs, RDS and CI fixes.
+- Source tuning limits are now managed by `SourceManager`, are aware of the tuning offset used for up/downconverters, and are forwarded through the SDR++ server protocol to remote clients.
+- The main frequency selector is now constrained to the valid source range for Airspy (24 MHz-1.75 GHz), Airspy HF+ (0-260 MHz), RTL-SDR (100 kHz-1.75 GHz), QMX/QMX server (100 kHz-60 MHz), KiwiSDR served ranges, and remote SDR++ server sources.
+- KiwiSDR tuning limits now follow the selected directory entry's served band and refine to the exact server-reported `freq_offset + bandwidth` range while connected.
+- WFM RDS can now disable incremental PS/radio-text updates, showing only complete updated strings when that option is off.
+- `SmGui` gained separator and formatted-text helpers with bounded buffers.
+- Linux CI now includes Ubuntu Resolute builds.
+
+### Fixed
+
+- SDR++ server client/session handling was hardened: per-session buffers prevent displaced clients from corrupting a new connection, handshakes must complete before a client can take over the live slot, heartbeats reclaim orphaned sessions, failed authentication is rejected immediately, and malformed packets, command payloads and decompressed baseband sizes are validated before use.
+- SDR++ server remote state synchronization now applies pushed sample-rate and tuning-limit changes on the GUI thread and re-applies them when reselecting the source.
+- SDR++ server and KiwiSDR live prebuffer switching now cleanly swaps between buffered and live paths without leaving stale buffering state behind.
+- Rigctl server `get_mode` responses now include the selected VFO bandwidth when available.
+- WFM RDS continuation/stale-text handling fixes from upstream were merged.
+- HydraSDR source/build compatibility fixes for newer `libhydrasdr` and Windows builds were merged from upstream.
+
 ## v1.2.2-beta1 - 2026-07-07
 
 ### Added
