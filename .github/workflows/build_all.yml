@@ -211,17 +211,19 @@ jobs:
                       volk_package: libvolk-dev
                       extra_apt: ''
                       curl_source: system
+                    # Sid's tpm-udev can otherwise pull full systemd, whose
+                    # systemd-tpm dependency creates a dpkg configure cycle.
                     - base_image: debian:sid
                       runner: ubuntu-latest
                       artifact: debian-sid-amd64
                       volk_package: libvolk-dev
-                      extra_apt: ca-certificates
+                      extra_apt: ca-certificates systemd-standalone-sysusers
                       curl_source: system
                     - base_image: debian:sid
                       runner: ubuntu-24.04-arm
                       artifact: debian-sid-aarch64
                       volk_package: libvolk-dev
-                      extra_apt: ca-certificates
+                      extra_apt: ca-certificates systemd-standalone-sysusers
                       curl_source: system
                     - base_image: ubuntu:focal
                       runner: ubuntu-latest
