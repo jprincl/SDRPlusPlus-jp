@@ -27,6 +27,8 @@
 #include <chrono>
 #include <ctime>
 #include <cstring>
+#include <cctype>
+#include <vector>
 #include <fstream>
 #include <atomic>
 #include <mutex>
@@ -78,6 +80,19 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
     std::string root;
     KiwiSDRMapSelector selector;
 
+    static constexpr size_t RECENT_MAX = 8;
+
+    // One remembered server in the most-recently-used list shown by the
+    // "Recent..." combo. loc/band come from the directory entry when the
+    // server was picked on the map; both may be empty for typed hosts.
+    struct RecentServer {
+        std::string host;
+        int port = 8073;
+        std::string loc;
+        std::optional<ServerEntry::FrequencyBand> band;
+    };
+    std::vector<RecentServer> recentServers; // front = most recent
+
     std::string kiwisdrHostPort() const {
         return std::string(kiwisdrHost) + ":" + std::to_string(kiwisdrPort);
     }
@@ -117,6 +132,9 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         }
         if (config.conf.contains("kiwisdr_buffer_ms")) {
             bufferMs = std::clamp<int>(config.conf["kiwisdr_buffer_ms"], BUFFER_MS_MIN, BUFFER_MS_MAX);
+        }
+        if (config.conf.contains("kiwisdr_recent")) {
+            loadRecent(config.conf["kiwisdr_recent"]);
         }
         config.release(false);
 
@@ -204,19 +222,125 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         appliedServedRange.reset();
     }
 
-    // Apply a hand-typed host/port (from the text boxes on commit). Unlike a
-    // map pick, a typed server has no directory entry, so drop any cached
-    // location/band, fall back to the default tuning range, and reconnect.
-    void applyTypedServer() {
-        kiwisdrLoc.clear();
-        selectedBand.reset();
+    static bool sameHostPort(const RecentServer& r, const std::string& host, int port) {
+        if (r.port != port || r.host.size() != host.size()) { return false; }
+        return std::equal(r.host.begin(), r.host.end(), host.begin(), [](char a, char b) {
+            return std::tolower((unsigned char)a) == std::tolower((unsigned char)b);
+        });
+    }
+
+    const RecentServer* findRecent(const std::string& host, int port) const {
+        for (const auto& r : recentServers) {
+            if (sameHostPort(r, host, port)) { return &r; }
+        }
+        return nullptr;
+    }
+
+    // Move (or insert) the entry to the front of the MRU list. Does not
+    // persist; callers fold recentToJson() into their own config write.
+    void touchRecent(RecentServer entry) {
+        recentServers.erase(std::remove_if(recentServers.begin(), recentServers.end(),
+                                           [&](const RecentServer& r) { return sameHostPort(r, entry.host, entry.port); }),
+                            recentServers.end());
+        recentServers.insert(recentServers.begin(), std::move(entry));
+        if (recentServers.size() > RECENT_MAX) { recentServers.resize(RECENT_MAX); }
+    }
+
+    json recentToJson() const {
+        json arr = json::array();
+        for (const auto& r : recentServers) {
+            json j;
+            j["host"] = r.host;
+            j["port"] = r.port;
+            j["loc"] = r.loc;
+            if (r.band) {
+                j["band_start"] = r.band->startHz;
+                j["band_end"] = r.band->endHz;
+            }
+            arr.push_back(j);
+        }
+        return arr;
+    }
+
+    // Defensive parse of the persisted MRU list: a malformed entry is
+    // skipped, never fatal (the config file is hand-editable).
+    void loadRecent(const json& arr) {
+        recentServers.clear();
+        if (!arr.is_array()) { return; }
+        for (const auto& j : arr) {
+            if (!j.is_object() || !j.contains("host") || !j["host"].is_string()) { continue; }
+            RecentServer r;
+            r.host = j["host"];
+            r.port = j.value("port", 8073);
+            r.loc = j.value("loc", std::string());
+            if (j.contains("band_start") && j.contains("band_end")) {
+                ServerEntry::FrequencyBand b;
+                b.startHz = j["band_start"];
+                b.endHz = j["band_end"];
+                if (b.startHz <= b.endHz) { r.band = b; }
+            }
+            if (r.host.empty() || findRecent(r.host, r.port)) { continue; }
+            recentServers.push_back(std::move(r));
+            if (recentServers.size() >= RECENT_MAX) { break; }
+        }
+    }
+
+    // Single commit path for every way of choosing a server (map pick,
+    // typed host/port, recent-list pick): update the widgets' state, touch
+    // the MRU list, persist everything in one config write, re-derive the
+    // tuning limits and re-point the client.
+    void commitServer(const std::string& host, int port, const std::string& loc,
+                      const std::optional<ServerEntry::FrequencyBand>& band) {
+        std::strncpy(kiwisdrHost, host.c_str(), sizeof(kiwisdrHost) - 1);
+        kiwisdrHost[sizeof(kiwisdrHost) - 1] = '\0';
+        kiwisdrPort = port;
+        kiwisdrLoc = loc;
+        selectedBand = band;
+        touchRecent(RecentServer{ host, port, loc, band });
         config.acquire();
-        config.conf["kiwisdr_loc"] = kiwisdrLoc;
-        config.conf.erase("kiwisdr_band_start");
-        config.conf.erase("kiwisdr_band_end");
+        config.conf["kiwisdr_host"] = host;
+        config.conf["kiwisdr_port"] = port;
+        config.conf["kiwisdr_loc"] = loc;
+        if (band) {
+            config.conf["kiwisdr_band_start"] = band->startHz;
+            config.conf["kiwisdr_band_end"] = band->endHz;
+        }
+        else {
+            config.conf.erase("kiwisdr_band_start");
+            config.conf.erase("kiwisdr_band_end");
+        }
+        config.conf["kiwisdr_recent"] = recentToJson();
         config.release(true);
         applyFreqLimits();
         kiwiSdrClient.init(kiwisdrHostPort());
+    }
+
+    // Apply a hand-typed host/port (from the text boxes on commit). A typed
+    // server has no directory entry, but if it matches a remembered recent
+    // server, re-adopt that entry's location/band; otherwise fall back to
+    // the default tuning range.
+    void applyTypedServer() {
+        std::string loc;
+        std::optional<ServerEntry::FrequencyBand> band;
+        if (const RecentServer* r = findRecent(kiwisdrHost, kiwisdrPort)) {
+            loc = r->loc;
+            band = r->band;
+        }
+        commitServer(kiwisdrHost, kiwisdrPort, loc, band);
+    }
+
+    void applyRecent(int idx) {
+        if (idx < 0 || idx >= (int)recentServers.size()) { return; }
+        RecentServer r = recentServers[idx]; // copy: commitServer reorders the list
+        commitServer(r.host, r.port, r.loc, r.band);
+    }
+
+    void removeRecent(int idx) {
+        if (idx < 0 || idx >= (int)recentServers.size()) { return; }
+        recentServers.erase(recentServers.begin() + idx);
+        config.acquire();
+        config.conf["kiwisdr_recent"] = recentToJson();
+        config.release(true);
     }
 
     static void menuSelected(void* ctx) {
@@ -337,28 +461,10 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             auto parsed = url::splitHostPort(hostPort);
             std::string host = parsed ? parsed->host : hostPort;
             int port = parsed ? parsed->port : 8073;
-            std::strncpy(_this->kiwisdrHost, host.c_str(), sizeof(_this->kiwisdrHost) - 1);
-            _this->kiwisdrHost[sizeof(_this->kiwisdrHost) - 1] = '\0';
-            _this->kiwisdrPort = port;
-            _this->kiwisdrLoc = loc;
-            _this->selectedBand = band;
-            config.acquire();
-            config.conf["kiwisdr_host"] = host;
-            config.conf["kiwisdr_port"] = port;
-            config.conf["kiwisdr_loc"] = _this->kiwisdrLoc;
-            if (band) {
-                config.conf["kiwisdr_band_start"] = band->startHz;
-                config.conf["kiwisdr_band_end"] = band->endHz;
-            }
-            else {
-                config.conf.erase("kiwisdr_band_start");
-                config.conf.erase("kiwisdr_band_end");
-            }
-            config.release(true);
             // The KiwiSDR source is the active source while this popup is
-            // open, so retune the digit limits to the newly chosen server.
-            _this->applyFreqLimits();
-            _this->kiwiSdrClient.init(_this->kiwisdrHostPort());
+            // open, so commitServer's applyFreqLimits() retunes the digit
+            // limits to the newly chosen server.
+            _this->commitServer(host, port, loc, band);
         });
 
         ImGui::BeginDisabled(playing);
@@ -381,6 +487,48 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
             _this->applyTypedServer();
         }
         ImGui::EndDisabled();
+
+        // Recent servers, MRU first. Plain ImGui is fine here: this source
+        // is never registered on a headless server (see constructor).
+        if (!_this->recentServers.empty()) {
+            ImGui::BeginDisabled(playing);
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo(("##_kiwisdr_recent_" + _this->name).c_str(), "Recent...")) {
+                int pick = -1, remove = -1;
+                const float btn = ImGui::GetFrameHeight();
+                const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+                // Center the label vertically in the button-height row.
+                ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
+                for (int i = 0; i < (int)_this->recentServers.size(); i++) {
+                    const auto& r = _this->recentServers[i];
+                    ImGui::PushID(i);
+                    const std::string label = r.loc.empty()
+                        ? r.host + ":" + std::to_string(r.port) : r.loc;
+                    // Row = pick target sized to leave a square for the
+                    // delete button; the two never overlap, so a tap can't
+                    // mis-fire.
+                    const float pickWidth = ImGui::GetContentRegionAvail().x - btn - spacing;
+                    if (ImGui::Selectable(label.c_str(), false, 0, ImVec2(pickWidth, btn))) {
+                        pick = i;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s:%d%s%s", r.host.c_str(), r.port,
+                                          r.loc.empty() ? "" : "\n", r.loc.c_str());
+                    }
+                    ImGui::SameLine(0.0f, spacing);
+                    // Button, not Selectable: buttons don't close the combo
+                    // popup, so several entries can be pruned in one visit.
+                    if (ImGui::Button("x", ImVec2(btn, btn))) { remove = i; }
+                    ImGui::PopID();
+                }
+                ImGui::PopStyleVar();
+                ImGui::EndCombo();
+                // Defer both actions out of the loop; they mutate recentServers.
+                if (pick >= 0)        { _this->applyRecent(pick); }
+                else if (remove >= 0) { _this->removeRecent(remove); }
+            }
+            ImGui::EndDisabled();
+        }
 
         if (!_this->kiwisdrLoc.empty())
             SmGui::TextF("Loc: %s", _this->kiwisdrLoc.c_str());
