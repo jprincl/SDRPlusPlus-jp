@@ -1,0 +1,233 @@
+From 1ea65e3306fda93b8b3a56bf7e933c7f7c171806 Mon Sep 17 00:00:00 2001
+From: Vojtech Bubnik <bubnikv@gmail.com>
+Date: Sun, 12 Jul 2026 19:26:39 +0200
+Subject: [PATCH] Fix use-after-free in airspyhf_close() when cancelled
+ transfers are never reaped
+
+airspyhf_close() frees the bulk transfers unconditionally, but
+cancel_transfers() only waits transfer_count iterations of 50 us for
+the cancellations to complete, and the transfer_live counter it polls
+is updated from two threads without synchronization. If any transfer
+is still owned by the kernel when free_transfers() runs,
+libusb_free_transfer() is called on a transfer that is still linked
+into libusb's flying-transfers list, and the subsequent libusb_close()
+walks that list of freed nodes: use-after-free, typically a SIGSEGV
+inside libusb_close().
+
+This is easy to reproduce on Android: when the USB device is unplugged
+while streaming, the application side closes the file descriptor
+backing the handle obtained via libusb_wrap_sys_device(), the
+DISCARDURB ioctls issued by libusb_cancel_transfer() fail with EBADF,
+and the pending cancellations are never reaped, so every
+airspyhf_close() after an unplug crashes. On other platforms the short
+drain window makes the crash rare but possible on a loaded system.
+
+Changes:
+
+- Add a mutex guarding transfer_live and make the accounting exact:
+  decremented exactly once per completion callback, incremented before
+  resubmission and rolled back if the resubmit fails.
+- Gate resubmission on a transfers_cancelling flag set under the same
+  mutex before cancelling, so a completion racing with
+  cancel_transfers() cannot resubmit past the cancellation.
+- Drain with a real deadline (500 ms in 10 ms slices) instead of
+  transfer_count * 50 us, and stop early when event handling reports
+  an unrecoverable error. 500 ms is far above any healthy reap time
+  and covers a full poll cycle of the transfer thread, while keeping
+  the worst-case stall of a blocking stop() caller bounded.
+- If transfers are still un-reaped when the deadline expires, latch
+  transfers_stuck and deliberately leak the transfers, the device
+  handle and the libusb context instead of freeing memory libusb still
+  references; prepare_transfers() refuses to reuse a device in that
+  state. A bounded leak on an already-dead device is preferable to
+  freeing buffers the kernel may still DMA into and crashing in
+  libusb_close().
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ libairspyhf/src/airspyhf.c | 93 +++++++++++++++++++++++++++++++++++---
+ 1 file changed, 87 insertions(+), 6 deletions(-)
+
+diff --git a/libairspyhf/src/airspyhf.c b/libairspyhf/src/airspyhf.c
+index a4400f6..5afdac0 100644
+--- a/libairspyhf/src/airspyhf.c
++++ b/libairspyhf/src/airspyhf.c
+@@ -120,7 +120,12 @@ typedef struct airspyhf_device
+ 	airspyhf_complex_float_t vec;
+ 	struct iq_balancer_t *iq_balancer;
+ 	uint32_t transfer_count;
++	/* Exact count of transfers owned by the kernel; guarded by transfer_lock,
++	   as are transfers_cancelling and transfers_stuck. */
+ 	int32_t transfer_live;
++	pthread_mutex_t transfer_lock;
++	int transfers_cancelling;
++	int transfers_stuck;
+ 	uint32_t buffer_size;
+ 	uint32_t dropped_buffers;
+ 	uint32_t dropped_buffers_queue[RAW_BUFFER_COUNT];
+@@ -150,20 +155,53 @@ static int airspyhf_config_read(airspyhf_device_t* device, uint8_t *buffer, uint
+ static int cancel_transfers(airspyhf_device_t* device)
+ {
+ 	uint32_t transfer_index;
+-	struct timeval canceltv = { 0, 50 };
++	struct timeval canceltv = { 0, 10000 };
+ 
+ 	if (device->transfers != NULL)
+ 	{
+-		for (transfer_index = 0; transfer_index<device->transfer_count; transfer_index++)
++		pthread_mutex_lock(&device->transfer_lock);
++		device->transfers_cancelling = 1;
++		for (transfer_index = 0; transfer_index < device->transfer_count; transfer_index++)
+ 		{
+ 			if (device->transfers[transfer_index] != NULL)
+ 			{
+ 				libusb_cancel_transfer(device->transfers[transfer_index]);
+ 			}
+ 		}
++		pthread_mutex_unlock(&device->transfer_lock);
+ 
+-		for (transfer_index = 0; transfer_index < device->transfer_count && device->transfer_live > 0; transfer_index++)
+-			libusb_handle_events_timeout_completed(device->usb_context, &canceltv, NULL);
++		{
++			int drain_slice;
++			int live;
++			int rc;
++
++			for (drain_slice = 0; drain_slice < 50; drain_slice++)
++			{
++				pthread_mutex_lock(&device->transfer_lock);
++				live = device->transfer_live;
++				pthread_mutex_unlock(&device->transfer_lock);
++				if (live <= 0)
++				{
++					break;
++				}
++				rc = libusb_handle_events_timeout_completed(device->usb_context, &canceltv, NULL);
++				if (rc < 0 && rc != LIBUSB_ERROR_INTERRUPTED)
++				{
++					/* No events can be processed anymore (e.g. the fd was
++					   closed externally); the pending cancellations will
++					   never be reaped. */
++					break;
++				}
++			}
++			pthread_mutex_lock(&device->transfer_lock);
++			live = device->transfer_live;
++			device->transfers_stuck = (live > 0);
++			pthread_mutex_unlock(&device->transfer_lock);
++			if (live > 0)
++			{
++				return AIRSPYHF_ERROR;
++			}
++		}
+ 
+ 		return AIRSPYHF_SUCCESS;
+ 	}
+@@ -176,8 +214,27 @@ static int cancel_transfers(airspyhf_device_t* device)
+ static int free_transfers(airspyhf_device_t* device)
+ {
+ 	int i;
++	int stuck;
+ 	uint32_t transfer_index;
+ 
++	pthread_mutex_lock(&device->transfer_lock);
++	if (device->transfers_stuck && device->transfer_live <= 0)
++	{
++		device->transfers_stuck = 0;
++	}
++	stuck = device->transfers_stuck;
++	pthread_mutex_unlock(&device->transfer_lock);
++	if (stuck)
++	{
++		device->transfers = NULL;
++		device->output_buffer = NULL;
++		for (i = 0; i < RAW_BUFFER_COUNT; i++)
++		{
++			device->received_samples_queue[i] = NULL;
++		}
++		return AIRSPYHF_ERROR;
++	}
++
+ 	if (device->transfers != NULL)
+ 	{
+ 		free(device->output_buffer);
+@@ -268,8 +325,15 @@ static int allocate_transfers(airspyhf_device_t* const device)
+ static int prepare_transfers(airspyhf_device_t* device, const uint_fast8_t endpoint_address, libusb_transfer_cb_fn callback)
+ {
+ 	int error;
++	/* Stuck transfers are still owned by the kernel: never resubmit them. */
+ 	uint32_t transfer_index;
+ 
++	if (device->transfers_stuck)
++	{
++		return AIRSPYHF_ERROR;
++	}
++	device->transfers_cancelling = 0;
++
+ 	if (device->transfers != NULL)
+ 	{
+ 		for (transfer_index = 0; transfer_index<device->transfer_count; transfer_index++)
+@@ -424,7 +488,9 @@ static void LIBUSB_CALL airspyhf_libusb_transfer_callback(struct libusb_transfer
+ 	airspyhf_complex_int16_t *temp;
+ 	airspyhf_device_t* device = (airspyhf_device_t*) usb_transfer->user_data;
+ 	
++	pthread_mutex_lock(&device->transfer_lock);
+ 	device->transfer_live--;
++	pthread_mutex_unlock(&device->transfer_lock);
+ 	if (!device->streaming || device->stop_requested)
+ 	{
+ 		return;
+@@ -455,12 +521,19 @@ static void LIBUSB_CALL airspyhf_libusb_transfer_callback(struct libusb_transfer
+ 
+ 		pthread_mutex_unlock(&device->consumer_mp);
+ 
++		pthread_mutex_lock(&device->transfer_lock);
++		if (device->transfers_cancelling)
++		{
++			pthread_mutex_unlock(&device->transfer_lock);
++			return;
++		}
++		device->transfer_live++;
+ 		if (libusb_submit_transfer(usb_transfer) != 0)
+ 		{
++			device->transfer_live--;
+ 			device->streaming = false;
+ 		}
+-		else
+-			device->transfer_live ++;
++		pthread_mutex_unlock(&device->transfer_lock);
+ 	}
+ 	else
+ 	{
+@@ -572,6 +645,12 @@ static int create_io_threads(airspyhf_device_t* device, airspyhf_sample_block_cb
+ 
+ static void airspyhf_open_exit(airspyhf_device_t* device)
+ {
++	if (device->transfers_stuck)
++	{
++		device->usb_device = NULL;
++		device->usb_context = NULL;
++		return;
++	}
+ 	if (device->usb_device != NULL)
+ 	{
+ 		libusb_release_interface(device->usb_device, 0);
+@@ -1064,6 +1143,7 @@ static int airspyhf_open_init(airspyhf_device_t** device, uint64_t serial_number
+ 	}
+ 
+ 	pthread_cond_init(&lib_device->consumer_cv, NULL);
++	pthread_mutex_init(&lib_device->transfer_lock, NULL);
+ 	pthread_mutex_init(&lib_device->consumer_mp, NULL);
+ 
+ 	lib_device->freq_hz = 0;
+@@ -1154,6 +1234,7 @@ int ADDCALL airspyhf_close(airspyhf_device_t* device)
+ 		iq_balancer_destroy(device->iq_balancer);
+ 
+ 		pthread_cond_destroy(&device->consumer_cv);
++		pthread_mutex_destroy(&device->transfer_lock);
+ 		pthread_mutex_destroy(&device->consumer_mp);
+ 
+ 		free(device);
+-- 
+2.51.0.windows.2
+

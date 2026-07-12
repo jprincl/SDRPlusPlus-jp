@@ -1,0 +1,257 @@
+From 880f8f837d7cb2a8fc56b71120a81b0acbf81695 Mon Sep 17 00:00:00 2001
+From: Vojtech Bubnik <bubnikv@gmail.com>
+Date: Sun, 12 Jul 2026 19:51:32 +0200
+Subject: [PATCH] Fix use-after-free in airspy_close() when cancelled transfers
+ are never reaped
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+airspy_close() frees the bulk transfers unconditionally, but
+cancel_transfers() only submits the cancellations and returns without
+waiting for them to complete at all — there is no accounting of
+in-flight transfers whatsoever. If any transfer is still owned by the
+kernel when free_transfers() runs, libusb_free_transfer() is called on
+a transfer that is still linked into libusb's flying-transfers list,
+and the subsequent libusb_close() walks that list of freed nodes:
+use-after-free, typically a SIGSEGV inside libusb_close(). The same
+applies to the transfer reallocation in airspy_set_packing() after a
+stop whose cancellations were not yet reaped.
+
+This is easy to reproduce on Android: when the USB device is unplugged
+while streaming, the application side closes the file descriptor
+backing the handle obtained via libusb_wrap_sys_device(), the
+DISCARDURB ioctls issued by libusb_cancel_transfer() fail with EBADF,
+and the pending cancellations are never reaped, so every
+airspy_close() after an unplug crashes. On other platforms the
+complete absence of a drain makes the crash a matter of scheduling
+luck on every stop.
+
+Changes:
+
+- Add a transfer_live counter guarded by a dedicated mutex:
+  incremented before each submission (rolled back if the submit
+  fails), decremented exactly once per completion callback.
+- Gate resubmission on a transfers_cancelling flag set under the same
+  mutex before cancelling, so a completion racing with
+  cancel_transfers() cannot resubmit past the cancellation.
+- Drain in cancel_transfers() with a real deadline (500 ms in 10 ms
+  slices), stopping early when event handling reports an unrecoverable
+  error. 500 ms is far above any healthy reap time and covers a full
+  poll cycle of the transfer thread, while keeping the worst-case
+  stall of a blocking stop() caller bounded.
+- If transfers are still un-reaped when the deadline expires, latch
+  transfers_stuck and deliberately leak the transfers, the device
+  handle and the libusb context instead of freeing memory libusb still
+  references; prepare_transfers() refuses to reuse a device in that
+  state. A bounded leak on an already-dead device is preferable to
+  freeing buffers the kernel may still DMA into and crashing in
+  libusb_close().
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ libairspy/src/airspy.c | 113 ++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 112 insertions(+), 1 deletion(-)
+
+diff --git a/libairspy/src/airspy.c b/libairspy/src/airspy.c
+index a2caf38..985105f 100644
+--- a/libairspy/src/airspy.c
++++ b/libairspy/src/airspy.c
+@@ -93,6 +93,12 @@ typedef struct airspy_device
+ 	uint32_t supported_samplerate_count;
+ 	uint32_t *supported_samplerates;
+ 	uint32_t transfer_count;
++	/* Exact count of transfers owned by the kernel; guarded by transfer_lock,
++	   as are transfers_cancelling and transfers_stuck. */
++	int32_t transfer_live;
++	pthread_mutex_t transfer_lock;
++	int transfers_cancelling;
++	int transfers_stuck;
+ 	uint32_t buffer_size;
+ 	uint32_t dropped_buffers;
+ 	uint32_t dropped_buffers_queue[RAW_BUFFER_COUNT];
+@@ -131,13 +137,55 @@ static int cancel_transfers(airspy_device_t* device)
+ 
+ 	if (device->transfers != NULL)
+ 	{
+-		for (transfer_index = 0; transfer_index<device->transfer_count; transfer_index++)
++		pthread_mutex_lock(&device->transfer_lock);
++		device->transfers_cancelling = 1;
++		for (transfer_index = 0; transfer_index < device->transfer_count; transfer_index++)
+ 		{
+ 			if (device->transfers[transfer_index] != NULL)
+ 			{
+ 				libusb_cancel_transfer(device->transfers[transfer_index]);
+ 			}
+ 		}
++		pthread_mutex_unlock(&device->transfer_lock);
++
++		/* Drain: pump events until every cancelled transfer has been reaped.
++		   500 ms deadline in 10 ms slices; if it expires (e.g. the fd was
++		   closed under libusb and the DISCARDURB ioctls failed), latch
++		   transfers_stuck so the teardown leaks the transfers instead of
++		   freeing memory libusb still references. */
++		{
++			struct timeval canceltv = { 0, 10000 };
++			int drain_slice;
++			int live;
++			int rc;
++
++			for (drain_slice = 0; drain_slice < 50; drain_slice++)
++			{
++				pthread_mutex_lock(&device->transfer_lock);
++				live = device->transfer_live;
++				pthread_mutex_unlock(&device->transfer_lock);
++				if (live <= 0)
++				{
++					break;
++				}
++				rc = libusb_handle_events_timeout_completed(device->usb_context, &canceltv, NULL);
++				if (rc < 0 && rc != LIBUSB_ERROR_INTERRUPTED)
++				{
++					/* No events can be processed anymore; the pending
++					   cancellations will never be reaped. */
++					break;
++				}
++			}
++			pthread_mutex_lock(&device->transfer_lock);
++			live = device->transfer_live;
++			device->transfers_stuck = (live > 0);
++			pthread_mutex_unlock(&device->transfer_lock);
++			if (live > 0)
++			{
++				return AIRSPY_ERROR_OTHER;
++			}
++		}
++
+ 		return AIRSPY_SUCCESS;
+ 	}
+ 	else {
+@@ -148,8 +196,33 @@ static int cancel_transfers(airspy_device_t* device)
+ static int free_transfers(airspy_device_t* device)
+ {
+ 	int i;
++	int stuck;
+ 	uint32_t transfer_index;
+ 
++	/* Stuck transfers are still referenced by the kernel and by libusb's
++	   flying-transfers list; freeing them here would be a use-after-free in
++	   libusb_close(). Leak them instead. Stragglers may have been reaped
++	   between the drain deadline and this point, so re-check the counter
++	   before committing to the leak. */
++	pthread_mutex_lock(&device->transfer_lock);
++	if (device->transfers_stuck && device->transfer_live <= 0)
++	{
++		device->transfers_stuck = 0;
++	}
++	stuck = device->transfers_stuck;
++	pthread_mutex_unlock(&device->transfer_lock);
++	if (stuck)
++	{
++		device->transfers = NULL;
++		device->output_buffer = NULL;
++		device->unpacked_samples = NULL;
++		for (i = 0; i < RAW_BUFFER_COUNT; i++)
++		{
++			device->received_samples_queue[i] = NULL;
++		}
++		return AIRSPY_ERROR_OTHER;
++	}
++
+ 	if (device->transfers != NULL)
+ 	{
+ 		// libusb_close() should free all transfers referenced from this array.
+@@ -275,6 +348,16 @@ static int prepare_transfers(airspy_device_t* device, const uint_fast8_t endpoin
+ {
+ 	int error;
+ 	uint32_t transfer_index;
++
++	if (device->transfers_stuck)
++	{
++		/* The transfers are still owned by the kernel: never resubmit them. */
++		return AIRSPY_ERROR_OTHER;
++	}
++	/* No events are pumped between here and thread creation, so the plain
++	   stores are safe. */
++	device->transfers_cancelling = 0;
++
+ 	if (device->transfers != NULL)
+ 	{
+ 		for (transfer_index = 0; transfer_index<device->transfer_count; transfer_index++)
+@@ -287,6 +370,7 @@ static int prepare_transfers(airspy_device_t* device, const uint_fast8_t endpoin
+ 			{
+ 				return AIRSPY_ERROR_LIBUSB;
+ 			}
++			device->transfer_live++;
+ 		}
+ 		return AIRSPY_SUCCESS;
+ 	}
+@@ -449,6 +533,11 @@ static void airspy_libusb_transfer_callback(struct libusb_transfer* usb_transfer
+ 	uint16_t *temp;
+ 	airspy_device_t* device = (airspy_device_t*)usb_transfer->user_data;
+ 
++	/* Every submitted transfer gets exactly one completion callback
++	   (completed, cancelled or errored). */
++	pthread_mutex_lock(&device->transfer_lock);
++	device->transfer_live--;
++	pthread_mutex_unlock(&device->transfer_lock);
+ 	if (!device->streaming || device->stop_requested)
+ 	{
+ 		return;
+@@ -479,10 +568,19 @@ static void airspy_libusb_transfer_callback(struct libusb_transfer* usb_transfer
+ 
+ 		pthread_mutex_unlock(&device->consumer_mp);
+ 
++		pthread_mutex_lock(&device->transfer_lock);
++		if (device->transfers_cancelling)
++		{
++			pthread_mutex_unlock(&device->transfer_lock);
++			return;
++		}
++		device->transfer_live++;
+ 		if (libusb_submit_transfer(usb_transfer) != 0)
+ 		{
++			device->transfer_live--;
+ 			device->streaming = false;
+ 		}
++		pthread_mutex_unlock(&device->transfer_lock);
+ 	}
+ 	else
+ 	{
+@@ -594,6 +692,16 @@ static int create_io_threads(airspy_device_t* device, airspy_sample_block_cb_fn
+ 
+ static void airspy_open_exit(airspy_device_t* device)
+ {
++	if (device->transfers_stuck)
++	{
++		/* libusb_close() walks the flying-transfers list, which still
++		   references the stuck transfers; leak the handle and the context
++		   instead. Nothing pumps events on the leaked context, so the leaked
++		   transfers' callbacks can never fire. */
++		device->usb_device = NULL;
++		device->usb_context = NULL;
++		return;
++	}
+ 	if (device->usb_device != NULL)
+ 	{
+ 		libusb_release_interface(device->usb_device, 0);
+@@ -920,6 +1028,7 @@ static int airspy_open_init(airspy_device_t** device, uint64_t serial_number, in
+ 	lib_device->cnv_i = iqconverter_int16_create(HB_KERNEL_INT16, HB_KERNEL_INT16_LEN);
+ 
+ 	pthread_cond_init(&lib_device->consumer_cv, NULL);
++	pthread_mutex_init(&lib_device->transfer_lock, NULL);
+ 	pthread_mutex_init(&lib_device->consumer_mp, NULL);
+ 
+ 	*device = lib_device;
+@@ -1080,6 +1189,8 @@ int airspy_list_devices(uint64_t *serials, int count)
+ 			pthread_mutex_destroy(&device->consumer_mp);
+ 
+ 			free_transfers(device);
++			/* transfer_lock is used by free_transfers(); destroy it after. */
++			pthread_mutex_destroy(&device->transfer_lock);
+ 			airspy_open_exit(device);
+ 			free(device->supported_samplerates);
+ 			free(device);
+-- 
+2.51.0.windows.2
+

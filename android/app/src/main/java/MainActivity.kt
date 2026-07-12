@@ -82,7 +82,7 @@ private val usbReceiver = object : BroadcastReceiver() {
                     activity.SDR_FD = -1
                 }
                 if (device != null) {
-                    activity.releaseRetainedUsbConnection(device.deviceName)
+                    activity.detachRetainedUsbConnection(device.deviceName)
                     activity.notifyUsbHotplugChanged()
                 }
             }
@@ -293,10 +293,20 @@ class MainActivity : NativeActivity() {
             }
         }
 
-        private fun closeRetainedUsbConnection(deviceName: String) {
+        private fun detachRetainedUsbConnection(deviceName: String) {
             synchronized(openUsbConnections) {
-                val fd = openUsbDeviceNames.remove(deviceName) ?: return
-                openUsbConnections.remove(fd)?.close()
+                // Do NOT close the UsbDeviceConnection here: native code may
+                // still stream on this fd through libusb_wrap_sys_device().
+                // Closing the fd under libusb makes the DISCARDURB ioctls fail
+                // with EBADF, so the cancelled transfers are never reaped and
+                // the native teardown can only leak them (or, before the
+                // libairspy/libairspyhf patches, crash in libusb_close()).
+                // Kept open, the kernel reaps the URBs with NO_DEVICE and the
+                // teardown completes cleanly; the connection is closed when
+                // the native UsbDeviceLease releases it via
+                // releaseOpenUsbDeviceHandle(). Only drop the name mapping so
+                // a replugged device cannot be handed the dead connection.
+                openUsbDeviceNames.remove(deviceName)
             }
         }
 
@@ -406,8 +416,8 @@ class MainActivity : NativeActivity() {
         }
     }
 
-    fun releaseRetainedUsbConnection(deviceName: String) {
-        Companion.closeRetainedUsbConnection(deviceName)
+    fun detachRetainedUsbConnection(deviceName: String) {
+        Companion.detachRetainedUsbConnection(deviceName)
     }
 
     private external fun notifyUsbHotplugChangedNative()
