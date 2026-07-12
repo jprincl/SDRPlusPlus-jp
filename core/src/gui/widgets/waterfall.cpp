@@ -589,8 +589,10 @@ namespace ImGui {
         double vfoMaxFreq = _vfo->centerOffset + (_vfo->bandwidth / 2.0);
         double vfoMaxSizeFreq = _vfo->centerOffset + _vfo->bandwidth;
         int vfoMinSideOffset = std::clamp<int>(((vfoMinSizeFreq / (wholeBandwidth / 2.0)) * (double)(rawFFTSize / 2)) + (rawFFTSize / 2), 0, rawFFTSize);
-        int vfoMinOffset = std::clamp<int>(((vfoMinFreq / (wholeBandwidth / 2.0)) * (double)(rawFFTSize / 2)) + (rawFFTSize / 2), 0, rawFFTSize);
-        int vfoMaxOffset = std::clamp<int>(((vfoMaxFreq / (wholeBandwidth / 2.0)) * (double)(rawFFTSize / 2)) + (rawFFTSize / 2), 0, rawFFTSize);
+        // Clamped to rawFFTSize - 1: both are used as inclusive indices below,
+        // unlike the side offsets which are only exclusive loop bounds.
+        int vfoMinOffset = std::clamp<int>(((vfoMinFreq / (wholeBandwidth / 2.0)) * (double)(rawFFTSize / 2)) + (rawFFTSize / 2), 0, rawFFTSize - 1);
+        int vfoMaxOffset = std::clamp<int>(((vfoMaxFreq / (wholeBandwidth / 2.0)) * (double)(rawFFTSize / 2)) + (rawFFTSize / 2), 0, rawFFTSize - 1);
         int vfoMaxSideOffset = std::clamp<int>(((vfoMaxSizeFreq / (wholeBandwidth / 2.0)) * (double)(rawFFTSize / 2)) + (rawFFTSize / 2), 0, rawFFTSize);
 
         double avg = 0;
@@ -973,24 +975,28 @@ namespace ImGui {
 
             if (infoValid && std::isfinite(newLevel)) {
                 selectedVFOLevel = newLevel;
-                // Start smoothing fresh from the first valid SNR after a gap
-                selectedVFOSNR = (snrSmoothing && std::isfinite(selectedVFOSNR))
-                    ? (snrSmoothingBeta * selectedVFOSNR) + (snrSmoothingAlpha * newSNR)
-                    : newSNR;
 
-                // Peak hold: max level over the last LEVEL_HOLD_FRAMES FFT frames
+                // Rolling window over the last LEVEL_HOLD_FRAMES FFT frames: hold
+                // the peak in-band level, average the out-of-VFO-subband noise
+                // floor over the same window, and report SNR as the held peak
+                // over that averaged noise (dB difference = linear ratio).
+                float newNoise = newLevel - newSNR; // out-of-band average (dB)
                 levelHistory[levelHistoryPos] = newLevel;
+                noiseHistory[levelHistoryPos] = newNoise;
                 levelHistoryPos = (levelHistoryPos + 1) % LEVEL_HOLD_FRAMES;
                 levelHistoryCount = std::min<int>(levelHistoryCount + 1, LEVEL_HOLD_FRAMES);
                 float maxLevel = -INFINITY;
+                float noiseSum = 0.0f;
                 for (int i = 0; i < levelHistoryCount; i++) {
                     maxLevel = std::max<float>(maxLevel, levelHistory[i]);
+                    noiseSum += noiseHistory[i];
                 }
                 selectedVFOLevelMax = maxLevel;
+                selectedVFOSNR = maxLevel - (noiseSum / (float)levelHistoryCount);
             }
             else {
                 // No usable FFT data: blank the meter instead of showing stale
-                // values, and drop the history so peaks don't merge across a gap
+                // values, and drop the history so values don't merge across a gap
                 levelHistoryPos = 0;
                 levelHistoryCount = 0;
                 selectedVFOLevel = -INFINITY;
@@ -1260,15 +1266,6 @@ namespace ImGui {
         std::lock_guard<std::mutex> lck(smoothingBufMtx);
         fftSmoothingAlpha = speed;
         fftSmoothingBeta = 1.0f - speed;
-    }
-
-    void WaterFall::setSNRSmoothing(bool enabled) {
-        snrSmoothing = enabled;
-    }
-
-    void WaterFall::setSNRSmoothingSpeed(float speed) {
-        snrSmoothingAlpha = speed;
-        snrSmoothingBeta = 1.0f - speed;
     }
 
     float* WaterFall::acquireLatestFFT(int& width) {

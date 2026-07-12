@@ -146,9 +146,6 @@ namespace ImGui {
         void setFFTSmoothing(bool enabled);
         void setFFTSmoothingSpeed(float speed);
 
-        void setSNRSmoothing(bool enabled);
-        void setSNRSmoothingSpeed(float speed);
-
         float* acquireLatestFFT(int& width);
         void releaseLatestFFT();
 
@@ -314,12 +311,14 @@ namespace ImGui {
         float fftSmoothingAlpha = 0.5;
         float fftSmoothingBeta = 0.5;
 
-        bool snrSmoothing = false;
-        float snrSmoothingAlpha = 0.5;
-        float snrSmoothingBeta = 0.5;
-
+        // Shared rolling window over the last few FFT frames for the selected
+        // VFO: the peak readout holds the max in-band level, the noise floor is
+        // the out-of-VFO-subband average over the same window, and the SNR is
+        // the held peak over that averaged noise. Buffers share
+        // levelHistoryPos/Count and reset together.
         static constexpr int LEVEL_HOLD_FRAMES = 10;
         float levelHistory[LEVEL_HOLD_FRAMES];
+        float noiseHistory[LEVEL_HOLD_FRAMES];
         int levelHistoryPos = 0;
         int levelHistoryCount = 0;
         std::string levelHistoryVFO = ""; // VFO the level history belongs to
