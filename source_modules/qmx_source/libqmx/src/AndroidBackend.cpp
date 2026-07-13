@@ -226,18 +226,14 @@ namespace qmx::detail {
                 catTransport->sendCommand("Q90;");
             }
 
-            for (auto* transfer : transfers) {
-                if (transfer) {
-                    libusb_cancel_transfer(transfer);
-                }
-            }
+            cancelTransfers();
 
             catPoller.stop();
             if (eventThread.joinable()) {
                 eventThread.join();
             }
 
-            cleanup();
+            cleanup(true);
             pendingCount = 0;
             catTransport.reset();
         }
@@ -295,6 +291,12 @@ namespace qmx::detail {
         static constexpr int kNumIsoTransfers = 5;
         static constexpr int kIsoPacketSize = 300;
         static constexpr int kNumIsoPackets = 20;
+        static constexpr int kTransferDrainSliceUs = 10000;
+        // Well above any healthy reap time (single-digit ms; ~85 ms even if
+        // all transfers completed naturally) and one full 500 ms event-thread
+        // poll cycle; stop() runs on the GUI thread, so this bounds the freeze
+        // before giving up and leaking the stuck transfers.
+        static constexpr int kTransferDrainMaxMs = 500;
 
         bool claimInterface(int iface, std::string& error) {
             int rc = libusb_kernel_driver_active(usbHandle, iface);
@@ -391,13 +393,26 @@ namespace qmx::detail {
                     1000);
                 libusb_set_iso_packet_lengths(transfers[i], kIsoPacketSize);
 
-                int rc = libusb_submit_transfer(transfers[i]);
+                int rc = submitTransfer(transfers[i]);
                 if (rc < 0) {
                     error = std::string("Failed to submit QMX isochronous transfer: ") + libusb_error_name(rc);
                     return false;
                 }
             }
             return true;
+        }
+
+        int submitTransfer(libusb_transfer* transfer) {
+            std::lock_guard<std::mutex> lock(transferMutex);
+            if (!running.load()) {
+                return LIBUSB_ERROR_INTERRUPTED;
+            }
+            activeTransfers.fetch_add(1);
+            int rc = libusb_submit_transfer(transfer);
+            if (rc < 0) {
+                activeTransfers.fetch_sub(1);
+            }
+            return rc;
         }
 
         void push(float i, float q) {
@@ -409,6 +424,11 @@ namespace qmx::detail {
         }
 
         void handleTransfer(libusb_transfer* transfer) {
+            activeTransfers.fetch_sub(1);
+            if (!running.load()) {
+                return;
+            }
+
             if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
                 running.store(false);
                 catPoller.requestStop();
@@ -430,7 +450,7 @@ namespace qmx::detail {
             }
 
             if (running.load()) {
-                int rc = libusb_submit_transfer(transfer);
+                int rc = submitTransfer(transfer);
                 if (rc < 0) {
                     running.store(false);
                 }
@@ -447,12 +467,16 @@ namespace qmx::detail {
             }
         }
 
-        void cleanup() {
+        void cleanup(bool transfersCancelled = false) {
             if (usbContext) {
-                for (int i = 0; i < 50; ++i) {
-                    struct timeval tv = { 0, 50000 };
-                    libusb_handle_events_timeout_completed(usbContext, &tv, nullptr);
+                running.store(false);
+                if (!transfersCancelled) {
+                    cancelTransfers();
                 }
+                if (!drainTransfers()) {
+                    return;
+                }
+
                 for (auto*& transfer : transfers) {
                     if (transfer) {
                         libusb_free_transfer(transfer);
@@ -472,17 +496,40 @@ namespace qmx::detail {
             }
         }
 
+        void cancelTransfers() {
+            std::lock_guard<std::mutex> lock(transferMutex);
+            for (auto* transfer : transfers) {
+                if (transfer) {
+                    libusb_cancel_transfer(transfer);
+                }
+            }
+        }
+
+        bool drainTransfers() {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kTransferDrainMaxMs);
+            while (activeTransfers.load() > 0 && std::chrono::steady_clock::now() < deadline) {
+                struct timeval tv = { 0, kTransferDrainSliceUs };
+                int rc = libusb_handle_events_timeout_completed(usbContext, &tv, nullptr);
+                if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_TIMEOUT) {
+                    break;
+                }
+            }
+            return activeTransfers.load() == 0;
+        }
+
         libusb_context* usbContext = nullptr;
         libusb_device_handle* usbHandle = nullptr;
         unsigned char catOutEndpoint = 0x01;
         unsigned char catInEndpoint = 0x82;
         std::array<std::array<unsigned char, kIsoPacketSize * kNumIsoPackets>, kNumIsoTransfers> transferBuffers{};
         std::array<libusb_transfer*, kNumIsoTransfers> transfers{};
+        std::atomic<int> activeTransfers = 0;
         StreamCallback callbackFn = nullptr;
         void* callbackCtx = nullptr;
         std::vector<IQSample> pending;
         std::size_t pendingCount = 0;
         std::thread eventThread;
+        std::mutex transferMutex;
         std::mutex catMutex;
         std::unique_ptr<UsbCatTransport> catTransport;
         CatPoller catPoller;
