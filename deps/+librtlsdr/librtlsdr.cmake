@@ -1,13 +1,14 @@
 #
 # librtlsdr — built from the AlexandreRouma fork (matches the Android kit).
-# Note: the Windows CI uses the prebuilt osmocom Windows binary instead;
-# this recipe builds from source so we get matching debug symbols.
 #
 add_cmake_project(librtlsdr
     GIT_REPOSITORY https://github.com/AlexandreRouma/rtl-sdr
     # master @ 2026-05-31; bump when intentional.
     GIT_TAG        ddd6811b71359c299cf31b4e3e75fbb1ed5c964d
     GIT_SHALLOW    OFF
+    PATCH_COMMAND  ${CMAKE_COMMAND}
+                       -DSRC=<SOURCE_DIR>
+                       -P ${CMAKE_CURRENT_LIST_DIR}/patch_librtlsdr.cmake
     INSTALL_COMMAND
         ${CMAKE_COMMAND} --build . --target install --config ${CMAKE_BUILD_TYPE}
         COMMAND ${CMAKE_COMMAND}

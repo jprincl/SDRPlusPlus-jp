@@ -1,0 +1,362 @@
+From 5a734d07e3b93373cf6a350936f92544aec51dd8 Mon Sep 17 00:00:00 2001
+From: Vojtech Bubnik <bubnikv@gmail.com>
+Date: Mon, 13 Jul 2026 05:05:41 +0200
+Subject: [PATCH] Fix use-after-free when cancelled USB transfers are never
+ reaped
+
+The streaming teardown frees the USB transfers and their buffers after
+a blind drain of only two 50 ms event passes, with no accounting of
+how many transfers the kernel still owns. hydrasdr_kill_io_threads()'s
+own comment acknowledges the hazard ("libusb_close() will hang if
+transfers are still pending"), but nothing verifies the drain actually
+reaped the cancellations. If any transfer is still in flight when
+hydrasdr_free_transfers() runs, libusb_free_transfer() is called on a
+transfer still linked into libusb's flying-transfers list and the
+buffers the kernel may still DMA into are freed; the subsequent
+libusb_close() walks that list of freed nodes: use-after-free,
+typically a SIGSEGV inside libusb_close(). The resubmission in the
+transfer callback is also only gated on the atomic streaming flag, not
+serialized against cancellation, so a completion racing with
+hydrasdr_cancel_transfers() can resubmit a transfer past the cancel.
+
+This is easy to reproduce on Android: when the USB device is unplugged
+while streaming, the application side closes the file descriptor
+backing the handle obtained via libusb_wrap_sys_device(), the
+DISCARDURB ioctls issued by libusb_cancel_transfer() fail with EBADF,
+and the pending cancellations are never reaped. On other platforms the
+100 ms blind drain makes the crash rare but possible on a loaded
+system.
+
+Changes:
+
+- Add a transfer_live counter guarded by a dedicated mutex:
+  incremented before each submission (rolled back if the submit
+  fails), decremented exactly once per completion callback.
+- Gate resubmission on a transfers_cancelling flag set under the same
+  mutex before cancelling.
+- Turn the blind drain in hydrasdr_kill_io_threads() into a verified
+  one: pump events until transfer_live reaches zero, with a 500 ms
+  deadline (EVENT_DRAIN_ITERATIONS = 50 slices of
+  EVENT_DRAIN_TIMEOUT_US = 10 ms), stopping early on an unrecoverable
+  event-handling error.
+- If transfers are still un-reaped when the deadline expires, latch
+  transfers_stuck (mirrored onto the device wrapper) and deliberately
+  leak the transfer structures, all tracked buffers, the device handle
+  and the libusb context instead of freeing memory libusb still
+  references; hydrasdr_prepare_transfers() refuses to reuse a stream
+  in that state. A bounded leak on an already-dead device is
+  preferable to freeing buffers the kernel may still DMA into and
+  crashing in libusb_close(). A one-line warning is printed to stderr
+  when the leak path is taken (unconditionally, not under
+  HYDRASDR_USB_DEBUG: a permanent resource leak should not be silent
+  in release builds).
+
+Note on wrapped file descriptors: a caller that opened the device via
+hydrasdr_open_fd() owns the fd and will typically close it after
+hydrasdr_close() returns, including in the leak case. That is safe:
+nothing pumps events on the leaked context anymore, and closing a
+usbfs fd makes the kernel discard the orphaned URBs without touching
+user memory, since usbfs only accesses user buffers at reap time.
+---
+ libhydrasdr/src/hydrasdr.c          |  15 ++++
+ libhydrasdr/src/hydrasdr_internal.h |   6 ++
+ libhydrasdr/src/hydrasdr_shared.c   | 123 +++++++++++++++++++++++++++-
+ libhydrasdr/src/hydrasdr_shared.h   |  15 +++-
+ 4 files changed, 153 insertions(+), 6 deletions(-)
+
+diff --git a/libhydrasdr/src/hydrasdr.c b/libhydrasdr/src/hydrasdr.c
+index 85f549b..ff561da 100644
+--- a/libhydrasdr/src/hydrasdr.c
++++ b/libhydrasdr/src/hydrasdr.c
+@@ -113,6 +113,21 @@ static void hydrasdr_open_exit(struct hydrasdr_device* device)
+ 	struct timeval timeout = { 0, 10000 }; /* 10ms - quick check for pending events */
+ 	int i;
+ 
++	if (device->transfers_stuck)
++	{
++		/* The streaming teardown could not reap all cancelled transfers;
++		   libusb_close() would walk the flying-transfers list that still
++		   references them. Leak the handle and the context instead. Nothing
++		   pumps events on the leaked context, so the stuck transfers'
++		   callbacks can never fire. A caller that opened the device via
++		   hydrasdr_open_fd() may close the wrapped system fd afterwards:
++		   the kernel then discards the orphaned URBs without touching user
++		   memory, since usbfs only accesses user buffers at reap time. */
++		device->usb_handle = NULL;
++		device->usb_context = NULL;
++		return;
++	}
++
+ 	/* Drain any pending USB events before closing.
+ 	 * This ensures all transfer cancellation callbacks have fired.
+ 	 * Use short timeout and minimal iterations to avoid unnecessary delay. */
+diff --git a/libhydrasdr/src/hydrasdr_internal.h b/libhydrasdr/src/hydrasdr_internal.h
+index d2ab1c1..9cb4ec2 100644
+--- a/libhydrasdr/src/hydrasdr_internal.h
++++ b/libhydrasdr/src/hydrasdr_internal.h
+@@ -100,6 +100,12 @@ struct hydrasdr_device {
+ 	/* Generic Software State (Managed by hydrasdr.c) */
+ 	enum hydrasdr_sample_type sample_type; // Caching sample type for get_samplerates() logic
+ 	bool reset_command; /* HYDRASDR_RESET command executed ? */
++
++	/* Set when the streaming teardown could not reap all cancelled USB
++	   transfers (see hydrasdr_kill_io_threads()); hydrasdr_open_exit() must
++	   then leak the handle and context instead of closing them, because
++	   libusb's flying-transfers list still references the stuck transfers. */
++	int transfers_stuck;
+ };
+ 
+ /* Supported VID/PID combinations */
+diff --git a/libhydrasdr/src/hydrasdr_shared.c b/libhydrasdr/src/hydrasdr_shared.c
+index 5150388..889f4d2 100644
+--- a/libhydrasdr/src/hydrasdr_shared.c
++++ b/libhydrasdr/src/hydrasdr_shared.c
+@@ -69,6 +69,11 @@ static int hydrasdr_cancel_transfers(hydrasdr_streaming_t* stream)
+ 
+ 	if (stream->transfers != NULL)
+ 	{
++		/* Set the cancelling gate under the lock before cancelling, so a
++		   completion callback racing with us cannot resubmit a transfer
++		   past the cancellation. */
++		pthread_mutex_lock(&stream->transfer_lock);
++		stream->transfers_cancelling = 1;
+ 		for (transfer_index = 0; transfer_index < stream->transfer_count; transfer_index++)
+ 		{
+ 			if (stream->transfers[transfer_index] != NULL)
+@@ -76,6 +81,7 @@ static int hydrasdr_cancel_transfers(hydrasdr_streaming_t* stream)
+ 				libusb_cancel_transfer(stream->transfers[transfer_index]);
+ 			}
+ 		}
++		pthread_mutex_unlock(&stream->transfer_lock);
+ 		return HYDRASDR_SUCCESS;
+ 	}
+ 	else {
+@@ -99,9 +105,55 @@ static int hydrasdr_free_transfers(hydrasdr_streaming_t* stream)
+ {
+ 	uint32_t i;
+ 	uint32_t transfer_index;
++	int stuck;
++
++	/* Stuck transfers are still referenced by the kernel and by libusb's
++	   flying-transfers list; freeing them (or the buffers the kernel may
++	   still DMA into) would be a use-after-free. Leak them instead.
++	   Stragglers may have been reaped between the drain deadline and this
++	   point, so re-check the counter before committing to the leak. */
++	pthread_mutex_lock(&stream->transfer_lock);
++	if (stream->transfers_stuck && stream->transfer_live <= 0)
++	{
++		stream->transfers_stuck = 0;
++		if (stream->dev != NULL) {
++			stream->dev->transfers_stuck = 0;
++		}
++	}
++	stuck = stream->transfers_stuck;
++	pthread_mutex_unlock(&stream->transfer_lock);
+ 
+ 	if (stream->transfers != NULL)
+ 	{
++		if (stuck)
++		{
++			fprintf(stderr, "hydrasdr: cancelled USB transfers could not be reaped; leaking transfers and USB session to avoid a use-after-free in libusb\n");
++			/* Leak the transfer structures and ALL tracked buffers: buffers
++			   migrate between USB transfers and SPSC slots during streaming,
++			   so there is no way to tell which subset the kernel still
++			   references. */
++			for (transfer_index = 0; transfer_index < stream->transfer_count; transfer_index++)
++			{
++				stream->transfers[transfer_index] = NULL;
++			}
++			stream->transfers = NULL;
++
++			for (i = 0; i < RAW_BUFFER_COUNT; i++) {
++				stream->received_samples_queue[i] = NULL;
++			}
++
++			for (i = 0; i < SPSC_QUEUE_CAPACITY; i++) {
++				stream->spsc.slots[i].buffer = NULL;
++			}
++
++			for (i = 0; i < stream->tracked_buffer_count; i++)
++			{
++				stream->tracked_buffers[i] = NULL;
++			}
++			stream->tracked_buffer_count = 0;
++		}
++		else
++		{
+ 		/* Free USB transfer structures (but not buffers - tracked separately) */
+ 		for (transfer_index = 0; transfer_index < stream->transfer_count; transfer_index++)
+ 		{
+@@ -140,6 +192,7 @@ static int hydrasdr_free_transfers(hydrasdr_streaming_t* stream)
+ 			}
+ 		}
+ 		stream->tracked_buffer_count = 0;
++		}
+ 
+ 		/* Destroy SPSC queue */
+ 		if (spsc_queue_is_initialized(&stream->spsc)) {
+@@ -592,6 +645,12 @@ static void LIBUSB_CALL hydrasdr_libusb_transfer_callback(struct libusb_transfer
+ {
+ 	hydrasdr_streaming_t* stream = (hydrasdr_streaming_t*)usb_transfer->user_data;
+ 
++	/* Every submitted transfer gets exactly one completion callback
++	   (completed, cancelled or errored). */
++	pthread_mutex_lock(&stream->transfer_lock);
++	stream->transfer_live--;
++	pthread_mutex_unlock(&stream->transfer_lock);
++
+ 	if (!OPT_ATOMIC_LOAD_ACQ(&stream->usb_hot.streaming) ||
+ 	    OPT_ATOMIC_LOAD_ACQ(&stream->usb_hot.stop_requested))
+ 	{
+@@ -630,6 +689,14 @@ static void LIBUSB_CALL hydrasdr_libusb_transfer_callback(struct libusb_transfer
+ 			stream->stats.total_dropped_buffers++;
+ 		}
+ 
++		pthread_mutex_lock(&stream->transfer_lock);
++		if (stream->transfers_cancelling)
++		{
++			/* cancel_transfers() is stopping the stream: do not resubmit. */
++			pthread_mutex_unlock(&stream->transfer_lock);
++			return;
++		}
++		stream->transfer_live++;
+ 		int submit_result = libusb_submit_transfer(usb_transfer);
+ 		if (submit_result != 0)
+ 		{
+@@ -637,8 +704,10 @@ static void LIBUSB_CALL hydrasdr_libusb_transfer_callback(struct libusb_transfer
+ 			fprintf(stderr, "[USB_DEBUG] libusb_submit_transfer failed: %d (%s)\n",
+ 				submit_result, libusb_error_name(submit_result));
+ #endif
++			stream->transfer_live--;
+ 			OPT_ATOMIC_STORE_REL(&stream->usb_hot.streaming, 0);
+ 		}
++		pthread_mutex_unlock(&stream->transfer_lock);
+ 	}
+ 	else
+ 	{
+@@ -917,6 +986,16 @@ static int hydrasdr_prepare_transfers(hydrasdr_streaming_t* stream, uint8_t endp
+ {
+ 	int error;
+ 	uint32_t transfer_index;
++
++	if (stream->transfers_stuck)
++	{
++		/* The transfers are still owned by the kernel: never resubmit them. */
++		return HYDRASDR_ERROR_OTHER;
++	}
++	/* No events are pumped between here and thread creation, so the plain
++	   stores are safe. */
++	stream->transfers_cancelling = 0;
++
+ 	if (stream->transfers != NULL)
+ 	{
+ 		for (transfer_index = 0; transfer_index<stream->transfer_count; transfer_index++)
+@@ -929,6 +1008,7 @@ static int hydrasdr_prepare_transfers(hydrasdr_streaming_t* stream, uint8_t endp
+ 			{
+ 				return HYDRASDR_ERROR_LIBUSB;
+ 			}
++			stream->transfer_live++;
+ 		}
+ 		return HYDRASDR_SUCCESS;
+ 	}
+@@ -975,11 +1055,43 @@ static int hydrasdr_kill_io_threads(hydrasdr_streaming_t* stream)
+ 			stream->consumer_thread_running = false;
+ 		}
+ 
+-		/* Drain remaining USB events to ensure all cancellation callbacks have fired.
+-		 * This is critical - libusb_close() will hang if transfers are still pending. */
+-		for (i = 0; i < EVENT_DRAIN_ITERATIONS; i++)
++		/* Drain: pump events until every cancelled transfer has been reaped
++		 * by libusb (EVENT_DRAIN_ITERATIONS slices of EVENT_DRAIN_TIMEOUT_US,
++		 * i.e. a 500 ms deadline). If the deadline expires - e.g. the fd was
++		 * closed under libusb and the DISCARDURB ioctls failed - latch
++		 * transfers_stuck so the teardown leaks the transfers instead of
++		 * freeing memory libusb still references and crashing later inside
++		 * libusb_close(). */
+ 		{
+-			libusb_handle_events_timeout_completed(stream->dev->usb_context, &timeout, NULL);
++			int live;
++			int rc;
++
++			for (i = 0; i < EVENT_DRAIN_ITERATIONS; i++)
++			{
++				pthread_mutex_lock(&stream->transfer_lock);
++				live = stream->transfer_live;
++				pthread_mutex_unlock(&stream->transfer_lock);
++				if (live <= 0)
++				{
++					break;
++				}
++				rc = libusb_handle_events_timeout_completed(stream->dev->usb_context, &timeout, NULL);
++				if (rc < 0 && rc != LIBUSB_ERROR_INTERRUPTED)
++				{
++					/* No events can be processed anymore; the pending
++					   cancellations will never be reaped. */
++					break;
++				}
++			}
++			pthread_mutex_lock(&stream->transfer_lock);
++			if (stream->transfer_live > 0)
++			{
++				stream->transfers_stuck = 1;
++				if (stream->dev != NULL) {
++					stream->dev->transfers_stuck = 1;
++				}
++			}
++			pthread_mutex_unlock(&stream->transfer_lock);
+ 		}
+ 	}
+ 
+@@ -1126,6 +1238,7 @@ int hydrasdr_generic_init_streaming(struct hydrasdr_device* dev,
+ 
+ 	/* Initialize consumer thread synchronization */
+ 	pthread_mutex_init(&stream->consumer_mutex, NULL);
++	pthread_mutex_init(&stream->transfer_lock, NULL);
+ 	pthread_cond_init(&stream->consumer_cond, NULL);
+ 
+ 	/* Query supported sample rates */
+@@ -1355,6 +1468,8 @@ int hydrasdr_generic_cleanup_streaming(struct hydrasdr_device* dev)
+ 
+ 		/* Free transfers and buffers */
+ 		hydrasdr_free_transfers(stream);
++		/* transfer_lock is used by hydrasdr_free_transfers(); destroy after. */
++		pthread_mutex_destroy(&stream->transfer_lock);
+ 		free(stream->supported_bandwidths);
+ 		free(stream->supported_samplerates);
+ 		free(stream->samplerate_info);
+diff --git a/libhydrasdr/src/hydrasdr_shared.h b/libhydrasdr/src/hydrasdr_shared.h
+index 29f9663..e804709 100644
+--- a/libhydrasdr/src/hydrasdr_shared.h
++++ b/libhydrasdr/src/hydrasdr_shared.h
+@@ -41,8 +41,8 @@
+ 
+ /* Threading timeout constants (microseconds) */
+ #define TRANSFER_THREAD_TIMEOUT_US (100000)  /* 100ms - fast response to stop */
+-#define EVENT_DRAIN_TIMEOUT_US (50000)       /* 50ms - event drain per iteration */
+-#define EVENT_DRAIN_ITERATIONS (2)           /* Number of drain iterations */
++#define EVENT_DRAIN_TIMEOUT_US (10000)       /* 10ms - event drain per iteration */
++#define EVENT_DRAIN_ITERATIONS (50)          /* Max drain iterations (500 ms deadline) */
+ 
+ /* Buffer size constants */
+ #define DEFAULT_BUFFER_SIZE (262144)              /* 256KB - default USB buffer size */
+@@ -168,6 +168,17 @@ typedef struct {
+ 	pthread_mutex_t consumer_mutex;
+ 	pthread_cond_t consumer_cond;
+ 
++	/*
++	 * ---- USB transfer teardown accounting ----
++	 * transfer_live is the exact count of transfers currently owned by the
++	 * kernel (submitted, completion callback not yet fired). Guarded by
++	 * transfer_lock, as are transfers_cancelling and transfers_stuck.
++	 */
++	pthread_mutex_t transfer_lock;
++	int32_t transfer_live;
++	int transfers_cancelling;
++	int transfers_stuck;
++
+ 	/*
+ 	 * ---- Statistics (own cache line) ----
+ 	 * Performance monitoring counters
+-- 
+2.51.0.windows.2
+

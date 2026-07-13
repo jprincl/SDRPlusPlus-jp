@@ -1,0 +1,202 @@
+From d711b40a4afd69d361391f19dec78afbd7ef4df8 Mon Sep 17 00:00:00 2001
+From: Vojtech Bubnik <bubnikv@gmail.com>
+Date: Mon, 13 Jul 2026 05:05:42 +0200
+Subject: [PATCH] Fix use-after-free when async teardown exits with un-reaped
+ transfers
+
+rtlsdr_read_async()'s cancellation loop normally keeps pumping events
+until every transfer's status reads LIBUSB_TRANSFER_CANCELLED, which
+is sound. But two paths break out of the loop with transfers still
+owned by the kernel: a libusb_handle_events() error, and the dev_lost
+path (entered from the transfer callback on LIBUSB_TRANSFER_NO_DEVICE,
+i.e. exactly when the device is unplugged while streaming), which
+performs only a single zero-timeout event pass before breaking. In
+both cases _rtlsdr_free_async_buffers() then calls
+libusb_free_transfer() on transfers still linked into libusb's
+flying-transfers list and frees buffers the kernel may still DMA into;
+the later libusb_close() walks that list of freed nodes:
+use-after-free, typically a SIGSEGV inside libusb_close(). On Android,
+if the application closed the fd backing a handle from
+libusb_wrap_sys_device(), the DISCARDURB ioctls fail with EBADF and
+the cancellations can never be reaped, making the crash deterministic.
+
+Changes:
+
+- Add an xfer_live counter: incremented per successful submission,
+  decremented exactly once per completion callback. All submission,
+  event handling and cancellation run on the rtlsdr_read_async()
+  caller thread, so no locking is needed.
+- After the cancellation loop, drain with a 500 ms deadline (50 slices
+  of 10 ms) until xfer_live reaches zero, stopping early on an
+  unrecoverable event-handling error.
+- If transfers still cannot be reaped, latch xfer_stuck:
+  _rtlsdr_free_async_buffers() leaks the transfers and buffers instead
+  of freeing them, rtlsdr_close() leaks the device handle and context
+  instead of letting libusb walk the flying-transfers list, and
+  rtlsdr_read_async() refuses to restart on such a device. A bounded
+  leak on an already-dead device is preferable to the crash, and a
+  one-line warning is printed to stderr when the leak path is taken.
+  A caller that opened the device via rtlsdr_open_sys_dev() may close
+  the wrapped system fd afterwards; that is safe, because nothing
+  pumps events on the leaked context anymore and closing a usbfs fd
+  makes the kernel discard the orphaned URBs without touching user
+  memory (usbfs only accesses user buffers at reap time).
+- Set async_status to RTLSDR_INACTIVE unconditionally when
+  rtlsdr_read_async() returns. Previously an error-path exit could
+  leave it at RTLSDR_CANCELING forever, making rtlsdr_close() spin
+  indefinitely in its wait loop and rtlsdr_read_async() permanently
+  return -2.
+---
+ src/librtlsdr.c | 86 +++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 84 insertions(+), 2 deletions(-)
+
+diff --git a/src/librtlsdr.c b/src/librtlsdr.c
+index a2efe48..b9673f7 100644
+--- a/src/librtlsdr.c
++++ b/src/librtlsdr.c
+@@ -117,6 +117,16 @@ struct rtlsdr_dev {
+ 	struct r82xx_priv r82xx_p;
+ 	/* status */
+ 	int dev_lost;
++	/* Exact count of transfers currently owned by the kernel (submitted,
++	   completion callback not yet fired). All submission, event handling and
++	   cancellation run on the rtlsdr_read_async() caller thread, so no
++	   locking is needed. */
++	int xfer_live;
++	/* Set when cancelled transfers could never be reaped (e.g. the fd was
++	   closed under libusb); the teardown then leaks them, and
++	   rtlsdr_close() must leak the handle and context instead of letting
++	   libusb walk the flying-transfers list that still references them. */
++	int xfer_stuck;
+ 	int driver_active;
+ 	unsigned int xfer_errors;
+ 	char manufact[256];
+@@ -1726,6 +1736,19 @@ int rtlsdr_close(rtlsdr_dev_t *dev)
+ 		rtlsdr_deinit_baseband(dev);
+ 	}
+ 
++	if (dev->xfer_stuck) {
++		/* Un-reapable transfers are still linked into libusb's
++		 * flying-transfers list; libusb_close()/libusb_exit() would walk
++		 * state we had to leak. Leak the handle and the context too -
++		 * nothing pumps events on them anymore, so the leaked transfers'
++		 * callbacks can never fire. A caller that opened the device via
++		 * rtlsdr_open_sys_dev() may close the wrapped system fd afterwards:
++		 * the kernel then discards the orphaned URBs without touching user
++		 * memory, since usbfs only accesses user buffers at reap time. */
++		free(dev);
++		return 0;
++	}
++
+ 	libusb_release_interface(dev->devh, 0);
+ 
+ #ifdef DETACH_KERNEL_DRIVER
+@@ -1769,11 +1792,16 @@ static void LIBUSB_CALL _libusb_callback(struct libusb_transfer *xfer)
+ {
+ 	rtlsdr_dev_t *dev = (rtlsdr_dev_t *)xfer->user_data;
+ 
++	/* Every submitted transfer gets exactly one completion callback
++	 * (completed, cancelled or errored). */
++	dev->xfer_live--;
++
+ 	if (LIBUSB_TRANSFER_COMPLETED == xfer->status) {
+ 		if (dev->cb)
+ 			dev->cb(xfer->buffer, xfer->actual_length, dev->cb_ctx);
+ 
+-		libusb_submit_transfer(xfer); /* resubmit transfer */
++		if (libusb_submit_transfer(xfer) == 0) /* resubmit transfer */
++			dev->xfer_live++;
+ 		dev->xfer_errors = 0;
+ 	} else if (LIBUSB_TRANSFER_CANCELLED != xfer->status) {
+ #ifndef _WIN32
+@@ -1883,6 +1911,26 @@ static int _rtlsdr_free_async_buffers(rtlsdr_dev_t *dev)
+ 	if (!dev)
+ 		return -1;
+ 
++	if (dev->xfer_stuck) {
++		/* The kernel still owns some of these transfers and may still DMA
++		 * into the buffers; libusb's flying-transfers list references the
++		 * transfer structs. Leak everything. */
++		fprintf(stderr, "rtlsdr: cancelled USB transfers could not be reaped; "
++				"leaking transfers and USB session to avoid a "
++				"use-after-free in libusb\n");
++		if (dev->xfer) {
++			for(i = 0; i < dev->xfer_buf_num; ++i)
++				dev->xfer[i] = NULL;
++			dev->xfer = NULL;
++		}
++		if (dev->xfer_buf) {
++			for (i = 0; i < dev->xfer_buf_num; ++i)
++				dev->xfer_buf[i] = NULL;
++			dev->xfer_buf = NULL;
++		}
++		return -2;
++	}
++
+ 	if (dev->xfer) {
+ 		for(i = 0; i < dev->xfer_buf_num; ++i) {
+ 			if (dev->xfer[i]) {
+@@ -1931,8 +1979,14 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
+ 	if (RTLSDR_INACTIVE != dev->async_status)
+ 		return -2;
+ 
++	/* A previous teardown leaked un-reapable transfers on this context;
++	 * restarting would corrupt the accounting. Close and reopen instead. */
++	if (dev->xfer_stuck)
++		return -3;
++
+ 	dev->async_status = RTLSDR_RUNNING;
+ 	dev->async_cancel = 0;
++	dev->xfer_live = 0;
+ 
+ 	dev->cb = cb;
+ 	dev->cb_ctx = ctx;
+@@ -1970,6 +2024,7 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
+ 			dev->async_status = RTLSDR_CANCELING;
+ 			break;
+ 		}
++		dev->xfer_live++;
+ 	}
+ 
+ 	while (RTLSDR_INACTIVE != dev->async_status) {
+@@ -2021,9 +2076,36 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
+ 		}
+ 	}
+ 
++	/* The loop above can exit with transfers still owned by the kernel:
++	 * on a libusb_handle_events() error, or through the dev_lost path
++	 * which only performs a single zero-timeout event pass. Drain with a
++	 * 500 ms deadline; if transfers still cannot be reaped (e.g. the fd
++	 * was closed under libusb and the DISCARDURB ioctls failed), latch
++	 * xfer_stuck so the transfers and buffers are leaked instead of being
++	 * freed while libusb's flying-transfers list still references them
++	 * and the kernel may still DMA into them - freeing them makes
++	 * libusb_close() crash on the dangling list nodes. */
++	{
++		int drain_slice;
++		int rc;
++		struct timeval draintv = { 0, 10000 };
++
++		for (drain_slice = 0; drain_slice < 50 && dev->xfer_live > 0; drain_slice++) {
++			rc = libusb_handle_events_timeout_completed(dev->ctx, &draintv, NULL);
++			if (rc < 0 && rc != LIBUSB_ERROR_INTERRUPTED)
++				break;
++		}
++		dev->xfer_stuck = (dev->xfer_live > 0);
++	}
++
+ 	_rtlsdr_free_async_buffers(dev);
+ 
+-	dev->async_status = next_status;
++	/* read_async is finished: report INACTIVE unconditionally. Leaving
++	 * CANCELING here (as next_status could) would make rtlsdr_close()
++	 * spin forever waiting for a state change that can no longer happen,
++	 * and would make future rtlsdr_read_async() calls fail with -2. */
++	(void)next_status;
++	dev->async_status = RTLSDR_INACTIVE;
+ 
+ 	return r;
+ }
+-- 
+2.51.0.windows.2
+

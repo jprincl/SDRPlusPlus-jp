@@ -12,6 +12,51 @@
 # Idempotent: if <replacement> is already present (from an earlier run on
 # the same source tree), the call returns silently — re-patching is a no-op.
 #
+#
+# patch_apply_git_or_fail(<src-dir> <patch-file>)
+#
+# Apply <patch-file> inside <src-dir> with `git apply`. Used for changes kept
+# as proper git patches (upstream-PR material) rather than string edits.
+#
+# Idempotent: if the patch is already applied (reverse-check succeeds), the
+# call is a no-op. Errors out (FATAL_ERROR) when the patch neither applies
+# nor is already applied — the upstream shape changed.
+#
+function(patch_apply_git_or_fail src patch)
+    find_program(_git git REQUIRED)
+    execute_process(
+        COMMAND "${_git}" apply --check "${patch}"
+        WORKING_DIRECTORY "${src}"
+        RESULT_VARIABLE _check_rc
+        ERROR_VARIABLE _check_err
+    )
+    if (_check_rc EQUAL 0)
+        execute_process(
+            COMMAND "${_git}" apply "${patch}"
+            WORKING_DIRECTORY "${src}"
+            RESULT_VARIABLE _apply_rc
+            ERROR_VARIABLE _apply_err
+        )
+        if (NOT _apply_rc EQUAL 0)
+            message(FATAL_ERROR "git apply ${patch} failed:\n${_apply_err}")
+        endif ()
+        message(STATUS "Applied ${patch}")
+    else ()
+        execute_process(
+            COMMAND "${_git}" apply --reverse --check "${patch}"
+            WORKING_DIRECTORY "${src}"
+            RESULT_VARIABLE _reverse_rc
+            ERROR_QUIET
+        )
+        if (_reverse_rc EQUAL 0)
+            message(STATUS "Already applied: ${patch}")
+        else ()
+            message(FATAL_ERROR
+                "${patch} neither applies nor is already applied — upstream shape changed:\n${_check_err}")
+        endif ()
+    endif ()
+endfunction()
+
 function(patch_replace_or_fail var needle replacement)
     set(_content "${${var}}")
     string(FIND "${_content}" "${needle}" _nidx)

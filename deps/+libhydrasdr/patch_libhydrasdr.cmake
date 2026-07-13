@@ -42,3 +42,15 @@ patch_replace_or_fail(_header
     "	#ifdef HYDRASDR_STATIC\n		#define ADDAPI\n	#elif defined(ADD_EXPORTS)\n		#define ADDAPI __declspec(dllexport)\n	#else\n		#define ADDAPI __declspec(dllimport)\n	#endif")
 file(WRITE "${_h}" "${_header}")
 message(STATUS "Patched ${_h}")
+
+#
+# Streaming-teardown crash fix, kept as a proper git patch because it is
+# intended for an upstream pull request (github.com/hydrasdr/hydrasdr-host).
+#
+# The teardown frees USB transfers after a blind 2 x 50 ms event drain with
+# no in-flight accounting; un-reaped cancellations (guaranteed on Android
+# when the USB fd is closed on device detach) leave freed nodes on libusb's
+# flying-transfers list and crash inside libusb_close(). See the patch header
+# for the full analysis.
+#
+patch_apply_git_or_fail("${SRC}" "${CMAKE_CURRENT_LIST_DIR}/0001-fix-use-after-free-in-streaming-teardown.patch")

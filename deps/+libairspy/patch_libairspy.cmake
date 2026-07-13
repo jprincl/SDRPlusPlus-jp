@@ -36,37 +36,4 @@ message(STATUS "Patched ${_header}")
 # libusb_close(). Same bug as libairspyhf, in a worse form (no in-flight
 # accounting at all). See the patch header for the full analysis.
 #
-set(_patch "${CMAKE_CURRENT_LIST_DIR}/0001-fix-use-after-free-in-airspy_close.patch")
-find_program(_git git REQUIRED)
-execute_process(
-    COMMAND "${_git}" apply --check "${_patch}"
-    WORKING_DIRECTORY "${SRC}"
-    RESULT_VARIABLE _check_rc
-    ERROR_VARIABLE _check_err
-)
-if (_check_rc EQUAL 0)
-    execute_process(
-        COMMAND "${_git}" apply "${_patch}"
-        WORKING_DIRECTORY "${SRC}"
-        RESULT_VARIABLE _apply_rc
-        ERROR_VARIABLE _apply_err
-    )
-    if (NOT _apply_rc EQUAL 0)
-        message(FATAL_ERROR "git apply ${_patch} failed:\n${_apply_err}")
-    endif ()
-    message(STATUS "Applied ${_patch}")
-else ()
-    # Re-runs on an already-patched tree must stay a no-op.
-    execute_process(
-        COMMAND "${_git}" apply --reverse --check "${_patch}"
-        WORKING_DIRECTORY "${SRC}"
-        RESULT_VARIABLE _reverse_rc
-        ERROR_QUIET
-    )
-    if (_reverse_rc EQUAL 0)
-        message(STATUS "Already applied: ${_patch}")
-    else ()
-        message(FATAL_ERROR
-            "${_patch} neither applies nor is already applied — upstream shape changed:\n${_check_err}")
-    endif ()
-endif ()
+patch_apply_git_or_fail("${SRC}" "${CMAKE_CURRENT_LIST_DIR}/0001-fix-use-after-free-in-airspy_close.patch")

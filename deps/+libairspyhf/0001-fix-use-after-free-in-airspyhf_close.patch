@@ -1,4 +1,4 @@
-From 1ea65e3306fda93b8b3a56bf7e933c7f7c171806 Mon Sep 17 00:00:00 2001
+From 2c3af9e20d528f7b4c00143fbe4c89dea826c78e Mon Sep 17 00:00:00 2001
 From: Vojtech Bubnik <bubnikv@gmail.com>
 Date: Sun, 12 Jul 2026 19:26:39 +0200
 Subject: [PATCH] Fix use-after-free in airspyhf_close() when cancelled
@@ -41,15 +41,21 @@ Changes:
   references; prepare_transfers() refuses to reuse a device in that
   state. A bounded leak on an already-dead device is preferable to
   freeing buffers the kernel may still DMA into and crashing in
-  libusb_close().
+  libusb_close(). A one-line warning is printed to stderr when the
+  leak path is taken, so the fault is not silent.
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Note on wrapped file descriptors: a caller that opened the device via
+airspyhf_open_fd() owns the fd and will typically close it after
+airspyhf_close() returns, including in the leak case. That is safe:
+nothing pumps events on the leaked context anymore, and closing a
+usbfs fd makes the kernel discard the orphaned URBs without touching
+user memory, since usbfs only accesses user buffers at reap time.
 ---
- libairspyhf/src/airspyhf.c | 93 +++++++++++++++++++++++++++++++++++---
- 1 file changed, 87 insertions(+), 6 deletions(-)
+ libairspyhf/src/airspyhf.c | 102 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 96 insertions(+), 6 deletions(-)
 
 diff --git a/libairspyhf/src/airspyhf.c b/libairspyhf/src/airspyhf.c
-index a4400f6..5afdac0 100644
+index a4400f6..114c1ba 100644
 --- a/libairspyhf/src/airspyhf.c
 +++ b/libairspyhf/src/airspyhf.c
 @@ -120,7 +120,12 @@ typedef struct airspyhf_device
@@ -123,7 +129,7 @@ index a4400f6..5afdac0 100644
  
  		return AIRSPYHF_SUCCESS;
  	}
-@@ -176,8 +214,27 @@ static int cancel_transfers(airspyhf_device_t* device)
+@@ -176,8 +214,28 @@ static int cancel_transfers(airspyhf_device_t* device)
  static int free_transfers(airspyhf_device_t* device)
  {
  	int i;
@@ -139,6 +145,7 @@ index a4400f6..5afdac0 100644
 +	pthread_mutex_unlock(&device->transfer_lock);
 +	if (stuck)
 +	{
++		fprintf(stderr, "airspyhf: cancelled USB transfers could not be reaped; leaking transfers and USB session to avoid a use-after-free in libusb\n");
 +		device->transfers = NULL;
 +		device->output_buffer = NULL;
 +		for (i = 0; i < RAW_BUFFER_COUNT; i++)
@@ -151,7 +158,7 @@ index a4400f6..5afdac0 100644
  	if (device->transfers != NULL)
  	{
  		free(device->output_buffer);
-@@ -268,8 +325,15 @@ static int allocate_transfers(airspyhf_device_t* const device)
+@@ -268,8 +326,15 @@ static int allocate_transfers(airspyhf_device_t* const device)
  static int prepare_transfers(airspyhf_device_t* device, const uint_fast8_t endpoint_address, libusb_transfer_cb_fn callback)
  {
  	int error;
@@ -167,7 +174,7 @@ index a4400f6..5afdac0 100644
  	if (device->transfers != NULL)
  	{
  		for (transfer_index = 0; transfer_index<device->transfer_count; transfer_index++)
-@@ -424,7 +488,9 @@ static void LIBUSB_CALL airspyhf_libusb_transfer_callback(struct libusb_transfer
+@@ -424,7 +489,9 @@ static void LIBUSB_CALL airspyhf_libusb_transfer_callback(struct libusb_transfer
  	airspyhf_complex_int16_t *temp;
  	airspyhf_device_t* device = (airspyhf_device_t*) usb_transfer->user_data;
  	
@@ -177,7 +184,7 @@ index a4400f6..5afdac0 100644
  	if (!device->streaming || device->stop_requested)
  	{
  		return;
-@@ -455,12 +521,19 @@ static void LIBUSB_CALL airspyhf_libusb_transfer_callback(struct libusb_transfer
+@@ -455,12 +522,19 @@ static void LIBUSB_CALL airspyhf_libusb_transfer_callback(struct libusb_transfer
  
  		pthread_mutex_unlock(&device->consumer_mp);
  
@@ -199,12 +206,20 @@ index a4400f6..5afdac0 100644
  	}
  	else
  	{
-@@ -572,6 +645,12 @@ static int create_io_threads(airspyhf_device_t* device, airspyhf_sample_block_cb
+@@ -572,6 +646,20 @@ static int create_io_threads(airspyhf_device_t* device, airspyhf_sample_block_cb
  
  static void airspyhf_open_exit(airspyhf_device_t* device)
  {
 +	if (device->transfers_stuck)
 +	{
++		/* libusb_close() walks the flying-transfers list, which still
++		   references the stuck transfers; leak the handle and the context
++		   instead. Nothing pumps events on the leaked context, so the leaked
++		   transfers' callbacks can never fire. A caller that opened the
++		   device via airspyhf_open_fd() may close the wrapped system fd
++		   afterwards: the kernel then discards the orphaned URBs without
++		   touching user memory, since usbfs only accesses user buffers at
++		   reap time. */
 +		device->usb_device = NULL;
 +		device->usb_context = NULL;
 +		return;
@@ -212,7 +227,7 @@ index a4400f6..5afdac0 100644
  	if (device->usb_device != NULL)
  	{
  		libusb_release_interface(device->usb_device, 0);
-@@ -1064,6 +1143,7 @@ static int airspyhf_open_init(airspyhf_device_t** device, uint64_t serial_number
+@@ -1064,6 +1152,7 @@ static int airspyhf_open_init(airspyhf_device_t** device, uint64_t serial_number
  	}
  
  	pthread_cond_init(&lib_device->consumer_cv, NULL);
@@ -220,7 +235,7 @@ index a4400f6..5afdac0 100644
  	pthread_mutex_init(&lib_device->consumer_mp, NULL);
  
  	lib_device->freq_hz = 0;
-@@ -1154,6 +1234,7 @@ int ADDCALL airspyhf_close(airspyhf_device_t* device)
+@@ -1154,6 +1243,7 @@ int ADDCALL airspyhf_close(airspyhf_device_t* device)
  		iq_balancer_destroy(device->iq_balancer);
  
  		pthread_cond_destroy(&device->consumer_cv);
