@@ -19,9 +19,27 @@ if [ "$CURL_SOURCE" = "bundled" ]; then
     CURL_APT=""
 fi
 
+# apt-get update immediately before install is not enough: when the archive is
+# mid-publish, the index can still reference a package revision whose .deb was
+# already pruned from the pool, and the install 404s (Acquire::Retries only
+# retries transient errors, not 404). Wipe the lists and retry the whole
+# update+install cycle so the second attempt sees the post-publish index.
+apt_install_with_refresh() {
+    local attempt
+    for attempt in 1 2 3; do
+        rm -rf /var/lib/apt/lists/*
+        if apt-get -o Acquire::Retries=3 update && \
+           apt-get -o Acquire::Retries=3 install -y "$@"; then
+            return 0
+        fi
+        echo "APT install failed (attempt ${attempt}/3), likely an archive sync race; retrying with a fresh index..." >&2
+        sleep $((attempt * 20))
+    done
+    return 1
+}
+
 # Install dependencies and tools
-apt-get -o Acquire::Retries=3 update
-apt-get -o Acquire::Retries=3 install -y build-essential cmake git pkg-config libfftw3-dev libglfw3-dev ${VOLK_PACKAGE} liborc-0.4-dev libzstd-dev ${CURL_APT} libairspy-dev libairspyhf-dev \
+apt_install_with_refresh build-essential cmake git pkg-config libfftw3-dev libglfw3-dev ${VOLK_PACKAGE} liborc-0.4-dev libzstd-dev ${CURL_APT} libairspy-dev libairspyhf-dev \
     libiio-dev libad9361-dev librtaudio-dev libhackrf-dev librtlsdr-dev libbladerf-dev liblimesuite-dev p7zip-full wget portaudio19-dev \
     libcodec2-dev libflac-dev libopus-dev libogg-dev autoconf libtool xxd libspdlog-dev ${EXTRA_APT}
 
@@ -35,7 +53,7 @@ if [ -n "$CMAKE_VER" ]; then
     CMAKE_MINOR=$(echo "$CMAKE_VER" | cut -d. -f2)
     if [ "$CMAKE_MAJOR" -lt 3 ] || { [ "$CMAKE_MAJOR" -eq 3 ] && [ "$CMAKE_MINOR" -lt 21 ]; }; then
         echo "apt cmake $CMAKE_VER is too old for deps/ presets; upgrading via pip"
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends python3-pip
+        apt_install_with_refresh --no-install-recommends python3-pip
         python3 -m pip install --no-cache-dir cmake
         hash -r
     fi
