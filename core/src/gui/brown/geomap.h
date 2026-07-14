@@ -132,9 +132,18 @@ namespace geomap {
         // (markers, route lines, etc.) that should sit above the map but
         // below the controls — otherwise raw drawList calls submitted
         // after `draw()` returns would paint on top of the buttons.
+        //
+        // `overlayHitTest` reports whether the pointer is currently over an
+        // interactive overlay object (e.g. a station marker). Those objects
+        // are raw drawList primitives that ImGui's item system can't see, so
+        // without this hook the country tooltip and the drag-to-pan handler
+        // would both fire "through" them. When it returns true we suppress
+        // the tooltip and refuse to start a pan, letting the overlay own the
+        // click.
         void draw(const char* extraButtonLabel = nullptr,
                   std::function<void()> extraButtonAction = {},
-                  std::function<void()> overlayDrawer = {});
+                  std::function<void()> overlayDrawer = {},
+                  std::function<bool()> overlayHitTest = {});
         void saveTo(ConfigManager &manager, const char* string);
         void loadFrom(ConfigManager& manager, const char* prefix);
     };

@@ -289,7 +289,8 @@ namespace geomap {
 
     void GeoMap::draw(const char* extraButtonLabel,
                       std::function<void()> extraButtonAction,
-                      std::function<void()> overlayDrawer) {
+                      std::function<void()> overlayDrawer,
+                      std::function<bool()> overlayHitTest) {
 
         maybeInit();
 
@@ -315,6 +316,27 @@ namespace geomap {
         };
         recentMapToScreen = toView;
 
+        // Zoom by `factor` while keeping the map point under `pivotRel`
+        // (canvas-relative pixels) fixed on screen. Reads/writes the live
+        // scale & translate, so it must recompute the map coord with the new
+        // scale rather than go through the value-captured toMap lambda above.
+        // Used by both wheel/pinch zoom (pivot = cursor/centroid) and the
+        // Zoom buttons (pivot = viewport centre).
+        auto zoomAround = [&](ImVec2 pivotRel, float factor) {
+            const CartesianCoordinates before = {
+                (pivotRel.x - w2.x) / (w2.x * scale.x) - translate.x,
+                (w2.y - pivotRel.y) / (w2.y * scale.y) + translate.y
+            };
+            scale = scale * factor;
+            const CartesianCoordinates after = {
+                (pivotRel.x - w2.x) / (w2.x * scale.x) - translate.x,
+                (w2.y - pivotRel.y) / (w2.y * scale.y) + translate.y
+            };
+            translate.x += float(after.x - before.x);
+            translate.y -= float(after.y - before.y);
+            scaleTranslateDirty = true;
+        };
+
         if (windowWidth == 0) {
             return;
         }
@@ -329,6 +351,12 @@ namespace geomap {
         const bool mapHovered = ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered();
         const CartesianCoordinates mouseMapPos = toMap(ImGui::GetMousePos() - recentCanvasPos);
         const std::string* hoveredCountry = nullptr;
+
+        // Is the pointer over an interactive overlay object (marker)? Those
+        // aren't ImGui items, so the tooltip and pan handlers below can't
+        // detect them on their own — the caller's hit-test does. Evaluated
+        // once here against this frame's recentMapToScreen (set above).
+        const bool pointerOverOverlay = overlayHitTest && overlayHitTest();
 
         // Dark-blue "water" — also makes the day/night terminator (drawn
         // later as semi-transparent black) actually visible. A black
@@ -415,7 +443,7 @@ namespace geomap {
         }
         drawList->Flags = savedDrawFlags;
 
-        if (hoveredCountry) {
+        if (hoveredCountry && !pointerOverOverlay) {
             const GeoCoordinates geoPos = cartesianToGeo(mouseMapPos);
             const std::string tooltip = *hoveredCountry + "\n" + geoToMaidenhead(geoPos) + "\n" + geoPos.toString();
             ImGui::SetTooltip("%s", tooltip.c_str());
@@ -426,19 +454,20 @@ namespace geomap {
         // translate so that point stays put. The y delta has the opposite
         // sign of x because our projection inverts the screen y axis.
         if (mapHovered) {
-            const float wheel = ImGui::GetIO().MouseWheel;
+            float wheel = ImGui::GetIO().MouseWheel;
+#ifdef __ANDROID__
+            // The Android backend translates a two-finger pinch into a
+            // horizontal-wheel event and parks the cursor at the pinch
+            // centroid, so folding MouseWheelH in here is what makes
+            // pinch-to-zoom work — anchored at the centroid via GetMousePos.
+            wheel += ImGui::GetIO().MouseWheelH;
+#endif
             if (wheel != 0.0f) {
                 const ImVec2 mouseRel = ImGui::GetMousePos() - recentCanvasPos;
-                const float zoomFactor = (wheel > 0.0f) ? 1.2f : (1.0f / 1.2f);
-                const CartesianCoordinates mapBefore = toMap(mouseRel);
-                scale = scale * zoomFactor;
-                const CartesianCoordinates mapAfter = {
-                    (mouseRel.x - w2.x) / (w2.x * scale.x) - translate.x,
-                    (w2.y - mouseRel.y) / (w2.y * scale.y) + translate.y
-                };
-                translate.x += float(mapAfter.x - mapBefore.x);
-                translate.y -= float(mapAfter.y - mapBefore.y);
-                scaleTranslateDirty = true;
+                // powf so magnitude matters: a desktop notch (wheel = ±1)
+                // still gives the old ×1.2, while a continuous pinch delta
+                // zooms smoothly instead of snapping.
+                zoomAround(mouseRel, std::pow(1.2f, wheel));
             }
         }
 
@@ -453,7 +482,10 @@ namespace geomap {
         // release it when the mouse comes up.
         const ImGuiID dragId = ImGui::GetCurrentWindow()->GetID("geomap_drag");
         const bool dragActive = (ImGui::GetActiveID() == dragId);
-        if (!dragActive && ImGui::IsMouseClicked(0) && mapHovered && !ImGui::IsAnyItemHovered()) {
+        // A click that lands on a marker is consumed by the overlay's own
+        // click-to-select — it must not also start a map pan, or a tap that
+        // drifts would both select and drag. `pointerOverOverlay` gates that.
+        if (!dragActive && ImGui::IsMouseClicked(0) && mapHovered && !ImGui::IsAnyItemHovered() && !pointerOverOverlay) {
             ImGui::SetActiveID(dragId, ImGui::GetCurrentWindow());
             ImGui::FocusWindow(ImGui::GetCurrentWindow());
             initialTouchPos = std::make_shared<ImVec2>(ImGui::GetMousePos());
@@ -478,14 +510,15 @@ namespace geomap {
         }
 
         ImGui::SetCursorPos(curpos);
+        // Anchor button zoom to the viewport centre (pivot = w2) so the map
+        // grows/shrinks around what the user is looking at, instead of the
+        // projection origin off in the Atlantic.
         if (doFingerButton("Zoom In##geomap-zoom-in")) {
-            scale = scale * 2;
-            scaleTranslateDirty = true;
+            zoomAround(w2, 2.0f);
         }
         ImGui::SameLine();
         if (doFingerButton("Zoom Out##geomap-zoom-out")) {
-            scale = scale / 2;
-            scaleTranslateDirty = true;
+            zoomAround(w2, 0.5f);
         }
         ImGui::SameLine();
         if (doFingerButton("Reset Map##reset-map")) {

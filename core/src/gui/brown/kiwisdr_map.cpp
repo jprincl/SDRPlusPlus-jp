@@ -6,6 +6,7 @@
 #include "kiwisdr_map.h"
 
 #include <cmath>
+#include <cstdio>
 #include <sstream>
 
 #include <core.h>
@@ -16,6 +17,16 @@
 
 
 namespace {
+
+    // Compact MHz range, e.g. "0-30 MHz" or "0.015-32 MHz". The directory
+    // gives raw Hz integers, which are hard to read at a glance. %g trims
+    // trailing zeros so round bands stay short.
+    std::string formatBandMHz(const ServerEntry::FrequencyBand& band) {
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "%g-%g MHz",
+                      band.startHz / 1e6, band.endHz / 1e6);
+        return std::string(buf);
+    }
 
     ImColor markerFillForSnr(float maxSnr) {
         if (maxSnr > 22) return ImColor(0.0f, 1.0f, 0.0f);
@@ -103,6 +114,14 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
         [this]() { showExtApiOnly = !showExtApiOnly; },
         [this]() {
             if (serversReady) drawMarkers();
+        },
+        // Overlay hit-test: lets GeoMap suppress the country tooltip and the
+        // drag-to-pan start when the pointer is over a marker, so a click on
+        // a marker is owned by our selection handler instead of leaking
+        // through to the map. Shares markerIndexAtScreenPos with
+        // handleHitTest so the two always agree on what counts as a hit.
+        [this]() -> bool {
+            return serversReady && markerIndexAtScreenPos(ImGui::GetMousePos()) >= 0;
         });
     if (geoMap.scaleTranslateDirty) {
         geoMap.saveTo(*config, configPrefix.c_str());
@@ -136,12 +155,16 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
         }
     }
     else {
-        ImGui::Text("Loaded servers list");
+        ImGui::Text("%d KiwiSDR servers", (int)servers.size());
         // Markers are drawn from inside geoMap.draw via the overlay slot
         // so they sit under the button row. handleHitTest is input-only
         // and runs here.
         handleHitTest();
-        drawSelectionPanel();
+        drawClusterPicker();
+        // On phone-landscape (fullscreenPopup) the Test action moves to the
+        // fixed footer below, so the variable-length info list can't shove it
+        // off the short bottom edge; elsewhere it stays inline under the info.
+        drawSelectionPanel(!fullscreenPopup);
 
         const std::string testStatus = tester.statusText();
         const std::string testError = tester.errorText();
@@ -178,6 +201,20 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     if (doFingerButton("Cancel")) {
         ImGui::CloseCurrentPopup();
     }
+    // Phone-landscape: the Test button lives here in the fixed footer (not in
+    // the scrolling-off info panel) so it's always reachable at the bottom
+    // edge. Same rule that drives fullscreenPopup / the forced landscape.
+    if (fullscreenPopup) {
+        if (const ServerEntry* sel = selectedServer()) {
+            ImGui::SameLine();
+            ImGui::BeginDisabled(tester.isInProgress());
+            const bool doTest = doFingerButton("Test server");
+            ImGui::EndDisabled();
+            if (doTest) {
+                tester.start(sel->url, sel->loc, sel->band);
+            }
+        }
+    }
     if (auto ok = tester.lastOk()) {
         ImGui::SameLine();
         if (doFingerButton("Use tested server: " + ok->hostPort)) {
@@ -191,6 +228,68 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
 
 bool KiwiSDRMapSelector::shouldShowServer(const ServerEntry& server) const {
     return !showExtApiOnly || server.extApi > 0;
+}
+
+bool KiwiSDRMapSelector::isServerVisible(const ServerEntry& server) const {
+    if (!shouldShowServer(server)) return false;
+    // HideFull mode drops fully-occupied servers. Hit-testing must honor the
+    // exact same rule — otherwise a full server, invisible on screen, would
+    // still be clickable (and, sitting at a higher z-index than the visible
+    // marker beside it, would even win the pick).
+    const bool isFull = server.users >= server.usersmax;
+    if (markerStyle == MarkerStyle::HideFull && isFull) return false;
+    return true;
+}
+
+std::vector<int> KiwiSDRMapSelector::markersAtScreenPos(ImVec2 screenPos) const {
+    std::vector<int> hits;
+    if (!geoMap.recentMapToScreen) return hits;
+    const float sz = style::baseFont->FontSize;
+    // Test the same square the marker is drawn as (half-extent sz/2), so the
+    // clickable area matches the visible one exactly. On touch, widen by an
+    // extra half-marker so a fat finger still lands the tap; on desktop the
+    // mouse hits precisely what it sees, keeping pan-next-to-a-marker usable.
+#ifdef __ANDROID__
+    const float half = sz;
+#else
+    const float half = sz / 2.0f;
+#endif
+    const ImVec2 rel = screenPos - geoMap.recentCanvasPos;
+    // Markers paint front-to-back, so the highest-index marker covering the
+    // point is the one on top. Scan back-to-front so hits come out topmost
+    // first: selection order then matches render order.
+    for (int i = (int)servers.size() - 1; i >= 0; i--) {
+        const auto& s = servers[i];
+        if (!isServerVisible(s)) continue;
+        const ImVec2 dest = geoMap.recentMapToScreen(s.gps);
+        if (std::fabs(dest.x - rel.x) <= half && std::fabs(dest.y - rel.y) <= half) {
+            hits.push_back(i);
+        }
+    }
+    return hits;
+}
+
+int KiwiSDRMapSelector::markerIndexAtScreenPos(ImVec2 screenPos) const {
+    const auto hits = markersAtScreenPos(screenPos);
+    return hits.empty() ? -1 : hits.front();
+}
+
+void KiwiSDRMapSelector::selectServerIndex(int i) {
+    if (i < 0 || i >= (int)servers.size()) return;
+    for (auto& s : servers) s.selected = false;
+    ServerEntry chosen = servers[i];
+    chosen.selected = true;
+    servers.erase(servers.begin() + i);
+    servers.emplace_back(std::move(chosen));
+}
+
+void KiwiSDRMapSelector::selectServerByUrl(const std::string& url) {
+    for (int i = 0; i < (int)servers.size(); i++) {
+        if (servers[i].url == url) {
+            selectServerIndex(i);
+            return;
+        }
+    }
 }
 
 void KiwiSDRMapSelector::drawMarkers() {
@@ -212,9 +311,8 @@ void KiwiSDRMapSelector::drawMarkers() {
 #endif
 
     for (const auto& s : servers) {
-        if (!shouldShowServer(s)) continue;
+        if (!isServerVisible(s)) continue;
         const bool isFull = s.users >= s.usersmax;
-        if (markerStyle == MarkerStyle::HideFull && isFull) continue;
 
         // Fill: SNR-based by default; in StatusColored mode, extended-freq
         // servers (>32 MHz, i.e. usable for VHF/FM) are violet, and full
@@ -258,7 +356,7 @@ void KiwiSDRMapSelector::drawMarkers() {
         ss << hovered->name << "\n"
            << "Loc: " << hovered->loc;
         if (hovered->band) {
-            ss << "\nBand: " << hovered->band->startHz << "-" << hovered->band->endHz << " Hz";
+            ss << "\nBand: " << formatBandMHz(*hovered->band);
         }
         ImGui::SetTooltip("%s", ss.str().c_str());
     }
@@ -270,39 +368,57 @@ void KiwiSDRMapSelector::handleHitTest() {
     // IsMouseClicked is a global query — without this gate, clicking the
     // Zoom/Reset/filter buttons sitting in the same child window would
     // also pick whatever marker happens to lie under the button rect.
-    // AllowWhenBlockedByActiveItem is required because the geomap's drag
-    // handler (running in geoMap.draw() just before us) takes ActiveID on
-    // this same click frame; without the flag, IsWindowHovered would be
-    // suppressed and we'd never pick anything. The IsAnyItemHovered check
-    // still rejects clicks that landed on a real widget.
+    // AllowWhenBlockedByActiveItem is kept as a belt-and-suspenders guard:
+    // GeoMap now refuses to start a pan (and take ActiveID) on a click that
+    // lands on a marker, so on a real marker click nothing blocks hover —
+    // but the flag keeps us robust if some other widget holds ActiveID.
+    // The IsAnyItemHovered check still rejects clicks on a real widget.
     if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
         ImGui::IsAnyItemHovered()) return;
-    const auto sz = style::baseFont->FontSize;
-    const auto clickPos = ImGui::GetMousePos() - geoMap.recentCanvasPos;
-    auto radius = sz / 2;
-    for (int q = 0; q < 2; q++) {
-        bool found = false;
-        for (int i = (int)servers.size() - 1; i >= 0; i--) {
-            auto& it = servers[i];
-            if (!shouldShowServer(it)) continue;
-            const auto dest = geoMap.recentMapToScreen(it.gps);
-            const auto dist = std::sqrt(std::pow(dest.x - clickPos.x, 2) + std::pow(dest.y - clickPos.y, 2));
-            if (dist < radius) {
-                found = true;
-                for (auto& s : servers) s.selected = false;
-                auto chosen = it;
-                chosen.selected = true;
-                servers.emplace_back(chosen);
-                servers.erase(servers.begin() + i);
-                break;
-            }
-        }
-        if (found) break;
-        radius *= 5;
+    const auto hits = markersAtScreenPos(ImGui::GetMousePos());
+    if (hits.empty()) return;
+    if (hits.size() == 1) {
+        selectServerIndex(hits.front());
+        return;
     }
+    // Overlapping cluster: don't guess. Capture the candidates by URL and
+    // open a picker (drawn in drawClusterPicker). hits is topmost-first, so
+    // the list reads top-of-stack downward.
+    clusterPicks.clear();
+    for (int idx : hits) {
+        clusterPicks.push_back({ servers[idx].name, servers[idx].url });
+    }
+    ImGui::OpenPopup("##kiwi-cluster-pick");
 }
 
-void KiwiSDRMapSelector::drawSelectionPanel() {
+void KiwiSDRMapSelector::drawClusterPicker() {
+    if (!ImGui::BeginPopup("##kiwi-cluster-pick")) return;
+    ImGui::TextUnformatted("Multiple stations here - pick one:");
+    // Cap the visible height so a dense cluster (e.g. central Europe) scrolls
+    // instead of running off the screen; zooming in still thins the stack.
+    const float rowH = getFingerButtonHeight() + ImGui::GetStyle().ItemSpacing.y;
+    const bool scroll = clusterPicks.size() > 8;
+    if (scroll) ImGui::BeginChild("##cluster-scroll", ImVec2(0.0f, rowH * 8.0f), false);
+    for (size_t k = 0; k < clusterPicks.size(); k++) {
+        const auto& c = clusterPicks[k];
+        // Suffix a unique id so duplicate names still get distinct buttons.
+        if (doFingerButton(c.label + "##pick" + std::to_string(k))) {
+            selectServerByUrl(c.url);
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    if (scroll) ImGui::EndChild();
+    ImGui::EndPopup();
+}
+
+const ServerEntry* KiwiSDRMapSelector::selectedServer() const {
+    for (const auto& s : servers) {
+        if (s.selected && shouldShowServer(s)) return &s;
+    }
+    return nullptr;
+}
+
+void KiwiSDRMapSelector::drawSelectionPanel(bool showTestButton) {
     for (const auto& s : servers) {
         if (!s.selected || !shouldShowServer(s)) continue;
         // doOverlayText puts a translucent dark backdrop behind each label
@@ -310,9 +426,7 @@ void KiwiSDRMapSelector::drawSelectionPanel() {
         doOverlayText("%s", s.name.c_str());
         doOverlayText("%s", s.loc.c_str());
         if (s.band) {
-            doOverlayText("Band: %llu-%llu Hz",
-                          (unsigned long long)s.band->startHz,
-                          (unsigned long long)s.band->endHz);
+            doOverlayText("Band: %s", formatBandMHz(*s.band).c_str());
         }
         if (!s.antenna.empty()) {
             doOverlayText("ANT: %s", s.antenna.c_str());
@@ -335,11 +449,15 @@ void KiwiSDRMapSelector::drawSelectionPanel() {
         doOverlayText("EXT API: %d", s.extApi);
         doOverlayText("URL: %s", s.url.c_str());
 
-        ImGui::BeginDisabled(tester.isInProgress());
-        const bool doTest = doFingerButton("Test server");
-        ImGui::EndDisabled();
-        if (doTest) {
-            tester.start(s.url, s.loc, s.band);
+        // On phone-landscape the Test action is drawn in the fixed footer
+        // instead (see drawPopup), so skip it here.
+        if (showTestButton) {
+            ImGui::BeginDisabled(tester.isInProgress());
+            const bool doTest = doFingerButton("Test server");
+            ImGui::EndDisabled();
+            if (doTest) {
+                tester.start(s.url, s.loc, s.band);
+            }
         }
     }
 }
