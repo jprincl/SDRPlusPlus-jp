@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.2.2-beta3 - 2026-07-14
+
+### Added
+
+- KiwiSDR: "Recent" servers list — the last 8 servers connected to (whether picked on the map, typed by hand or re-picked from the list itself) are remembered across sessions together with their location and served frequency band, for quick reconnection without going through the map.
+- Level meter: clicking the meter toggles between a dBFS scale (0 dB at the right edge, negative to the left) and the original positive scale; tick labels and the numeric readout follow the active mode.
+
+### Changed
+
+- SNR readout reworked: SNR is now reported as the held peak in-band level over the out-of-VFO noise floor averaged over the same peak-hold window, so the value stays steady on keyed CW instead of sagging between dits and dashes. The separate "SNR Smoothing" display option was removed — smoothing of the readout is now intrinsic.
+- Level meter layout: on narrow windows the meter now switches to sparse (every-other) tick labels and hides the numeric readout instead of overlapping labels, and it can grow wider on large windows.
+- Application icons updated with the fork-specific (iak) branding, including the macOS and Windows icon variants.
+
+### Fixed
+
+- Fixed an out-of-bounds read in the FFT signal-level calculation (`calculateVFOSignalInfo`): with the VFO at the upper band edge the peak search read one float past the end of the FFT row and crashed the FFT thread (inherited from upstream).
+- Fixed a startup crash-loop on Android caused by the SNR smoothing config keys being read without registered defaults (resolved by the removal of that option).
+- USB streaming teardown was made sound across all libusb-based sources, fixing use-after-free crashes when stopping a source — most visibly the SIGSEGV in the Airspy HF+ source after a USB unplug on Android:
+  - On Android, unplugging a device no longer closes the USB file descriptor under a live libusb handle; the connection is kept alive until the native side releases it, so cancelled transfers are reaped cleanly and a replug cannot be handed a stale connection.
+  - The QMX Android USB backend's transfer teardown was reworked (submission/cancellation serialized, exact in-flight accounting, bounded 500 ms drain, leak-instead-of-free if the drain expires) and serves as the reference implementation.
+  - The same defect class was fixed in the bundled drivers via PR-ready patches: libairspy, libairspyhf, libhydrasdr and librtlsdr all gained exact in-flight transfer accounting, resubmission gating during cancel, a verified cancellation drain, and a latch-and-leak fallback instead of freeing memory libusb still references. Also fixes rare stop-time crashes on desktop. An upstream librtlsdr hang (`rtlsdr_close()` spinning forever after an error-path exit from async reading) was fixed along the way.
+- KiwiSDR map fixes: clicks can no longer select markers that aren't drawn (hidden full servers in Hide Full mode) or leak through a marker to pan the map, overlapping markers now offer a pick-one popup instead of silently choosing the topmost, the Zoom In/Out buttons zoom around the viewport centre, pinch-to-zoom works on Android, the served band is shown in MHz, and on phone-landscape layouts the Test button stays reachable in a fixed footer.
+
 ## v1.2.2-beta2 - 2026-07-11
 
 ### Breaking change
