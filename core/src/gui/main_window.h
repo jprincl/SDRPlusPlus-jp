@@ -66,6 +66,9 @@ private:
     int menuWidth = 300;
     bool grabbingMenu = false;
     int newWidth = 300;
+    float menuGrabOffset = 0.0f;      // grab-point offset so the splitter doesn't jump to the finger/cursor
+    bool menuSplitterPending = false; // Android: touch near the splitter, drag direction not decided yet
+    ImVec2 menuSplitterDownPos;
     int fftHeight = 300;
     bool showMenu = true;
     int tuningMode = tuner::TUNER_MODE_NORMAL;

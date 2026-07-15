@@ -7,6 +7,9 @@
 #include <utils/flog.h>
 #include <gui/gui.h>
 #include <gui/style.h>
+#ifdef __ANDROID__
+#include <android_backend.h>
+#endif
 
 float DEFAULT_COLOR_MAP[][3] = {
     { 0x00, 0x00, 0x20 },
@@ -261,11 +264,21 @@ namespace ImGui {
         bool mouseClicked = ImGui::ButtonBehavior(ImRect(fftAreaMin, wfMax), GetID("WaterfallID"), &mouseHovered, &mouseHeld,
                                                   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_PressedOnClick);
 
+        float splitterY = widgetPos.y + newFFTAreaHeight;
+#ifdef __ANDROID__
+        // Touch: the divider band no longer grabs on touch-down (see
+        // fftResizePending below) and got narrower; the fat immediate target is
+        // the pill handle drawn in draw(). The band also starts at the FFT area
+        // instead of the widget edge so it stays clear of the menu splitter's
+        // handle, which reaches over the dB-scale strip.
+        float separatorHitRadius = style::dp(12.0f);
+        ImVec2 splitterPillCenter(fftAreaMin.x + (float)dataWidth * 0.5f, splitterY);
+        bool mouseInFFTResizePill = fabsf(dragOrigin.x - splitterPillCenter.x) <= style::dp(32.0f) && fabsf(dragOrigin.y - splitterPillCenter.y) <= style::dp(18.0f);
+        mouseInFFTResize = mouseInFFTResizePill || (dragOrigin.x > fftAreaMin.x && dragOrigin.x < fftAreaMax.x && dragOrigin.y >= splitterY - separatorHitRadius && dragOrigin.y <= splitterY + separatorHitRadius);
+#else
         float separatorHitRadius = (2.0f * style::uiScale);
-#ifdef ANDROID
-        separatorHitRadius = (20.0f * style::uiScale);
+        mouseInFFTResize = (dragOrigin.x > widgetPos.x && dragOrigin.x < widgetPos.x + widgetSize.x && dragOrigin.y >= splitterY - separatorHitRadius && dragOrigin.y <= splitterY + separatorHitRadius);
 #endif
-        mouseInFFTResize = (dragOrigin.x > widgetPos.x && dragOrigin.x < widgetPos.x + widgetSize.x && dragOrigin.y >= widgetPos.y + newFFTAreaHeight - separatorHitRadius && dragOrigin.y <= widgetPos.y + newFFTAreaHeight + separatorHitRadius);
         mouseInFreq = IS_IN_AREA(dragOrigin, freqAreaMin, freqAreaMax);
         mouseInFFT = IS_IN_AREA(dragOrigin, fftAreaMin, fftAreaMax);
         mouseInWaterfall = IS_IN_AREA(dragOrigin, wfMin, wfMax);
@@ -289,7 +302,31 @@ namespace ImGui {
             if (fftResizeSelect) {
                 FFTAreaHeight = newFFTAreaHeight;
                 onResize();
+#ifdef __ANDROID__
+                backend::hapticTick();
+#endif
             }
+#ifdef __ANDROID__
+            if (fftResizePending) {
+                // The touch was held back waiting for its drag direction and
+                // turned out to be a plain tap — give it its original meaning:
+                // select the VFO under the finger, or tune to the tap.
+                fftResizePending = false;
+                if (hoveredVFOName != "") {
+                    selectedVFO = hoveredVFOName;
+                    selectedVFOChanged = true;
+                }
+                else if (selVfo != NULL && (mouseInFFT || mouseInWaterfall)) {
+                    int refCenter = mousePos.x - fftAreaMin.x;
+                    if (refCenter >= 0 && refCenter < dataWidth) {
+                        double off = ((((double)refCenter / ((double)dataWidth / 2.0)) - 1.0) * (viewBandwidth / 2.0)) + viewOffset;
+                        off += centerFreq;
+                        off = (round(off / selVfo->snapInterval) * selVfo->snapInterval) - centerFreq;
+                        selVfo->setOffset(off);
+                    }
+                }
+            }
+#endif
 
             fftResizeSelect = false;
             freqScaleSelect = false;
@@ -304,10 +341,49 @@ namespace ImGui {
         if (mouseInFFTResize) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+#ifdef __ANDROID__
+                if (mouseInFFTResizePill) {
+                    fftResizeSelect = true;
+                    fftResizeGrabOffset = splitterY - mousePos.y;
+                    backend::hapticTick();
+                }
+                else {
+                    // Not on the pill — hold the touch back until the finger's
+                    // drag direction is known (resolved below).
+                    fftResizePending = true;
+                    fftResizePendingPos = mousePos;
+                }
+#else
                 fftResizeSelect = true;
+                fftResizeGrabOffset = splitterY - mousePos.y;
+#endif
                 targetFound = true;
             }
         }
+
+#ifdef __ANDROID__
+        // A touch near the divider is on hold until its direction is known:
+        // across the divider = resize, along it = the gesture the band would
+        // otherwise steal (freq-scale pan or VFO tuning).
+        if (fftResizePending) {
+            float dx = mousePos.x - fftResizePendingPos.x;
+            float dy = mousePos.y - fftResizePendingPos.y;
+            if (std::max(fabsf(dx), fabsf(dy)) < style::dp(6.0f)) {
+                return; // still undecided — swallow the touch for now
+            }
+            fftResizePending = false;
+            if (fabsf(dy) > fabsf(dx)) {
+                fftResizeSelect = true;
+                fftResizeGrabOffset = splitterY - fftResizePendingPos.y;
+                backend::hapticTick();
+            }
+            else if (mouseInFreq) {
+                freqScaleSelect = true;
+            }
+            // else: the touch started in the waterfall part of the band; the
+            // VFO-move branch below keys off the same drag origin and takes over.
+        }
+#endif
 
         // If mouse was clicked inside the central part, check what was clicked
         if (mouseClicked && !targetFound) {
@@ -354,7 +430,7 @@ namespace ImGui {
         // If the FFT resize bar was selected, resize FFT accordingly
         if (fftResizeSelect) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-            newFFTAreaHeight = mousePos.y - widgetPos.y;
+            newFFTAreaHeight = mousePos.y + fftResizeGrabOffset - widgetPos.y;
             newFFTAreaHeight = style::clampSplit(newFFTAreaHeight, widgetSize.y, 150.0f, 50.0f);
             ImGui::GetForegroundDrawList()->AddLine(ImVec2(widgetPos.x, newFFTAreaHeight + widgetPos.y), ImVec2(widgetEndPos.x, newFFTAreaHeight + widgetPos.y),
                                                     ImGui::GetColorU32(ImGuiCol_SeparatorActive), style::uiScale);
@@ -913,6 +989,7 @@ namespace ImGui {
             mouseInFreq = false;
             mouseInFFT = false;
             mouseInWaterfall = false;
+            fftResizePending = false;
         }
 
         updateAllVFOs(true);
@@ -925,6 +1002,24 @@ namespace ImGui {
         if (bandplan != NULL && bandplanVisible) {
             drawBandPlan();
         }
+
+#ifdef __ANDROID__
+        // FFT/waterfall divider drag handle: the fat touch target that grabs on
+        // touch-down (see processInputs). Drawn last so it sits on top of the
+        // freq scale and the waterfall; the dark backing keeps it readable.
+        if (waterfallVisible) {
+            ImVec2 pillCenter(fftAreaMin.x + (float)dataWidth * 0.5f, widgetPos.y + newFFTAreaHeight);
+            float halfW = style::dp(24.0f) + (fftResizeSelect ? style::dp(4.0f) : 0.0f);
+            float halfH = style::dp(fftResizeSelect ? 6.0f : 4.5f);
+            float pad = style::dp(2.0f);
+            window->DrawList->AddRectFilled(ImVec2(pillCenter.x - halfW - pad, pillCenter.y - halfH - pad),
+                                            ImVec2(pillCenter.x + halfW + pad, pillCenter.y + halfH + pad),
+                                            IM_COL32(0, 0, 0, 120), halfH + pad);
+            window->DrawList->AddRectFilled(ImVec2(pillCenter.x - halfW, pillCenter.y - halfH),
+                                            ImVec2(pillCenter.x + halfW, pillCenter.y + halfH),
+                                            fftResizeSelect ? ImGui::GetColorU32(ImGuiCol_SeparatorActive) : IM_COL32(210, 210, 210, 200), halfH);
+        }
+#endif
 
         if (!waterfallVisible) {
             buf_mtx.unlock();

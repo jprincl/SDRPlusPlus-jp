@@ -2,6 +2,20 @@
 
 The detailed per-release history of the SDR++ iak fork, including alpha and beta pre-releases. For a brief summary of the major releases only, see [changelog.md](changelog.md).
 
+## Unreleased
+
+### Changed
+
+- Android: the two main-window splitters (menu width and spectrum/waterfall boundary) are now grabbed via visible pill-shaped drag handles with haptic feedback, replacing the invisible fat hit bands that stole touches from the menu scrollbar, the frequency scale and the top of the waterfall. Away from the handle the splitter line still works, but only engages once the finger's first movement runs across the divider — a movement along it goes to the gesture that used to be stolen (menu scrolling, frequency-scale panning, VFO tuning), and a plain tap keeps its original meaning (VFO select/tune). Splitters no longer jump to the touch point when grabbed (this also removes a small grab-point jump with the mouse on desktop).
+
+### Fixed
+
+- Scroll wheel over the side menu or other panels no longer also tunes the VFO: the waterfall's hover-area flags were only recomputed while the waterfall was hovered, so a fast mouse exit left them stuck and the main window's wheel-to-tune (and arrow-key tuning) kept firing anywhere. The flags are now cleared whenever the waterfall isn't hovered, and the stuck `digitHovered` flag of the frequency display (which could block arrow-key tuning the same way) was fixed too.
+- Scroll-wheel tuning and the frequency display digits now work with precision touchpads and free-spinning wheels: fractional wheel deltas were truncated to zero and dropped; they are now accumulated and applied on whole steps.
+- The Zoom/Max/Min sliders next to the waterfall now block wheel events from scrolling the panel under them (the upstream `SetItemUsingMouseWheel` call targeted a text label, making it a no-op).
+- Waterfall zoom (pinch on Android, Ctrl+scroll on desktop) is now anchored on the frequency under the first finger / mouse cursor instead of the view center, so the signal being tuned stays put on screen while zooming. The Android pinch recognizer now keeps the cursor on the first finger (tracked by pointer id) rather than the pinch centroid.
+- About (credits) dialog made usable on small touch screens: it previously closed on any touch, so the scrollbar shown when the dialog overflows the screen (e.g. phone landscape) could not be used. The content now scrolls by dragging anywhere in the dialog, the scrollbar is wider and can be grabbed without dismissing, and the dialog closes on a short tap or Escape.
+
 ## v1.2.2 - 2026-07-14
 
 First public release of the fork. Cumulatively summarized in [changelog.md](changelog.md); the same code as v1.2.2-beta3.

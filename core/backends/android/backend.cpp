@@ -97,6 +97,8 @@ namespace backend {
 
     void setRestartOnResume(bool value) { restartOnResume = value; }
 
+    void hapticTick() { callActivityVoidMethod("hapticTick"); }
+
     int startSleepTimer() {
         sleepResetLastCall = std::chrono::steady_clock::now();
         return callActivityVoidMethod("startSleepTimer") ? 0 : -1;

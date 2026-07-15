@@ -17,6 +17,7 @@ import android.Manifest;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
+import android.view.HapticFeedbackConstants;
 import android.view.Surface;
 import android.view.SurfaceView;
 import android.view.View;
@@ -535,6 +536,16 @@ class MainActivity : NativeActivity() {
         SDR_conn = null
         Companion.clearRetainedUsbConnections()
         super.onDestroy();
+    }
+
+    /**
+     * Short haptic tick for UI feedback (e.g. a splitter drag handle engaging).
+     * Callable from native code via JNI.
+     */
+    fun hapticTick() {
+        runOnUiThread {
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
     }
 
     // ── Sleep timer API ──────────────────────────────────────────────

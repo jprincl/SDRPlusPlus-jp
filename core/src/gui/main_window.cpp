@@ -23,6 +23,9 @@
 #include <gui/menus/theme.h>
 #include <gui/menus/android.h>
 #include <gui/dialogs/credits.h>
+#ifdef __ANDROID__
+#include <android_backend.h>
+#endif
 #include <filesystem>
 #include <signal_path/source.h>
 #include <gui/dialogs/loading_screen.h>
@@ -547,30 +550,84 @@ void MainWindow::draw() {
         float curY = ImGui::GetCursorPosY();
         bool click = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        float splitBottom = winSize.y - style::dp(10.0f);
         if (grabbingMenu) {
-            newWidth = mousePos.x;
+            newWidth = mousePos.x + menuGrabOffset;
             newWidth = style::clampSplit(newWidth, winSize.x, 250.0f, 250.0f);
-            ImGui::GetForegroundDrawList()->AddLine(ImVec2(newWidth, curY), ImVec2(newWidth, winSize.y - style::dp(10.0f)), ImGui::GetColorU32(ImGuiCol_SeparatorActive));
+            ImGui::GetForegroundDrawList()->AddLine(ImVec2(newWidth, curY), ImVec2(newWidth, splitBottom), ImGui::GetColorU32(ImGuiCol_SeparatorActive));
         }
+#ifdef __ANDROID__
+        // Touch handling. A full-length fat hit band fights with the menu
+        // scrollbar sitting right against the splitter, so the fat target is a
+        // visible pill handle instead: it reaches over the waterfall's dB-scale
+        // strip (which takes no input) and grabs on touch-down. Along the rest
+        // of the line a touch is only accepted once the finger's first movement
+        // runs across the splitter — a vertical start means scrolling.
+        ImVec2 pillCenter(newWidth + style::dp(4.0f), (curY + splitBottom) * 0.5f);
+        float pillHalfH = style::dp(24.0f);
+        bool inPillBox = mousePos.x >= newWidth - style::dp(2.0f) && mousePos.x <= newWidth + style::dp(30.0f) &&
+                         fabsf(mousePos.y - pillCenter.y) <= pillHalfH + style::dp(10.0f);
+        if (menuSplitterPending) {
+            float dx = mousePos.x - menuSplitterDownPos.x;
+            float dy = mousePos.y - menuSplitterDownPos.y;
+            if (!down) {
+                menuSplitterPending = false;
+            }
+            else if (std::max(fabsf(dx), fabsf(dy)) >= style::dp(6.0f)) {
+                menuSplitterPending = false;
+                if (fabsf(dx) > fabsf(dy)) {
+                    grabbingMenu = true;
+                    menuGrabOffset = newWidth - menuSplitterDownPos.x;
+                    backend::hapticTick();
+                }
+            }
+        }
+        else if (!grabbingMenu && click) {
+            // The pill hit box overlaps the waterfall child window, so hover of
+            // any child of the main window counts for it.
+            if (inPillBox && !ImGui::IsAnyItemActive() && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+                grabbingMenu = true;
+                menuGrabOffset = newWidth - mousePos.x;
+                backend::hapticTick();
+            }
+            else if (isWindowHovered && fabsf(mousePos.x - (float)newWidth) <= style::dp(20.0f) && mousePos.y > curY) {
+                menuSplitterPending = true;
+                menuSplitterDownPos = mousePos;
+            }
+        }
+        // The column children paint over the main window, so the handle goes on
+        // the foreground list; the dark backing keeps it readable on any theme.
+        {
+            float halfW = style::dp(grabbingMenu ? 6.0f : 4.5f);
+            float halfH = pillHalfH + (grabbingMenu ? style::dp(4.0f) : 0.0f);
+            float pad = style::dp(2.0f);
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            fg->AddRectFilled(ImVec2(pillCenter.x - halfW - pad, pillCenter.y - halfH - pad), ImVec2(pillCenter.x + halfW + pad, pillCenter.y + halfH + pad), IM_COL32(0, 0, 0, 120), halfW + pad);
+            fg->AddRectFilled(ImVec2(pillCenter.x - halfW, pillCenter.y - halfH), ImVec2(pillCenter.x + halfW, pillCenter.y + halfH),
+                              grabbingMenu ? ImGui::GetColorU32(ImGuiCol_SeparatorActive) : IM_COL32(210, 210, 210, 200), halfW);
+        }
+#else
         float separatorHitRadius = (2.0f * style::uiScale);
-#ifdef ANDROID
-        separatorHitRadius = (20.0f * style::uiScale);
-#endif
         if (isWindowHovered && mousePos.x >= newWidth - separatorHitRadius && mousePos.x <= newWidth + separatorHitRadius && mousePos.y > curY) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
             if (click) {
                 grabbingMenu = true;
+                menuGrabOffset = newWidth - mousePos.x;
             }
         }
         else {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
         }
+#endif
         if (!down && grabbingMenu) {
             grabbingMenu = false;
             menuWidth = newWidth;
             core::configManager.acquire();
             core::configManager.conf["menuWidth"] = style::unscale(menuWidth);
             core::configManager.release(true);
+#ifdef __ANDROID__
+            backend::hapticTick();
+#endif
         }
     }
 

@@ -75,6 +75,10 @@ namespace backend {
     bool audioOutputUsesOpenSLES();
     bool hasUsbDeviceAvailable(const std::vector<DevVIDPID>& allowedVidPids);
 
+    // Short haptic tick for UI feedback, e.g. a splitter drag handle engaging
+    // (calls into MainActivity via JNI).
+    void hapticTick();
+
     // Sleep timer control (calls into MainActivity via JNI)
     int startSleepTimer();
     int stopSleepTimer();
