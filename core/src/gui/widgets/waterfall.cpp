@@ -428,6 +428,15 @@ namespace ImGui {
         if (zoomWheel != 0.0f) {
             double newBw = viewBandwidth * std::pow(0.9, (double)zoomWheel);
             newBw = std::clamp(newBw, wholeBandwidth / 200.0, wholeBandwidth);
+            // Anchor the zoom on the frequency under the cursor — the first
+            // (tuning) finger when pinching on touch — so that frequency keeps
+            // its screen position while the view stretches around it.
+            double anchorX = (double)mousePos.x - fftAreaMin.x;
+            if (newBw != viewBandwidth && anchorX >= 0.0 && anchorX < (double)dataWidth) {
+                double norm = (anchorX / ((double)dataWidth / 2.0)) - 1.0;    // -1..1 across the view
+                double anchorOff = viewOffset + (norm * viewBandwidth / 2.0); // Hz relative to center freq
+                viewOffset = anchorOff - (norm * newBw / 2.0);                // setViewBandwidth clamps to band edges
+            }
             setViewBandwidth(newBw);
             return;
         }

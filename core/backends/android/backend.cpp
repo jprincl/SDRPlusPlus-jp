@@ -205,6 +205,7 @@ namespace backend {
         State state = State::IDLE;
         float p[2][2] = {};   // [pointer_index][x, y]
         float lastDist = 0.0f;
+        int32_t firstFingerId = -1;   // pointer id of the finger that started the gesture
 
         // Returns 1 if the event was consumed (do NOT forward to ImGui).
         int32_t handle(AInputEvent* ev) {
@@ -220,6 +221,11 @@ namespace backend {
                     p[i][0] = AMotionEvent_getX(ev, i);
                     p[i][1] = AMotionEvent_getY(ev, i);
                 }
+                // The finger that was already down (i.e. not the one this event
+                // reports as going down) is the anchor of the zoom; remember it
+                // by pointer id since indices reshuffle as fingers come and go.
+                int32_t downIdx = (raw & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+                firstFingerId = AMotionEvent_getPointerId(ev, downIdx == 0 ? 1 : 0);
                 lastDist = fingerDist();
                 state = State::PINCHING;
                 // Release any ImGui mouse button so pending drags don't leak.
@@ -239,11 +245,19 @@ namespace backend {
                 float delta = d - lastDist;
                 lastDist    = d;
 
-                // Move the ImGui cursor to the pinch centroid so that the
-                // waterfall's mouseIn* hit-tests resolve to the right region.
+                // Keep the ImGui cursor on the first finger: the user tunes with
+                // it, so the waterfall anchors the zoom on the frequency under it
+                // (and the mouseIn* hit-tests resolve to the right region).
+                int32_t firstIdx = 0;
+                for (int32_t i = 0; i < count; i++) {
+                    if (AMotionEvent_getPointerId(ev, i) == firstFingerId) {
+                        firstIdx = i;
+                        break;
+                    }
+                }
                 ImGuiIO& io = ImGui::GetIO();
-                io.AddMousePosEvent((p[0][0] + p[1][0]) * 0.5f,
-                                    (p[0][1] + p[1][1]) * 0.5f);
+                io.AddMousePosEvent(AMotionEvent_getX(ev, firstIdx),
+                                    AMotionEvent_getY(ev, firstIdx));
 
                 // Carry zoom via the horizontal wheel axis.  Using H-wheel (X)
                 // instead of Ctrl+V-wheel avoids any key-state timing dependency:
