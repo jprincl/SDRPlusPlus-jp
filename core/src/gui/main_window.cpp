@@ -683,9 +683,20 @@ void MainWindow::draw() {
             }
         }
 
-        // Handle scrollwheel
-        int wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0 && !ImGui::GetIO().KeyCtrl && (gui::waterfall.mouseInFFT || gui::waterfall.mouseInWaterfall)) {
+        // Handle scrollwheel. Precision touchpads and free-spinning wheels
+        // report fractional deltas that a plain int cast would drop, so
+        // accumulate and only tune on whole steps. The accumulator is
+        // cleared outside the FFT/waterfall area (and while Ctrl-zooming)
+        // so partial scrolls elsewhere can't discharge into a tune later.
+        if (!ImGui::GetIO().KeyCtrl && (gui::waterfall.mouseInFFT || gui::waterfall.mouseInWaterfall)) {
+            wheelAccum += ImGui::GetIO().MouseWheel;
+        }
+        else {
+            wheelAccum = 0.0f;
+        }
+        int wheel = (int)wheelAccum;
+        if (wheel != 0) {
+            wheelAccum -= (float)wheel;
             double nfreq;
             if (vfo != NULL) {
                 // Select factor depending on modifier keys
@@ -729,7 +740,11 @@ void MainWindow::draw() {
         wfSliderSize.y = ImGui::GetContentRegionAvail().y / 3.f - ImGui::GetTextLineHeightWithSpacing();
         sliderSeparators = false;
     }
-    if (ImGui::VSliderFloat("##_7_", wfSliderSize, &bw, 1.0, 0.0, "")) {
+    bool zoomSliderChanged = ImGui::VSliderFloat("##_7_", wfSliderSize, &bw, 1.0, 0.0, "");
+    // Applies to the last submitted item: keeps wheel events over the slider
+    // from scrolling the child window under it.
+    ImGui::SetItemUsingMouseWheel();
+    if (zoomSliderChanged) {
         double factor = (double)bw * (double)bw;
 
         // Map 0.0 -> 1.0 to 1000.0 -> bandwidth
@@ -748,7 +763,9 @@ void MainWindow::draw() {
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - (ImGui::CalcTextSize("Max").x / 2.0));
     ImGui::TextUnformatted("Max");
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - 10 * style::uiScale);
-    if (ImGui::VSliderFloat("##_8_", wfSliderSize, &fftMax, 0.0, -160.0f, "")) {
+    bool maxSliderChanged = ImGui::VSliderFloat("##_8_", wfSliderSize, &fftMax, 0.0, -160.0f, "");
+    ImGui::SetItemUsingMouseWheel();
+    if (maxSliderChanged) {
         fftMax = std::max<float>(fftMax, fftMin + 10);
         core::configManager.acquire();
         core::configManager.conf["max"] = fftMax;
@@ -760,8 +777,9 @@ void MainWindow::draw() {
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - (ImGui::CalcTextSize("Min").x / 2.0));
     ImGui::TextUnformatted("Min");
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - 10 * style::uiScale);
+    bool minSliderChanged = ImGui::VSliderFloat("##_9_", wfSliderSize, &fftMin, 0.0, -160.0f, "");
     ImGui::SetItemUsingMouseWheel();
-    if (ImGui::VSliderFloat("##_9_", wfSliderSize, &fftMin, 0.0, -160.0f, "")) {
+    if (minSliderChanged) {
         fftMin = std::min<float>(fftMax - 10, fftMin);
         core::configManager.acquire();
         core::configManager.conf["min"] = fftMin;

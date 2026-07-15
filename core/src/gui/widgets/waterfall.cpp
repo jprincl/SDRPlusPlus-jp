@@ -894,6 +894,17 @@ namespace ImGui {
             onInputProcess.emit(args);
             if (!inputHandled) { processInputs(); }
         }
+        else {
+            // These are only recomputed inside processInputs(), which just got
+            // skipped. Without this reset they keep whatever value the last
+            // hovered frame left behind (a fast mouse exit can leave them
+            // true), and main_window's wheel/arrow-key tuning keeps firing
+            // while the cursor is over the menu or another window.
+            mouseInFFTResize = false;
+            mouseInFreq = false;
+            mouseInFFT = false;
+            mouseInWaterfall = false;
+        }
 
         updateAllVFOs(true);
 

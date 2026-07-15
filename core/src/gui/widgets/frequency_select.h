@@ -44,4 +44,5 @@ private:
 
     char buf[100];
     float cachedWidth_ = 0.0f;
+    float wheelAccum = 0.0f;
 };

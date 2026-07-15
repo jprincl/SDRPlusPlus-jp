@@ -178,15 +178,19 @@ void FrequencySelect::draw() {
         }
     }
 
+    bool hovered = false;
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_None) &&
         !gui::mainWindow.lockWaterfallControls)
     {
         ImVec2 mousePos = ImGui::GetMousePos();
         bool leftClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         bool rightClick = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-        int mw = io.MouseWheel;
+        // Precision touchpads report fractional wheel deltas; accumulate and
+        // step digits on whole notches instead of truncating them away.
+        wheelAccum += io.MouseWheel;
+        int mw = (int)wheelAccum;
+        wheelAccum -= (float)mw;
         bool onDigit = false;
-        bool hovered = false;
 
         for (int i = firstDigit; i < 12; i++) {
             onDigit = false;
@@ -245,7 +249,6 @@ void FrequencySelect::draw() {
                 }
             }
         }
-        digitHovered = hovered;
 
         if (isInArea(mousePos, digitTopMins[firstDigit], digitBottomMaxs[11])) {
             bool shortcutKey = io.ConfigMacOSXBehaviors ? (io.KeyMods == ImGuiKeyModFlags_Super) : (io.KeyMods == ImGuiKeyModFlags_Ctrl);
@@ -275,6 +278,12 @@ void FrequencySelect::draw() {
             }
         }
     }
+    // Assigned outside the hover-gated block: leaving the window while over a
+    // digit used to leave digitHovered stuck true, blocking the arrow-key
+    // tuning in main_window. Partial wheel notches are also dropped once the
+    // cursor is off the digits so they can't discharge into a step later.
+    digitHovered = hovered;
+    if (!hovered) { wheelAccum = 0.0f; }
 
     uint64_t freq = 0;
     for (int i = 0; i < 12; i++) {
