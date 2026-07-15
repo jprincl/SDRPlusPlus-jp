@@ -528,12 +528,6 @@ void MainWindow::draw() {
     if (ImGui::ImageButton(icons::LOGO, ImVec2(32 * style::uiScale, 32 * style::uiScale), ImVec2(0, 0), ImVec2(1, 1), 0)) {
         showCredits = true;
     }
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        showCredits = false;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        showCredits = false;
-    }
 
     // Reset waterfall lock
     lockWaterfallControls = showCredits;
@@ -784,7 +778,7 @@ void MainWindow::draw() {
     ImGui::End();
 
     if (showCredits) {
-        credits::show();
+        showCredits = credits::show();
     }
 
     if (demoWindow) {

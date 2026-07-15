@@ -2,5 +2,6 @@
 
 namespace credits {
     void init();
-    void show();
+    // Draws the credits modal. Returns false when the user dismissed it.
+    bool show();
 }
