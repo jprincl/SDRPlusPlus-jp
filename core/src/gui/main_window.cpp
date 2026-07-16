@@ -546,6 +546,13 @@ void MainWindow::draw() {
             newWidth = clampedMenuWidth;
         }
     }
+#ifdef __ANDROID__
+    // Menu splitter pill: computed by the splitter handling below, drawn later
+    // inside the waterfall child so that floating windows (e.g. the KiwiSDR
+    // map popup) paint over it.
+    bool menuPillVisible = false;
+    ImVec2 menuPillCenter;
+#endif
     if (!lockWaterfallControls && showMenu) {
         float curY = ImGui::GetCursorPosY();
         bool click = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
@@ -563,8 +570,8 @@ void MainWindow::draw() {
         // strip (which takes no input) and grabs on touch-down. Along the rest
         // of the line a touch is only accepted once the finger's first movement
         // runs across the splitter — a vertical start means scrolling.
-        ImVec2 pillCenter(newWidth + style::dp(4.0f), (curY + splitBottom) * 0.5f);
-        float pillHalfH = style::dp(24.0f);
+        ImVec2 pillCenter(newWidth + style::dp(4.0f), curY + (splitBottom - curY) * 0.75f);
+        float pillHalfH = style::dp(16.0f);
         bool inPillBox = mousePos.x >= newWidth - style::dp(2.0f) && mousePos.x <= newWidth + style::dp(30.0f) &&
                          fabsf(mousePos.y - pillCenter.y) <= pillHalfH + style::dp(10.0f);
         if (menuSplitterPending) {
@@ -595,17 +602,8 @@ void MainWindow::draw() {
                 menuSplitterDownPos = mousePos;
             }
         }
-        // The column children paint over the main window, so the handle goes on
-        // the foreground list; the dark backing keeps it readable on any theme.
-        {
-            float halfW = style::dp(grabbingMenu ? 6.0f : 4.5f);
-            float halfH = pillHalfH + (grabbingMenu ? style::dp(4.0f) : 0.0f);
-            float pad = style::dp(2.0f);
-            ImDrawList* fg = ImGui::GetForegroundDrawList();
-            fg->AddRectFilled(ImVec2(pillCenter.x - halfW - pad, pillCenter.y - halfH - pad), ImVec2(pillCenter.x + halfW + pad, pillCenter.y + halfH + pad), IM_COL32(0, 0, 0, 120), halfW + pad);
-            fg->AddRectFilled(ImVec2(pillCenter.x - halfW, pillCenter.y - halfH), ImVec2(pillCenter.x + halfW, pillCenter.y + halfH),
-                              grabbingMenu ? ImGui::GetColorU32(ImGuiCol_SeparatorActive) : IM_COL32(210, 210, 210, 200), halfW);
-        }
+        menuPillVisible = true;
+        menuPillCenter = pillCenter;
 #else
         float separatorHitRadius = (2.0f * style::uiScale);
         if (isWindowHovered && mousePos.x >= newWidth - separatorHitRadius && mousePos.x <= newWidth + separatorHitRadius && mousePos.y > curY) {
@@ -711,6 +709,24 @@ void MainWindow::draw() {
     ImGui::BeginChild("Waterfall");
 
     gui::waterfall.draw();
+
+#ifdef __ANDROID__
+    // Menu splitter drag handle (see the splitter handling above). Drawn into
+    // this child's draw list so floating windows and popups paint over it, with
+    // an expanded clip rect since it straddles the child's left edge. The dark
+    // backing keeps it readable on any theme.
+    if (menuPillVisible) {
+        float halfW = style::dp(grabbingMenu ? 6.0f : 4.5f);
+        float halfH = style::dp(16.0f) + (grabbingMenu ? style::dp(4.0f) : 0.0f);
+        float pad = style::dp(2.0f);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->PushClipRectFullScreen();
+        dl->AddRectFilled(ImVec2(menuPillCenter.x - halfW - pad, menuPillCenter.y - halfH - pad), ImVec2(menuPillCenter.x + halfW + pad, menuPillCenter.y + halfH + pad), IM_COL32(0, 0, 0, 120), halfW + pad);
+        dl->AddRectFilled(ImVec2(menuPillCenter.x - halfW, menuPillCenter.y - halfH), ImVec2(menuPillCenter.x + halfW, menuPillCenter.y + halfH),
+                          grabbingMenu ? ImGui::GetColorU32(ImGuiCol_SeparatorActive) : IM_COL32(210, 210, 210, 200), halfW);
+        dl->PopClipRect();
+    }
+#endif
 
     ImGui::EndChild();
 

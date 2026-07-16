@@ -272,8 +272,8 @@ namespace ImGui {
         // instead of the widget edge so it stays clear of the menu splitter's
         // handle, which reaches over the dB-scale strip.
         float separatorHitRadius = style::dp(12.0f);
-        ImVec2 splitterPillCenter(fftAreaMin.x + (float)dataWidth * 0.5f, splitterY);
-        bool mouseInFFTResizePill = fabsf(dragOrigin.x - splitterPillCenter.x) <= style::dp(32.0f) && fabsf(dragOrigin.y - splitterPillCenter.y) <= style::dp(18.0f);
+        ImVec2 splitterPillCenter(fftAreaMin.x + (float)dataWidth * 0.75f, splitterY);
+        bool mouseInFFTResizePill = fabsf(dragOrigin.x - splitterPillCenter.x) <= style::dp(24.0f) && fabsf(dragOrigin.y - splitterPillCenter.y) <= style::dp(18.0f);
         mouseInFFTResize = mouseInFFTResizePill || (dragOrigin.x > fftAreaMin.x && dragOrigin.x < fftAreaMax.x && dragOrigin.y >= splitterY - separatorHitRadius && dragOrigin.y <= splitterY + separatorHitRadius);
 #else
         float separatorHitRadius = (2.0f * style::uiScale);
@@ -1008,8 +1008,8 @@ namespace ImGui {
         // touch-down (see processInputs). Drawn last so it sits on top of the
         // freq scale and the waterfall; the dark backing keeps it readable.
         if (waterfallVisible) {
-            ImVec2 pillCenter(fftAreaMin.x + (float)dataWidth * 0.5f, widgetPos.y + newFFTAreaHeight);
-            float halfW = style::dp(24.0f) + (fftResizeSelect ? style::dp(4.0f) : 0.0f);
+            ImVec2 pillCenter(fftAreaMin.x + (float)dataWidth * 0.75f, widgetPos.y + newFFTAreaHeight);
+            float halfW = style::dp(16.0f) + (fftResizeSelect ? style::dp(4.0f) : 0.0f);
             float halfH = style::dp(fftResizeSelect ? 6.0f : 4.5f);
             float pad = style::dp(2.0f);
             window->DrawList->AddRectFilled(ImVec2(pillCenter.x - halfW - pad, pillCenter.y - halfH - pad),
