@@ -4,6 +4,7 @@
 #include <core.h>
 #include <gui/gui.h>
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_android.h"
 #include "imgui_impl_opengl3.h"
 #include <android/log.h>
@@ -13,9 +14,11 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <stdint.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <string>
 #include <gui/icons.h>
 #include <gui/style.h>
@@ -294,6 +297,285 @@ namespace backend {
 
     static GestureRecognizer gestureRecognizer;
 
+    // ---------------------------------------------------------------------------
+    // Single-finger drag-scroll recognizer.
+    //
+    // ImGui widgets arm on mouse-down, so the only safe way to touch-scroll is to
+    // withhold the press from ImGui until the gesture is classified:
+    //   - mostly-vertical move past the slop   -> pan the scrollable window under
+    //     the finger directly (1:1 tracking + fling); ImGui never sees the press,
+    //     so no widget can activate under a scroll gesture;
+    //   - mostly-horizontal move past the slop -> replay the press at the
+    //     touch-down position and stream events normally (sliders keep working);
+    //   - motionless hold                      -> replay the press (kept for
+    //     press-and-hold interactions such as menu drag-reorder);
+    //   - finger up before any of the above    -> replay press+release as a tap;
+    //     the input queue trickles it over two frames so the click lands.
+    //
+    // Touches with no scrollable window under them (waterfall, top bar), on a
+    // scrollbar, from a mouse/stylus, or blocked by a modal pass through with no
+    // added latency. Timing and fling velocity use hardware event timestamps
+    // (including historical samples), so classification survives render stalls.
+    // Runs on the app thread like everything else here — no locking.
+    // ---------------------------------------------------------------------------
+    struct TouchScrollRecognizer {
+        enum class State { IDLE, PENDING, PANNING, PASSTHROUGH, FLING };
+        State state = State::IDLE;
+
+        static constexpr float TOUCH_SLOP_DP         = 8.0f;    // Android standard touch slop
+        static constexpr int   HOLD_TIMEOUT_MS       = 200;     // motionless press commits as press/long-press
+        static constexpr float MIN_FLING_VEL_DP      = 50.0f;   // dp/s (Android ViewConfiguration)
+        static constexpr float MAX_FLING_VEL_DP      = 6000.0f; // dp/s
+        static constexpr float FLING_STOP_VEL_DP     = 30.0f;   // dp/s
+        static constexpr float FLING_DECAY_TAU_SEC   = 0.4f;    // exponential decay time constant
+
+        // Returns 1 if the event was consumed (do NOT forward to ImGui).
+        int32_t handle(AInputEvent* ev) {
+            if (AInputEvent_getType(ev) != AINPUT_EVENT_TYPE_MOTION) return 0;
+            if (!ImGui::GetCurrentContext()) { state = State::IDLE; return 0; }
+
+            int32_t action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
+
+            // A second finger means pinch: drop any gesture in progress and let
+            // the pinch recognizer (next in the chain) take over.
+            if (action == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+                state = State::IDLE;
+                return 0;
+            }
+
+            if (action == AMOTION_EVENT_ACTION_DOWN) {
+                if (state != State::FLING) state = State::IDLE; // stale gesture (missed UP)
+                // Mice and styluses keep desktop-style interaction.
+                int32_t tool = AMotionEvent_getToolType(ev, 0);
+                if (tool != AMOTION_EVENT_TOOL_TYPE_FINGER && tool != AMOTION_EVENT_TOOL_TYPE_UNKNOWN) return 0;
+                float x = AMotionEvent_getX(ev, 0);
+                float y = AMotionEvent_getY(ev, 0);
+                ImGuiWindow* target = findScrollTarget(ImVec2(x, y));
+                if (!target) return 0; // an unrelated fling (if any) keeps running
+                // Touching the flinging window catches it: stop, and swallow the
+                // tap so stopping a fling can't click a widget.
+                bool caughtFling = (state == State::FLING) && (target->ID == targetId);
+                targetId = target->ID;
+                suppressTap = caughtFling;
+                downX = x;
+                downY = y;
+                lastY = y;
+                pendingScrollDelta = 0.0f;
+                downTime = std::chrono::steady_clock::now();
+                sampleHead = sampleCount = 0;
+                pushSample(y, AMotionEvent_getEventTime(ev));
+                state = State::PENDING;
+                return 1; // withhold the press until the gesture is classified
+            }
+
+            if (state == State::IDLE || state == State::FLING) return 0;
+
+            if (action == AMOTION_EVENT_ACTION_MOVE) {
+                float x = AMotionEvent_getX(ev, 0);
+                float y = AMotionEvent_getY(ev, 0);
+                // Touch panels sample faster than events are delivered; the
+                // intermediate samples ride along as history. Feed them all so
+                // fling velocity is computed at full sensor rate.
+                int32_t histCount = (int32_t)AMotionEvent_getHistorySize(ev);
+                for (int32_t h = 0; h < histCount; h++) {
+                    pushSample(AMotionEvent_getHistoricalY(ev, 0, h), AMotionEvent_getHistoricalEventTime(ev, h));
+                }
+                pushSample(y, AMotionEvent_getEventTime(ev));
+
+                if (state == State::PENDING) {
+                    float dx = x - downX;
+                    float dy = y - downY;
+                    if (std::max(fabsf(dx), fabsf(dy)) >= style::dp(TOUCH_SLOP_DP)) {
+                        if (fabsf(dy) > fabsf(dx)) {
+                            state = State::PANNING;
+                            lastY = y; // eat the slop distance: no content jump
+                        }
+                        else {
+                            beginPassthrough();
+                            return 0; // widget sees the press, then this motion
+                        }
+                    }
+                    return 1;
+                }
+                if (state == State::PANNING) {
+                    pendingScrollDelta += lastY - y; // content follows the finger
+                    lastY = y;
+                    return 1;
+                }
+                return 0; // PASSTHROUGH: stream normally
+            }
+
+            if (action == AMOTION_EVENT_ACTION_UP) {
+                State s = state;
+                state = State::IDLE;
+                if (s == State::PENDING) {
+                    if (!suppressTap) replayTap();
+                    return 1;
+                }
+                if (s == State::PANNING) {
+                    pushSample(AMotionEvent_getY(ev, 0), AMotionEvent_getEventTime(ev));
+                    float v = -fingerVelocity(); // finger up = content up = scroll down
+                    if (fabsf(v) >= style::dp(MIN_FLING_VEL_DP)) {
+                        float maxVel = style::dp(MAX_FLING_VEL_DP);
+                        flingVel = std::clamp(v, -maxVel, maxVel);
+                        state = State::FLING;
+                    }
+                    return 1;
+                }
+                return 0; // PASSTHROUGH: ImGui gets the release
+            }
+
+            if (action == AMOTION_EVENT_ACTION_CANCEL) {
+                // Gesture stolen by the system: no tap, no fling.
+                int32_t consumed = (state == State::PASSTHROUGH) ? 0 : 1;
+                state = State::IDLE;
+                return consumed;
+            }
+
+            return (state == State::PASSTHROUGH) ? 0 : 1;
+        }
+
+        // Per-frame work: the hold timeout fires without events, pan deltas are
+        // applied once per frame, and the fling animates. Call before NewFrame;
+        // the scroll target set here is consumed by the window's Begin().
+        void tick() {
+            if (!ImGui::GetCurrentContext()) { state = State::IDLE; return; }
+            auto now = std::chrono::steady_clock::now();
+            float dt = std::chrono::duration<float>(now - lastTickTime).count();
+            lastTickTime = now;
+
+            if (state == State::PENDING) {
+                if (now - downTime >= std::chrono::milliseconds(HOLD_TIMEOUT_MS)) {
+                    beginPassthrough();
+                }
+            }
+            else if (state == State::PANNING) {
+                if (pendingScrollDelta != 0.0f) {
+                    // Overflow past the edges is dropped, which rebases the
+                    // gesture: pulling back responds immediately.
+                    applyScroll(pendingScrollDelta);
+                    pendingScrollDelta = 0.0f;
+                }
+            }
+            else if (state == State::FLING) {
+                dt = std::min(dt, 0.1f); // first-tick / stall protection
+                bool moved = applyScroll(flingVel * dt);
+                flingVel *= expf(-dt / FLING_DECAY_TAU_SEC);
+                if (!moved || fabsf(flingVel) < style::dp(FLING_STOP_VEL_DP)) {
+                    state = State::IDLE;
+                }
+            }
+        }
+
+        void reset() { state = State::IDLE; }
+
+    private:
+        ImGuiID targetId = 0;            // scrolled window, by ID: windows can vanish mid-gesture
+        float downX = 0.0f, downY = 0.0f;
+        float lastY = 0.0f;              // finger y already accounted for in pendingScrollDelta
+        float pendingScrollDelta = 0.0f; // finger motion accumulated between frames
+        bool suppressTap = false;        // touch caught a fling: swallow the tap
+        float flingVel = 0.0f;           // scroll velocity in px/s (positive scrolls down)
+        std::chrono::steady_clock::time_point downTime;
+        std::chrono::steady_clock::time_point lastTickTime;
+
+        // Finger samples for fling velocity, hardware-timestamped.
+        static constexpr int MAX_SAMPLES = 32;
+        static constexpr int64_t VELOCITY_HORIZON_NS = 100000000; // 100 ms
+        struct Sample { float y; int64_t tNs; };
+        Sample samples[MAX_SAMPLES];
+        int sampleHead = 0, sampleCount = 0;
+
+        // Resolve the window a vertical drag at `pos` should scroll, mirroring
+        // ImGui's mouse-wheel routing. NULL means "don't intercept".
+        static ImGuiWindow* findScrollTarget(ImVec2 pos) {
+            ImGuiContext& g = *GImGui;
+
+            // Top-most window under the touch. FindHoveredWindow() is not usable
+            // here: it works off g.IO.MousePos, which is stale before touch-down.
+            ImGuiWindow* hit = NULL;
+            for (int i = g.Windows.Size - 1; i >= 0; i--) {
+                ImGuiWindow* w = g.Windows[i];
+                if (!w->Active || w->Hidden) continue;
+                if (w->Flags & ImGuiWindowFlags_NoMouseInputs) continue;
+                if (!w->OuterRectClipped.Contains(pos)) continue;
+                hit = w;
+                break;
+            }
+            if (!hit) return NULL;
+
+            // A modal blocks windows outside its hierarchy (match hover rules).
+            ImGuiWindow* modal = ImGui::GetTopMostPopupModal();
+            if (modal && !ImGui::IsWindowChildOf(hit->RootWindow, modal, true)) return NULL;
+
+            // Scrollbars keep their native thumb-drag behavior.
+            if ((hit->ScrollbarY && ImGui::GetWindowScrollbarRect(hit, ImGuiAxis_Y).Contains(pos)) ||
+                (hit->ScrollbarX && ImGui::GetWindowScrollbarRect(hit, ImGuiAxis_X).Contains(pos))) return NULL;
+
+            // Climb to the window the wheel would scroll.
+            ImGuiWindow* w = hit;
+            while ((w->Flags & ImGuiWindowFlags_ChildWindow) && (w->ScrollMax.y <= 0.0f || (w->Flags & ImGuiWindowFlags_NoScrollWithMouse))) {
+                w = w->ParentWindow;
+            }
+            if (!w || w->ScrollMax.y <= 0.0f || (w->Flags & ImGuiWindowFlags_NoScrollWithMouse)) return NULL;
+
+            // The waterfall-controls column is all vertical sliders; if it ever
+            // overflows, drag-scrolling would fight them. Leave it native.
+            if (strstr(w->Name, "WaterfallControls")) return NULL;
+            return w;
+        }
+
+        // Returns true if the scroll moved by (approximately) the full delta.
+        bool applyScroll(float delta) {
+            ImGuiWindow* w = ImGui::FindWindowByID(targetId);
+            if (!w || !w->Active) return false;
+            float desired = w->Scroll.y + delta;
+            float clamped = ImClamp(desired, 0.0f, w->ScrollMax.y);
+            if (clamped != w->Scroll.y) ImGui::SetScrollY(w, clamped);
+            return fabsf(desired - clamped) < 0.5f;
+        }
+
+        void beginPassthrough() {
+            ImGuiIO& io = ImGui::GetIO();
+            io.AddMousePosEvent(downX, downY);
+            io.AddMouseButtonEvent(0, true);
+            state = State::PASSTHROUGH;
+        }
+
+        void replayTap() {
+            // Queued as pos+down, then up; the trickle queue spreads the pair
+            // across two frames so the widget sees a full click.
+            ImGuiIO& io = ImGui::GetIO();
+            io.AddMousePosEvent(downX, downY);
+            io.AddMouseButtonEvent(0, true);
+            io.AddMouseButtonEvent(0, false);
+        }
+
+        void pushSample(float y, int64_t tNs) {
+            samples[sampleHead] = { y, tNs };
+            sampleHead = (sampleHead + 1) % MAX_SAMPLES;
+            sampleCount = std::min(sampleCount + 1, MAX_SAMPLES);
+        }
+
+        // Finger velocity in px/s over the last ~100 ms of samples.
+        float fingerVelocity() const {
+            if (sampleCount < 2) return 0.0f;
+            int newestIdx = (sampleHead + MAX_SAMPLES - 1) % MAX_SAMPLES;
+            Sample newest = samples[newestIdx];
+            Sample oldest = newest;
+            for (int i = 1; i < sampleCount; i++) {
+                const Sample& s = samples[(newestIdx + MAX_SAMPLES - i) % MAX_SAMPLES];
+                if (newest.tNs - s.tNs > VELOCITY_HORIZON_NS) break;
+                oldest = s;
+            }
+            int64_t dtNs = newest.tNs - oldest.tNs;
+            if (dtNs < 1000000) return 0.0f; // < 1 ms: not enough signal
+            return (newest.y - oldest.y) * 1e9f / (float)dtNs;
+        }
+    };
+
+    static TouchScrollRecognizer touchScrollRecognizer;
+
     int32_t handleInputEvent(struct android_app* app, AInputEvent* inputEvent) {
         // If the sleep timer has dimmed/darkened the screen, intercept touch to wake.
         // Also keep consuming until ACTION_UP once we started swallowing a gesture,
@@ -323,6 +605,7 @@ namespace backend {
             sleepResetMotionPending = true;
         }
 
+        if (touchScrollRecognizer.handle(inputEvent)) return 1;
         if (gestureRecognizer.handle(inputEvent)) return 1;
         return ImGui_ImplAndroid_HandleInputEvent(inputEvent);
     }
@@ -475,6 +758,11 @@ namespace backend {
 
                 common::applyPendingScaleChanges(scaleState, getContentScale(), true);
 
+                // Drag-scroll per-frame work: hold timeout, pan application,
+                // fling. Must run before NewFrame so the scroll target it sets
+                // is consumed by the target window's Begin() this frame.
+                touchScrollRecognizer.tick();
+
                 // Initiate a new frame
                 beginFrame();
 
@@ -520,6 +808,7 @@ namespace backend {
 
     int end() {
         // Cleanup
+        touchScrollRecognizer.reset();
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplAndroid_Shutdown();
         ImGui::DestroyContext();
