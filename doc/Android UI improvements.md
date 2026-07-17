@@ -29,7 +29,7 @@ only briefly for context.
 |---|---|
 | Touch-friendly style metrics/shape | **Done** — `style::touchStyle` overlay, "Touch-Friendly UI" toggle in Display (commits `7f092bb3`, `c148ebcc`) |
 | Material dark palette | **Done** — "Android Dark" theme (`26765bff`) |
-| Back navigation | **Done** — dismiss chain + both dispatch models (`9d4c8305`), exit confirmation dialog with System-panel switch (`9642518e`) |
+| Back navigation | **Done** — dismiss chain (popup/modal, credits; deliberately NOT the menu panel) + both dispatch models (`9d4c8305`); final Back backgrounds the app. Exit goes through **holding the hamburger button** (0.6 s + haptic) which opens the exit confirmation modal; confirming stops the SDR and calls `finishAndRemoveTask()` |
 | Native IME / text input | **Not implemented** — highest priority |
 | Window insets / edge-to-edge / cutouts | **Not implemented** |
 | Storage Access Framework file dialogs | **Not implemented** |
@@ -132,9 +132,11 @@ on Android; pass content URIs as fds (same pattern as the USB fd path).
 
 ### 6. Exit UX follow-ups
 
-- Top-bar Exit button was **skipped intentionally** (dialog-on-Back shipped
-  instead). Revisit if customers still can't find the way out — the dialog
-  only appears if they try Back.
+- Exit is hold-the-hamburger (0.6 s) → confirmation modal. A dedicated
+  top-bar Exit button was **skipped intentionally**; the hold gesture is not
+  self-discoverable, so document it for customers, and revisit the button if
+  support complaints continue. Back deliberately neither closes the sidebar
+  nor exits (backgrounds only, matching the Android 12+ system default).
 - If background listening (foreground service) is ever added: persistent
   notification with a Stop action becomes the standard off-switch, and Back
   semantics should be revisited (media apps never stop playback on Back).
