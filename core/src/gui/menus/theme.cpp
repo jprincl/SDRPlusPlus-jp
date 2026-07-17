@@ -39,7 +39,9 @@ namespace thememenu {
     void draw(void* ctx) {
         ImGui::LeftLabelFill("Theme");
         if (ImGui::Combo("##theme_select_combo", &themeId, themeNamesTxt.c_str())) {
-            applyTheme();
+            // Through applyScaledStyle: applyTheme() alone resets rounding/sizes
+            // that the scaled style and touch overlay set.
+            style::applyScaledStyle(applyTheme);
             core::configManager.acquire();
             core::configManager.conf["theme"] = themeNames[themeId];
             core::configManager.release(true);
