@@ -579,11 +579,10 @@ namespace backend {
 
     static TouchScrollRecognizer touchScrollRecognizer;
 
-    // Back key: one press dismisses one UI layer. With nothing left to
-    // dismiss, handleBackPress() opens the exit confirmation dialog
-    // (System > "Back Button Asks to Exit", default on); with the option
-    // off it returns false and the app moves to the background instead
-    // (process and config stay warm; APP_CMD_PAUSE stops the SDR as usual).
+    // Back key: one press dismisses one UI layer (popup/modal, credits).
+    // With nothing left to dismiss, the app moves to the background instead
+    // of finishing (process and config stay warm; APP_CMD_PAUSE stops the
+    // SDR as usual). Exiting the app goes through holding the menu button.
     static void handleBackKey() {
         // While the sleep timer has dimmed the screen, Back is a wake
         // gesture like any touch — don't dismiss UI the user can't see.

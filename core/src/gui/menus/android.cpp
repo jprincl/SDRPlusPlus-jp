@@ -14,7 +14,6 @@ namespace androidmenu {
     static const int   SLEEP_MODE_COUNT = 4;
 
     bool restartOnResume = true;  // restart SDR when app returns to foreground
-    bool confirmExitOnBack = true;
     int sleepMode     = 3;   // default: Dim and Blank
     int screenDimMin  = 3;   // total minutes from start until screen dims
     int screenDarkMin = 8;   // total minutes from start until screen goes dark (> screenDimMin)
@@ -25,7 +24,6 @@ namespace androidmenu {
 
     void init() {
         restartOnResume = core::configManager.conf.value("restartOnResume", true);
-        confirmExitOnBack = core::configManager.conf.value("confirmExitOnBack", true);
         sleepMode     = core::configManager.conf.value("sleepMode",    3);
         screenDimMin  = core::configManager.conf.value("sleepDimMin",  3);
         screenDarkMin = core::configManager.conf.value("sleepDarkMin", 8);
@@ -45,13 +43,6 @@ namespace androidmenu {
             backend::setRestartOnResume(restartOnResume);
             core::configManager.acquire();
             core::configManager.conf["restartOnResume"] = restartOnResume;
-            core::configManager.release(true);
-        }
-
-        // ── Back button ───────────────────────────────────────────────────────────
-        if (ImGui::Checkbox("Back Button Asks to Exit##android_confirm_exit", &confirmExitOnBack)) {
-            core::configManager.acquire();
-            core::configManager.conf["confirmExitOnBack"] = confirmExitOnBack;
             core::configManager.release(true);
         }
 

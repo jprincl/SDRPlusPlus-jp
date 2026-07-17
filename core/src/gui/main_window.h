@@ -29,9 +29,9 @@ public:
     void setPlayState(bool _playing);
     bool isPlaying();
 
-    // Android Back: dismiss the topmost UI layer (popup/modal, credits
-    // overlay, then the menu panel). Returns false when nothing was left to
-    // dismiss, in which case the caller decides what leaving the app means.
+    // Android Back: dismiss the topmost UI layer (popup/modal, then the
+    // credits overlay). Returns false when nothing was left to dismiss, in
+    // which case the caller decides what leaving the app means.
     bool handleBackPress();
 
     // Active tuning mode: tuner::TUNER_MODE_CENTER or tuner::TUNER_MODE_NORMAL
@@ -76,7 +76,9 @@ private:
     ImVec2 menuSplitterDownPos;
     int fftHeight = 300;
     bool showMenu = true;
-    bool exitDialogRequest = false; // Android: Back with nothing left to dismiss
+    bool exitDialogRequest = false;      // Android: set by holding the menu button
+    float menuBtnHoldTime = 0.0f;        // Android: hamburger hold-to-exit
+    bool menuBtnLongPressFired = false;
     int tuningMode = tuner::TUNER_MODE_NORMAL;
     dsp::stream<dsp::complex_t> dummyStream;
     bool demoWindow = false;

@@ -416,7 +416,25 @@ void MainWindow::draw() {
     ImVec2 btnSize(30 * style::uiScale, 30 * style::uiScale);
     int toolbarButtonPadding = style::scale(5.0f);
     ImGui::PushID(ImGui::GetID("sdrpp_menu_btn"));
-    if (ImGui::ImageButton(icons::MENU, btnSize, ImVec2(0, 0), ImVec2(1, 1), toolbarButtonPadding, ImVec4(0, 0, 0, 0), textCol) || ImGui::IsKeyPressed(ImGuiKey_Menu, false)) {
+    bool menuClicked = ImGui::ImageButton(icons::MENU, btnSize, ImVec2(0, 0), ImVec2(1, 1), toolbarButtonPadding, ImVec4(0, 0, 0, 0), textCol) || ImGui::IsKeyPressed(ImGuiKey_Menu, false);
+#ifdef __ANDROID__
+    // Hold the hamburger button to ask about exiting the app; a tap keeps
+    // toggling the menu. The release after a long press must not toggle.
+    if (ImGui::IsItemActive()) {
+        menuBtnHoldTime += ImGui::GetIO().DeltaTime;
+        if (!menuBtnLongPressFired && menuBtnHoldTime >= 0.6f) {
+            menuBtnLongPressFired = true;
+            backend::hapticTick();
+            exitDialogRequest = true;
+        }
+    }
+    else {
+        if (menuBtnLongPressFired) { menuClicked = false; }
+        menuBtnHoldTime = 0.0f;
+        menuBtnLongPressFired = false;
+    }
+#endif
+    if (menuClicked) {
         showMenu = !showMenu;
         core::configManager.acquire();
         core::configManager.conf["showMenu"] = showMenu;
@@ -867,7 +885,9 @@ void MainWindow::draw() {
     gui::waterfall.setWaterfallMax(fftMax);
 
 #ifdef __ANDROID__
-    // Exit confirmation, requested by handleBackPress() between frames.
+    // Exit confirmation, requested by holding the hamburger menu button.
+    // Back with the dialog open lands in handleBackPress()'s popup branch
+    // and cancels it.
     if (exitDialogRequest) {
         exitDialogRequest = false;
         ImGui::OpenPopup("Exit##sdrpp_exit_confirm");
@@ -947,25 +967,9 @@ bool MainWindow::handleBackPress() {
         return true;
     }
 
-    // Menu panel: nav-drawer semantics. Persist like the toolbar toggle does.
-    if (showMenu) {
-        showMenu = false;
-        core::configManager.acquire();
-        core::configManager.conf["showMenu"] = showMenu;
-        core::configManager.release(true);
-        return true;
-    }
-
-#ifdef __ANDROID__
-    // Nothing left to dismiss: ask about exiting (a further Back press lands
-    // in the popup branch above and cancels the dialog). Returning false
-    // instead lets the backend move the app to the background.
-    if (androidmenu::confirmExitOnBack) {
-        exitDialogRequest = true;
-        return true;
-    }
-#endif
-
+    // Deliberately NOT dismissed by Back: the menu panel (it is the primary
+    // control surface, not a navigation level) and the app itself (exit goes
+    // through holding the menu button instead).
     return false;
 }
 
