@@ -17,6 +17,7 @@ import android.Manifest;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
+import android.window.OnBackInvokedDispatcher;
 import android.view.HapticFeedbackConstants;
 import android.view.Surface;
 import android.view.SurfaceView;
@@ -501,6 +502,19 @@ class MainActivity : NativeActivity() {
         checkAndAsk(Manifest.permission.INTERNET);
 
         super.onCreate(savedInstanceState)
+
+        // Back dispatch, new-style: with targetSdk 36, Android 16+ devices default
+        // android:enableOnBackInvokedCallback to true, which stops delivering
+        // KEYCODE_BACK to the native input queue entirely. Register a callback and
+        // forward to native, where the same dismiss chain as the legacy
+        // KEYCODE_BACK path runs. On Android 13-15 the attribute defaults to
+        // false, this callback is never invoked, and the KEYCODE_BACK path in
+        // backend.cpp handles Back instead — exactly one path fires per device.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT) {
+                nativeOnBackInvoked()
+            }
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -546,6 +560,15 @@ class MainActivity : NativeActivity() {
         runOnUiThread {
             window.decorView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         }
+    }
+
+    /**
+     * Move the task to the background without finishing the activity, like a
+     * Home press. Called from native code when Back is pressed with nothing
+     * left to dismiss. Callable from native code via JNI.
+     */
+    fun moveAppToBack() {
+        runOnUiThread { moveTaskToBack(true) }
     }
 
     // ── Sleep timer API ──────────────────────────────────────────────
@@ -658,6 +681,9 @@ class MainActivity : NativeActivity() {
     }
 
     /** Native method that directly writes backend::sleepRenderPaused in C++. */
+    // Back press delivered via OnBackInvokedCallback (Android 16+ path).
+    private external fun nativeOnBackInvoked()
+
     private external fun nativeSetSleepRenderPaused(paused: Boolean)
 
     /** Native method that directly writes backend::sleepScreenDimmed in C++. */

@@ -39,6 +39,7 @@ namespace backend {
     std::atomic<bool> sleepRenderPaused{false};   // True during DARK phase only (set via JNI)
     std::atomic<bool> sleepBlackFrameSent{false}; // Ensures one black frame before pausing
     std::atomic<bool> audioOutputOpenSLES{false};
+    std::atomic<bool> backInvokedPending{false};  // Back via OnBackInvokedCallback (set on UI thread via JNI)
     std::atomic<int> usbHotplugGeneration{0};
     std::atomic<int> audioRoutingGeneration{0};
     bool exited = false;
@@ -576,7 +577,35 @@ namespace backend {
 
     static TouchScrollRecognizer touchScrollRecognizer;
 
+    // Back key: one press dismisses one UI layer; with nothing left to
+    // dismiss, the app moves to the background instead of finishing (the
+    // process and config stay warm; APP_CMD_PAUSE stops the SDR as usual).
+    static void handleBackKey() {
+        // While the sleep timer has dimmed the screen, Back is a wake
+        // gesture like any touch — don't dismiss UI the user can't see.
+        if (sleepScreenDimmed) {
+            resetSleepToActive();
+            return;
+        }
+        if (!gui::mainWindow.handleBackPress()) {
+            callActivityVoidMethod("moveAppToBack");
+        }
+    }
+
     int32_t handleInputEvent(struct android_app* app, AInputEvent* inputEvent) {
+        // Back must never reach the default handler, which would finish the
+        // activity. Act on UP so a canceled gesture (predictive-back peek,
+        // long-press) doesn't trigger; consume DOWN too.
+        if (AInputEvent_getType(inputEvent) == AINPUT_EVENT_TYPE_KEY &&
+            AKeyEvent_getKeyCode(inputEvent) == AKEYCODE_BACK) {
+            if (AKeyEvent_getAction(inputEvent) == AKEY_EVENT_ACTION_UP &&
+                !(AKeyEvent_getFlags(inputEvent) & AKEY_EVENT_FLAG_CANCELED)) {
+                sleepResetMotionPending = true; // Back is user activity too
+                handleBackKey();
+            }
+            return 1;
+        }
+
         // If the sleep timer has dimmed/darkened the screen, intercept touch to wake.
         // Also keep consuming until ACTION_UP once we started swallowing a gesture,
         // because sleepScreenDimmed may be cleared asynchronously before ACTION_UP arrives.
@@ -758,6 +787,15 @@ namespace backend {
 
                 common::applyPendingScaleChanges(scaleState, getContentScale(), true);
 
+                // Back arriving through OnBackInvokedCallback (Android 16+ /
+                // targetSdk 36): the callback runs on the UI thread, so it only
+                // sets a flag; the dismiss chain runs here on the app thread,
+                // like the legacy KEYCODE_BACK path in handleInputEvent.
+                if (backInvokedPending.exchange(false)) {
+                    sleepResetMotionPending = true;
+                    handleBackKey();
+                }
+
                 // Drag-scroll per-frame work: hold timeout, pan application,
                 // fling. Must run before NewFrame so the scroll target it sets
                 // is consumed by the target window's Begin() this frame.
@@ -780,6 +818,11 @@ namespace backend {
                 render();
             }
             else if (sleepRenderPaused && !pauseRendering) {
+                // Back during the DARK phase is a wake gesture, like touch.
+                if (backInvokedPending.exchange(false)) {
+                    resetSleepToActive();
+                }
+
                 // Sleep-mode pause: submit one black frame, then idle.
                 // EGL surface stays alive, GPU goes idle.
                 if (!sleepBlackFrameSent) {
@@ -1092,6 +1135,12 @@ extern "C" {
         JNIEnv* env, jobject thiz, jboolean dimmed) {
         backend::sleepScreenDimmed = (bool)dimmed;
     }
+}
+
+// JNI native method: MainActivity.nativeOnBackInvoked()
+// Runs on the UI thread; the app thread consumes the flag in renderLoop().
+extern "C" JNIEXPORT void JNICALL Java_org_sdrpp_sdrpp_MainActivity_nativeOnBackInvoked(JNIEnv*, jobject) {
+    backend::backInvokedPending = true;
 }
 
 extern "C" JNIEXPORT void JNICALL Java_org_sdrpp_sdrpp_MainActivity_notifyUsbHotplugChangedNative(JNIEnv*, jobject) {

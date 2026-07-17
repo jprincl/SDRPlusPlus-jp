@@ -29,6 +29,11 @@ public:
     void setPlayState(bool _playing);
     bool isPlaying();
 
+    // Android Back: dismiss the topmost UI layer (popup/modal, credits
+    // overlay, then the menu panel). Returns false when nothing was left to
+    // dismiss, in which case the caller decides what leaving the app means.
+    bool handleBackPress();
+
     // Active tuning mode: tuner::TUNER_MODE_CENTER or tuner::TUNER_MODE_NORMAL
     int getTuningMode() const { return tuningMode; }
 

@@ -906,6 +906,35 @@ bool MainWindow::isPlaying() {
     return playing;
 }
 
+bool MainWindow::handleBackPress() {
+    // Runs on the app thread between frames (same thread as the render loop),
+    // so mutating popup state here is safe.
+    ImGuiContext* g = ImGui::GetCurrentContext();
+
+    // Topmost open popup: combo dropdowns, context menus, modal dialogs.
+    if (g && g->OpenPopupStack.Size > 0) {
+        ImGui::ClosePopupToLevel(g->OpenPopupStack.Size - 1, true);
+        return true;
+    }
+
+    // Credits overlay (plain window, not a popup; it locks the rest of the UI).
+    if (showCredits) {
+        showCredits = false;
+        return true;
+    }
+
+    // Menu panel: nav-drawer semantics. Persist like the toolbar toggle does.
+    if (showMenu) {
+        showMenu = false;
+        core::configManager.acquire();
+        core::configManager.conf["showMenu"] = showMenu;
+        core::configManager.release(true);
+        return true;
+    }
+
+    return false;
+}
+
 void MainWindow::setFirstMenuRender() {
     firstMenuRender = true;
 }
