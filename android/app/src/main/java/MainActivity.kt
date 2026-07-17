@@ -571,6 +571,15 @@ class MainActivity : NativeActivity() {
         runOnUiThread { moveTaskToBack(true) }
     }
 
+    /**
+     * Fully exit: finish the activity and remove the task from the Recents
+     * screen, so the app is visibly gone. Called from native code when the
+     * user confirms the exit dialog. Callable from native code via JNI.
+     */
+    fun finishAppAndRemoveTask() {
+        runOnUiThread { finishAndRemoveTask() }
+    }
+
     // ── Sleep timer API ──────────────────────────────────────────────
 
     /**

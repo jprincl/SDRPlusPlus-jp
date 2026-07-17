@@ -79,6 +79,10 @@ namespace backend {
     // (calls into MainActivity via JNI).
     void hapticTick();
 
+    // Finish the activity and remove the task from Recents; the app is
+    // visibly gone. Stop the SDR before calling (calls into MainActivity via JNI).
+    void finishAppAndRemoveTask();
+
     // Sleep timer control (calls into MainActivity via JNI)
     int startSleepTimer();
     int stopSleepTimer();

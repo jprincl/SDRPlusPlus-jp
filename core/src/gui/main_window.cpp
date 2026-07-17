@@ -866,6 +866,30 @@ void MainWindow::draw() {
     gui::waterfall.setWaterfallMin(fftMin);
     gui::waterfall.setWaterfallMax(fftMax);
 
+#ifdef __ANDROID__
+    // Exit confirmation, requested by handleBackPress() between frames.
+    if (exitDialogRequest) {
+        exitDialogRequest = false;
+        ImGui::OpenPopup("Exit##sdrpp_exit_confirm");
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Exit##sdrpp_exit_confirm", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(playing ? "Stop the radio and exit the application?" : "Exit the application?");
+        ImGui::Spacing();
+        ImVec2 exitBtnSize(style::dp(120.0f), 0.0f);
+        if (ImGui::Button("Cancel##sdrpp_exit_cancel", exitBtnSize)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Exit##sdrpp_exit_ok", exitBtnSize)) {
+            setPlayState(false);
+            backend::finishAppAndRemoveTask();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+#endif
+
     ImGui::End();
 
     if (showCredits) {
@@ -931,6 +955,16 @@ bool MainWindow::handleBackPress() {
         core::configManager.release(true);
         return true;
     }
+
+#ifdef __ANDROID__
+    // Nothing left to dismiss: ask about exiting (a further Back press lands
+    // in the popup branch above and cancels the dialog). Returning false
+    // instead lets the backend move the app to the background.
+    if (androidmenu::confirmExitOnBack) {
+        exitDialogRequest = true;
+        return true;
+    }
+#endif
 
     return false;
 }

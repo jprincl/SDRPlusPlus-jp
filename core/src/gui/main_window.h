@@ -76,6 +76,7 @@ private:
     ImVec2 menuSplitterDownPos;
     int fftHeight = 300;
     bool showMenu = true;
+    bool exitDialogRequest = false; // Android: Back with nothing left to dismiss
     int tuningMode = tuner::TUNER_MODE_NORMAL;
     dsp::stream<dsp::complex_t> dummyStream;
     bool demoWindow = false;
