@@ -267,6 +267,7 @@ int sdrpp_main(int argc, char* argv[]) {
     // Themes
     defConfig["theme"] = "Dark";
     defConfig["uiScaleFactor"] = 1.0f;
+    defConfig["touchStyle"] = style::touchStyle;
 
     defConfig["modules"] = json::array();
 
@@ -403,6 +404,10 @@ int sdrpp_main(int argc, char* argv[]) {
     // applied after backend::init() below, before any font loading.
     float uiScaleFactor = core::configManager.conf["uiScaleFactor"];
     style::setUIScale(uiScaleFactor);
+
+    // Must be set before thememenu::init() applies the first scaled style.
+    // The fallback keeps the per-platform default for configs predating the key.
+    style::touchStyle = core::configManager.conf.value("touchStyle", style::touchStyle);
 
     style::migrateLogicalDimension(core::configManager.conf, "menuWidth", "menuWidthLogical", 250.0f, [](float value) {
         return style::uiScale > 1.0f && value > 300.0f;

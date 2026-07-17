@@ -16,8 +16,10 @@ namespace style {
 
 #ifndef __ANDROID__
     float uiScale = 1.0f;
+    bool touchStyle = false;
 #else
     float uiScale = 3.0f;
+    bool touchStyle = true;
 #endif
     uint64_t _scaleEpoch = 0;
 
@@ -63,10 +65,39 @@ namespace style {
         return true;
     }
 
+    // Android-like touch overlay: rounded borderless surfaces and roughly 48 dp
+    // row pitch (16 dp font + 2×12 dp frame padding + 8 dp item spacing).
+    // Sizes only — theme colors are untouched, so it composes with any theme.
+    static void applyTouchOverlay() {
+        ImGuiStyle& s = ImGui::GetStyle();
+
+        s.WindowPadding     = dp(12.0f, 12.0f);
+        s.FramePadding      = dp(16.0f, 12.0f);
+        s.ItemSpacing       = dp(12.0f, 8.0f);
+        s.ItemInnerSpacing  = dp(8.0f, 6.0f);
+        s.CellPadding       = dp(8.0f, 4.0f);
+        s.ScrollbarSize     = dp(10.0f);
+        s.GrabMinSize       = dp(24.0f);
+        s.TouchExtraPadding = dp(4.0f, 4.0f);
+
+        s.FrameRounding     = dp(12.0f);
+        s.GrabRounding      = dp(12.0f);
+        s.PopupRounding     = dp(16.0f);
+        s.ChildRounding     = dp(12.0f);
+        s.ScrollbarRounding = dp(12.0f);
+        s.TabRounding       = dp(12.0f);
+
+        s.WindowBorderSize  = 0.0f;
+        s.ChildBorderSize   = 0.0f;
+        s.PopupBorderSize   = 0.0f;
+        s.FrameBorderSize   = 0.0f;
+    }
+
     void applyScaledStyle(const std::function<void()>& resetStyle) {
         ImGui::GetStyle() = ImGuiStyle();
         resetStyle();
         ImGui::GetStyle().ScaleAllSizes(uiScale);
+        if (touchStyle) { applyTouchOverlay(); }
     }
 
     void migrateLogicalDimension(nlohmann::json& conf, const char* valueKey, const char* markerKey, float minLogical, const std::function<bool(float)>& valueLooksPhysical) {

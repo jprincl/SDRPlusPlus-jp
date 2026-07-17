@@ -12,6 +12,7 @@ namespace style {
     SDRPP_EXPORT ImFont* bigFont;
     SDRPP_EXPORT ImFont* hugeFont;
     SDRPP_EXPORT float uiScale;
+    SDRPP_EXPORT bool touchStyle;
 
     void setUIScale(float scale);
     uint64_t scaleEpoch();

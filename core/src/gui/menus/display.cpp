@@ -1,6 +1,7 @@
 #include <gui/menus/display.h>
 #include <imgui.h>
 #include <gui/gui.h>
+#include <gui/menus/theme.h>
 #include <core.h>
 #include <backend.h>
 #include <gui/colormaps.h>
@@ -191,6 +192,13 @@ namespace displaymenu {
             updateFFTSpeeds();
             core::configManager.acquire();
             core::configManager.conf["fftSmoothingSpeed"] = fftSmoothingSpeed;
+            core::configManager.release(true);
+        }
+
+        if (ImGui::Checkbox("Touch-Friendly UI##_sdrpp", &style::touchStyle)) {
+            style::applyScaledStyle(thememenu::applyTheme);
+            core::configManager.acquire();
+            core::configManager.conf["touchStyle"] = style::touchStyle;
             core::configManager.release(true);
         }
 
