@@ -572,7 +572,9 @@ void MainWindow::draw() {
     // Handle menu resize
     ImVec2 winSize = ImGui::GetWindowSize();
     ImVec2 mousePos = ImGui::GetMousePos();
+#ifdef __ANDROID__
     bool isWindowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+#endif
     if (showMenu && !grabbingMenu) {
         int clampedMenuWidth = style::clampSplit(menuWidth, winSize.x, 250.0f, 250.0f);
         if (clampedMenuWidth != menuWidth) {
@@ -639,10 +641,16 @@ void MainWindow::draw() {
         menuPillVisible = true;
         menuPillCenter = pillCenter;
 #else
+        // The hit band straddles the Left Column and Waterfall children (and
+        // under the touch style FindHoveredWindow() grows their hover boxes by
+        // TouchExtraPadding, right over the band), so hover of any child of the
+        // main window counts for it. Floating windows and popups are separate
+        // top-level windows and still correctly block the splitter.
         float separatorHitRadius = (2.0f * style::uiScale);
-        if (isWindowHovered && mousePos.x >= newWidth - separatorHitRadius && mousePos.x <= newWidth + separatorHitRadius && mousePos.y > curY) {
+        bool overSplit = fabsf(mousePos.x - (float)newWidth) <= separatorHitRadius && mousePos.y > curY;
+        if (grabbingMenu || (overSplit && !ImGui::IsAnyItemActive() && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-            if (click) {
+            if (click && !grabbingMenu) {
                 grabbingMenu = true;
                 menuGrabOffset = newWidth - mousePos.x;
             }
