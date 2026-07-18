@@ -53,7 +53,7 @@ namespace demod {
         const char* getName() { return "CW-R"; }
         double getIFSampleRate() { return 3000.0; }
         double getAFSampleRate() { return getIFSampleRate(); }
-        double getDefaultBandwidth() { return 200.0; }
+        double getDefaultBandwidth() { return 500.0; }
         double getMinBandwidth() { return 50.0; }
         double getMaxBandwidth() { return 500.0; }
         bool getBandwidthLocked() { return false; }
@@ -72,7 +72,7 @@ namespace demod {
         dsp::demod::CW<dsp::stereo_t> demod;
 
         AGCControls agc = { true, 0.0f, 100.0f, 5.0f };
-        int tone = 800;
+        int tone = 700;
 
         EventHandler<float> afbwChangeHandler;
     };
