@@ -106,7 +106,10 @@ on Android; pass content URIs as fds (same pattern as the USB fd path).
 - **Long-press**: frequency digits now open the F-INP direct-entry keypad on a
   0.5 s motionless hold (`FrequencySelect`, with `hapticTick()`; entry is in
   MHz with IC-705 semantics — '.' first re-enters the current MHz digits, ENT
-  zero-fills). Remaining: a generic long-press → context-menu mechanism; the
+  zero-fills). The dialog now has a second BAND page (IC-705 band stacking
+  register style): category-filtered band grid, tap tunes to the band's
+  last-used frequency/mode (config `bandMemory`) or its band-plan default,
+  page/category persisted. Remaining: a generic long-press → context-menu mechanism; the
   drag-scroll recognizer's 200 ms hold state
   (`TouchScrollRecognizer::HOLD_TIMEOUT_MS`) could report it centrally.
 - **Toggle switches**: replace on/off checkboxes with Android-style switches.

@@ -11,6 +11,11 @@ namespace bandplan {
         std::string type;
         double start;
         double end;
+        // Optional tuning defaults (0 / empty = absent), sparse KiwiSDR-derived
+        // enrichment; see scripts/enrich_bandplans.py.
+        double defFreq = 0;
+        std::string defMode;
+        double chan = 0;
     };
 
     void to_json(json& j, const Band_t& b);

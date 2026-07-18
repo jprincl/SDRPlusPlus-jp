@@ -4,6 +4,11 @@
 #include <stdint.h>
 #include <string>
 
+namespace bandplan {
+    struct Band_t;
+    struct BandPlan_t;
+}
+
 class FrequencySelect {
 public:
     FrequencySelect();
@@ -29,6 +34,9 @@ private:
     void decrementDigit(int i);
     void moveCursorToDigit(int i);
     void drawKeypad();
+    void drawKeypadPage(bool& close);
+    void drawBandPage(bool& close, float totalWidth);
+    void selectBand(const bandplan::Band_t& band, const bandplan::BandPlan_t& plan);
     void keypadKey(char key);
     void commitEntry();
 
@@ -62,4 +70,9 @@ private:
     // most one decimal point, IC-705 style.
     bool keypadRequestOpen = false;
     std::string entry;
+
+    // Band picker page state, loaded from config each time the dialog opens.
+    int page = 1;         // 0 = band grid, 1 = keypad
+    std::string category; // selected category bucket ("Ham", ..., "All")
+    std::string planName; // band plan the grid lists
 };

@@ -1,13 +1,18 @@
 #include <gui/widgets/frequency_select.h>
+#include <gui/widgets/bandplan.h>
 #include <config.h>
+#include <core.h>
+#include <radio_interface.h>
 #include <gui/style.h>
 #include <gui/gui.h>
 #include <backend.h>
 #include <utils/hrfreq.h>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 #ifdef __ANDROID__
 #include <android_backend.h>
 #endif
@@ -424,16 +429,145 @@ void FrequencySelect::commitEntry() {
     frequencyChanged = true;
 }
 
+// Coarse filter bucket for the band picker's category row.
+static const char* bandCategory(const std::string& type) {
+    if (type == "amateur" || type == "amateur1") { return "Ham"; }
+    if (type == "broadcast") { return "Bcast"; }
+    if (type == "aviation" || type == "aircraft") { return "Air"; }
+    if (type == "marine" || type == "marine1") { return "Marine"; }
+    return "Util";
+}
+
+static int radioModeFromString(const std::string& mode) {
+    // Index order matches the RADIO_IFACE_MODE_* enum.
+    static const char* names[] = { "NFM", "WFM", "AM", "DSB", "USB", "CW", "LSB", "RAW", "CWR" };
+    for (int i = 0; i < 9; i++) {
+        if (mode == names[i]) { return i; }
+    }
+    return -1;
+}
+
+// Band-type/frequency mode convention applied when a band carries no def_mode.
+// Keep in sync with heuristic_mode() in scripts/enrich_bandplans.py.
+static int heuristicRadioMode(const bandplan::Band_t& b) {
+    if (b.type == "amateur" || b.type == "amateur1") {
+        if (b.end <= 600000.0) { return RADIO_IFACE_MODE_CW; }                            // 2200 m / 630 m
+        if (b.start >= 5200000.0 && b.start <= 5500000.0) { return RADIO_IFACE_MODE_USB; } // 60 m channels
+        if (b.start < 10000000.0) { return RADIO_IFACE_MODE_LSB; }
+        if (b.start < 100000000.0) { return RADIO_IFACE_MODE_USB; }                       // 30 m .. 6 m/4 m
+        return RADIO_IFACE_MODE_NFM;                                                      // 2 m and up: repeaters
+    }
+    if (b.type == "broadcast") {
+        return (b.start >= 30000000.0) ? RADIO_IFACE_MODE_WFM : RADIO_IFACE_MODE_AM;
+    }
+    if (b.type == "aviation" || b.type == "aircraft") {
+        return (b.start < 30000000.0) ? RADIO_IFACE_MODE_USB : RADIO_IFACE_MODE_AM;
+    }
+    if (b.type == "marine" || b.type == "marine1") {
+        return (b.start < 30000000.0) ? RADIO_IFACE_MODE_USB : RADIO_IFACE_MODE_NFM;
+    }
+    return -1; // no mode change for other band types
+}
+
+// "40m Ham Band" -> "40m"; empty when the name has no wavelength token.
+static std::string wavelengthToken(const std::string& name) {
+    size_t n = name.size();
+    for (size_t i = 0; i < n; i++) {
+        if (!isdigit((unsigned char)name[i])) { continue; }
+        if (i > 0 && isalnum((unsigned char)name[i - 1])) { continue; }
+        size_t j = i;
+        while (j < n && (isdigit((unsigned char)name[j]) || name[j] == '.')) { j++; }
+        size_t k = j;
+        while (k < n && isalpha((unsigned char)name[k])) { k++; }
+        std::string unit = name.substr(j, k - j);
+        if (unit == "m" || unit == "cm" || unit == "mm") {
+            return name.substr(i, k - i);
+        }
+        i = k;
+    }
+    return "";
+}
+
+// Compact MHz main label for a band key: "1.8", "10.1", "144".
+static std::string mhzLabel(double hz) {
+    double mhz = hz / 1e6;
+    char buf[16];
+    if (mhz >= 20.0) { snprintf(buf, sizeof(buf), "%.0f", mhz); }
+    else if (mhz >= 1.0) { snprintf(buf, sizeof(buf), "%.1f", mhz); }
+    else { snprintf(buf, sizeof(buf), "%.2f", mhz); }
+    if (strchr(buf, '.')) {
+        char* end = buf + strlen(buf) - 1;
+        while (*end == '0') { *end-- = 0; }
+        if (*end == '.') { *end = 0; }
+    }
+    return buf;
+}
+
+// Centered AddText that shrinks the font size to fit maxWidth. bigFont only
+// covers '.'-'9', so callers pass baseFont for any label containing letters.
+static void centeredLabel(ImDrawList* dl, ImFont* font, float size, ImVec2 center, float maxWidth, ImU32 col, const char* text) {
+    ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    if (ts.x > maxWidth && ts.x > 0.0f) {
+        size *= maxWidth / ts.x;
+        ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    }
+    dl->AddText(font, size, ImVec2(center.x - ts.x / 2.0f, center.y - ts.y / 2.0f), col, text);
+}
+
+// Segmented-control button: the selected segment is drawn pressed.
+static bool segButton(const char* label, bool selected, ImVec2 size) {
+    if (selected) { ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive)); }
+    bool clicked = ImGui::Button(label, size);
+    if (selected) { ImGui::PopStyleColor(); }
+    return clicked;
+}
+
 void FrequencySelect::drawKeypad() {
     if (keypadRequestOpen) {
         keypadRequestOpen = false;
         entry.clear();
+        // Last-used page/category, and the selected band plan (independent of
+        // the bandPlanEnabled display toggle).
+        core::configManager.acquire();
+        auto& conf = core::configManager.conf;
+        page = (conf.value("freqEntryPage", "keypad") == "band") ? 0 : 1;
+        category = conf.value("freqEntryCategory", "Ham");
+        planName = conf.value("bandPlan", "General");
+        core::configManager.release();
         ImGui::OpenPopup("F-INP##sdrpp_freq_keypad");
     }
 
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("F-INP##sdrpp_freq_keypad", NULL, ImGuiWindowFlags_AlwaysAutoResize)) { return; }
 
+    // Page toggle, sized to the keypad grid width so the popup width matches
+    // on both pages.
+    ImVec2 tsp = ImGui::GetStyle().ItemSpacing;
+    float totalWidth = 3.0f * style::dp(56.0f) + 3.0f * tsp.x + style::dp(84.0f);
+    float halfWidth = (totalWidth - tsp.x) / 2.0f;
+    ImVec2 toggleSz(halfWidth, style::dp(34.0f));
+    int newPage = page;
+    if (segButton("BAND##sdrpp_finp_page", page == 0, toggleSz)) { newPage = 0; }
+    ImGui::SameLine();
+    if (segButton("F-INP##sdrpp_finp_page", page == 1, toggleSz)) { newPage = 1; }
+    if (newPage != page) {
+        page = newPage;
+        core::configManager.acquire();
+        core::configManager.conf["freqEntryPage"] = (page == 0) ? "band" : "keypad";
+        core::configManager.release(true);
+    }
+    ImGui::Spacing();
+
+    bool close = false;
+    if (page == 0) { drawBandPage(close, totalWidth); }
+    else { drawKeypadPage(close); }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { close = true; }
+    if (close) { ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
+}
+
+void FrequencySelect::drawKeypadPage(bool& close) {
     ImGuiIO& kio = ImGui::GetIO();
     ImVec2 keySz(style::dp(56.0f), style::dp(42.0f));
     const bool hasRange = limitFreq;
@@ -502,7 +636,6 @@ void FrequencySelect::drawKeypad() {
     auto cellPos = [&](int r, int c) {
         return ImVec2(origin.x + c * (keySz.x + sp.x), origin.y + r * (keySz.y + sp.y));
     };
-    bool close = false;
 
     const char* dig[4][3] = {
         { "7", "8", "9" },
@@ -560,7 +693,8 @@ void FrequencySelect::drawKeypad() {
         close = true;
     }
 
-    // Hardware keyboard: digits, '.', Backspace, Enter, Escape.
+    // Hardware keyboard: digits, '.', Backspace, Enter (Escape is handled
+    // page-independently in drawKeypad).
     for (int j = 0; j < kio.InputQueueCharacters.Size; j++) {
         char c = (char)kio.InputQueueCharacters[j];
         if ((c >= '0' && c <= '9') || c == '.') { keypadKey(c); }
@@ -571,10 +705,174 @@ void FrequencySelect::drawKeypad() {
         commitEntry();
         close = true;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { close = true; }
+}
 
-    if (close) { ImGui::CloseCurrentPopup(); }
-    ImGui::EndPopup();
+void FrequencySelect::drawBandPage(bool& close, float totalWidth) {
+    ImVec2 sp = ImGui::GetStyle().ItemSpacing;
+    ImVec2 cancelSz(totalWidth, style::dp(42.0f));
+
+    // Resolve the selected plan with the same fallback as bandplanmenu::init().
+    auto it = bandplan::bandplans.find(planName);
+    if (it == bandplan::bandplans.end()) { it = bandplan::bandplans.find("General"); }
+    if (it == bandplan::bandplans.end() && !bandplan::bandplans.empty()) { it = bandplan::bandplans.begin(); }
+    if (it == bandplan::bandplans.end()) {
+        ImGui::TextDisabled("No band plan loaded");
+        if (ImGui::Button("Cancel##sdrpp_band_cancel", cancelSz)) { close = true; }
+        return;
+    }
+    const bandplan::BandPlan_t& plan = it->second;
+
+    // Bands within the source tuning range (minFreq/maxFreq are display-domain,
+    // same as the band plan), tagged with their category bucket.
+    struct BandEntry {
+        const bandplan::Band_t* band;
+        const char* cat;
+    };
+    std::vector<BandEntry> avail;
+    for (const auto& b : plan.bands) {
+        if (limitFreq && (b.end < (double)minFreq || b.start > (double)maxFreq)) { continue; }
+        avail.push_back({ &b, bandCategory(b.type) });
+    }
+
+    // Category row: only non-empty buckets, plus All. A persisted category that
+    // vanished (plan or tuning range changed) falls back to All for display.
+    static const char* buckets[] = { "Ham", "Bcast", "Air", "Marine", "Util" };
+    bool present[5] = {};
+    for (const auto& e : avail) {
+        for (int i = 0; i < 5; i++) {
+            if (!strcmp(e.cat, buckets[i])) { present[i] = true; break; }
+        }
+    }
+    std::string effective = "All";
+    for (int i = 0; i < 5; i++) {
+        if (present[i] && category == buckets[i]) { effective = category; }
+    }
+    std::string newCategory;
+    for (int i = 0; i < 5; i++) {
+        if (!present[i]) { continue; }
+        if (segButton(buckets[i], effective == buckets[i], ImVec2(0, 0))) { newCategory = buckets[i]; }
+        ImGui::SameLine();
+    }
+    if (segButton("All", effective == "All", ImVec2(0, 0))) { newCategory = "All"; }
+    if (!newCategory.empty() && newCategory != category) {
+        category = newCategory;
+        effective = newCategory;
+        core::configManager.acquire();
+        core::configManager.conf["freqEntryCategory"] = category;
+        core::configManager.release(true);
+    }
+    ImGui::Spacing();
+
+    std::vector<const bandplan::Band_t*> shown;
+    for (const auto& e : avail) {
+        if (effective == "All" || effective == e.cat) { shown.push_back(e.band); }
+    }
+
+    if (shown.empty()) {
+        ImGui::TextDisabled("No bands in the tuning range");
+    }
+    else {
+        // 4-column grid of band keys in a child capped at ~4.5 rows; the half
+        // row hints that the grid scrolls.
+        float keyW = (totalWidth - 3.0f * sp.x) / 4.0f;
+        float keyH = style::dp(52.0f);
+        int rows = ((int)shown.size() + 3) / 4;
+        bool scrolls = rows > 4;
+        float gridH = scrolls ? 4.5f * (keyH + sp.y) : rows * (keyH + sp.y) - sp.y;
+        float childW = totalWidth + (scrolls ? ImGui::GetStyle().ScrollbarSize : 0.0f);
+        ImGui::BeginChild("##sdrpp_band_grid", ImVec2(childW, gridH), false);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImU32 mainCol = ImGui::GetColorU32(ImGuiCol_Text);
+        ImU32 subCol = ImGui::GetColorU32(ImGuiCol_Text, 0.75f);
+        char id[32];
+        for (int i = 0; i < (int)shown.size(); i++) {
+            const bandplan::Band_t& b = *shown[i];
+            ImGui::SetCursorPos(ImVec2((i % 4) * (keyW + sp.x), (i / 4) * (keyH + sp.y)));
+            snprintf(id, sizeof(id), "##sdrpp_band_%d", i);
+            if (ImGui::Button(id, ImVec2(keyW, keyH))) {
+                selectBand(b, plan);
+                close = true;
+            }
+            ImVec2 bmin = ImGui::GetItemRectMin();
+            ImVec2 bmax = ImGui::GetItemRectMax();
+            float cx = (bmin.x + bmax.x) / 2.0f;
+            float maxW = keyW - style::dp(8.0f);
+            std::string main = mhzLabel(b.start);
+            std::string sub = wavelengthToken(b.name);
+            if (sub.empty() && strcmp(bandCategory(b.type), "Ham")) { sub = b.name; }
+            dl->PushClipRect(bmin, bmax, true);
+            if (sub.empty()) {
+                centeredLabel(dl, style::bigFont, style::dp(22.0f), ImVec2(cx, (bmin.y + bmax.y) / 2.0f), maxW, mainCol, main.c_str());
+            }
+            else {
+                centeredLabel(dl, style::bigFont, style::dp(22.0f), ImVec2(cx, bmin.y + keyH * 0.36f), maxW, mainCol, main.c_str());
+                centeredLabel(dl, style::baseFont, style::dp(12.0f), ImVec2(cx, bmin.y + keyH * 0.76f), maxW, subCol, sub.c_str());
+            }
+            dl->PopClipRect();
+        }
+        ImGui::EndChild();
+    }
+
+    if (ImGui::Button("Cancel##sdrpp_band_cancel", cancelSz)) { close = true; }
+}
+
+void FrequencySelect::selectBand(const bandplan::Band_t& band, const bandplan::BandPlan_t& plan) {
+    std::string vfoName = gui::waterfall.selectedVFO;
+    bool isRadio = !vfoName.empty() && core::modComManager.interfaceExists(vfoName)
+                && core::modComManager.getModuleName(vfoName) == "radio";
+    int curMode = -1;
+    if (isRadio) {
+        core::modComManager.callInterface(vfoName, RADIO_IFACE_CMD_GET_MODE, NULL, &curMode);
+    }
+
+    double targetFreq = 0.0;
+    int targetMode = -1;
+
+    core::configManager.acquire();
+    auto& mem = core::configManager.conf["bandMemory"];
+    // Save the frequency/mode of the band being left so returning restores it.
+    for (const auto& b : plan.bands) {
+        if ((double)frequency >= b.start && (double)frequency <= b.end) {
+            mem[b.name] = { { "freq", (double)frequency }, { "mode", curMode } };
+            break;
+        }
+    }
+    // Memory is keyed by band name; containment revalidates it because names
+    // repeat across plans (and within: e.g. "Shortwave Broadcast" segments).
+    auto mit = mem.find(band.name);
+    if (mit != mem.end() && mit->is_object()) {
+        double f = mit->value("freq", 0.0);
+        if (f >= band.start && f <= band.end) {
+            targetFreq = f;
+            int m = mit->value("mode", -1);
+            if (m >= RADIO_IFACE_MODE_NFM && m <= RADIO_IFACE_MODE_CWR) { targetMode = m; }
+        }
+    }
+    core::configManager.release(true);
+
+    if (targetFreq <= 0.0) {
+        targetFreq = (band.defFreq > 0.0) ? band.defFreq
+                                          : round((band.start + band.end) / 2.0 / 1000.0) * 1000.0;
+    }
+    if (targetMode < 0) {
+        targetMode = radioModeFromString(band.defMode);
+        if (targetMode < 0) { targetMode = heuristicRadioMode(band); }
+    }
+
+    setFrequency((int64_t)round(targetFreq));
+    frequencyChanged = true;
+    if (isRadio && targetMode >= 0) {
+        core::modComManager.callInterface(vfoName, RADIO_IFACE_CMD_SET_MODE, &targetMode, NULL);
+    }
+    // Channelized bands set the VFO snap after the mode change, which would
+    // otherwise reset the snap to the mode default.
+    if (band.chan > 0.0 && !vfoName.empty()) {
+        auto vit = gui::waterfall.vfos.find(vfoName);
+        if (vit != gui::waterfall.vfos.end() && vit->second) { vit->second->setSnapInterval(band.chan); }
+    }
+#ifdef __ANDROID__
+    backend::hapticTick();
+#endif
 }
 
 void FrequencySelect::setFrequency(int64_t freq) {

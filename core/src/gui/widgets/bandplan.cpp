@@ -26,6 +26,10 @@ namespace bandplan {
             { "start", b.start },
             { "end", b.end },
         };
+        // Optional fields round-trip only when set, keeping untouched plans sparse.
+        if (b.defFreq > 0.0) { j["def_freq"] = b.defFreq; }
+        if (!b.defMode.empty()) { j["def_mode"] = b.defMode; }
+        if (b.chan > 0.0) { j["chan"] = b.chan; }
     }
 
     void from_json(const json& j, Band_t& b) {
@@ -33,6 +37,9 @@ namespace bandplan {
         j.at("type").get_to(b.type);
         j.at("start").get_to(b.start);
         j.at("end").get_to(b.end);
+        b.defFreq = j.value("def_freq", 0.0);
+        b.defMode = j.value("def_mode", "");
+        b.chan = j.value("chan", 0.0);
     }
 
     void to_json(json& j, const BandPlan_t& b) {

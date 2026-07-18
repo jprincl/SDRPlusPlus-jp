@@ -135,6 +135,7 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["bandColors"]["broadcast"] = "#0000FFFF";
     defConfig["bandColors"]["marine"] = "#00FFFFFF";
     defConfig["bandColors"]["military"] = "#FFFF00FF";
+    defConfig["bandMemory"] = json::object();
     defConfig["bandPlan"] = "General";
     defConfig["bandPlanEnabled"] = true;
     defConfig["bandPlanPos"] = 0;
@@ -150,6 +151,8 @@ int sdrpp_main(int argc, char* argv[]) {
     defConfig["fftRate"] = 20;
     defConfig["fftSize"] = 65536;
     defConfig["fftWindow"] = "Nuttall";
+    defConfig["freqEntryCategory"] = "Ham";
+    defConfig["freqEntryPage"] = "keypad";
     defConfig["frequency"] = 100000000.0;
     defConfig["fullWaterfallUpdate"] = false;
     defConfig["max"] = 0.0;
