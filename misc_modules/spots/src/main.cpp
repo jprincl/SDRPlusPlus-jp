@@ -195,7 +195,7 @@ private:
             config.release(true);
         }
 
-        ImGui::LeftLabel("Spot Lifetime");
+        ImGui::LeftLabel("Spot Lifetime (min)");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
         if (ImGui::SliderInt(("##_spots_spotlifetime_" + _this->name).c_str(), &_this->spotLifetime, 1, _this->maxSpotLifetime)) {
             config.acquire();
