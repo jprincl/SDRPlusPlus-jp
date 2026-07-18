@@ -473,15 +473,21 @@ void MainWindow::draw() {
 
     // Compute how much space the fixed elements to the right of the volume slider
     // will need, then give volume whatever is left — down to a minimum of 100dp.
+    // The frequency-keypad button is optional: it shows only when it fits
+    // without squeezing the volume slider below its minimum.
     float volumeWidth;
+    bool showKeypadButton;
     {
         float itemSpacing  = ImGui::GetStyle().ItemSpacing.x;
         float tuningCost   = btnSize.x + 2 * toolbarButtonPadding + itemSpacing; // btn + padding + gap
+        float keypadCost   = btnSize.x + 2 * toolbarButtonPadding + itemSpacing;
         float freqCost     = gui::freqSelect.getWidth() + itemSpacing;
         float meterMinWidth = ImGui::GetLevelMeterMinWidth();
         float meterOffset  = 87.0f * style::uiScale;
         float rightReserve = meterMinWidth + meterOffset;
         float available = topBarWidth - ImGui::GetCursorPosX() - freqCost - tuningCost - rightReserve;
+        showKeypadButton = (available >= (100.0f * style::uiScale) + keypadCost);
+        if (showKeypadButton) { available -= keypadCost; }
         volumeWidth = std::clamp(available, 100.0f * style::uiScale, 248.0f * style::uiScale);
     }
     sigpath::sinkManager.showVolumeSlider(gui::waterfall.selectedVFO, "##_sdrpp_main_volume_", volumeWidth, btnSize.x, toolbarButtonPadding, true);
@@ -492,6 +498,16 @@ void MainWindow::draw() {
     gui::freqSelect.draw();
 
     ImGui::SameLine();
+
+    if (showKeypadButton) {
+        ImGui::SetCursorPosY(origY);
+        ImGui::PushID(ImGui::GetID("sdrpp_freq_keypad_btn"));
+        if (ImGui::ImageButton(icons::KEYPAD, btnSize, ImVec2(0, 0), ImVec2(1, 1), toolbarButtonPadding, ImVec4(0, 0, 0, 0), textCol)) {
+            gui::freqSelect.openKeypad();
+        }
+        ImGui::PopID();
+        ImGui::SameLine();
+    }
 
     ImGui::SetCursorPosY(origY);
     if (tuningMode == tuner::TUNER_MODE_CENTER) {

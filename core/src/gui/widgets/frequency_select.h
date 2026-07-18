@@ -11,6 +11,8 @@ public:
     void draw();
     float getWidth();
     void setFrequency(int64_t freq);
+    // Open the F-INP direct-entry keypad (same dialog the digit long-press opens).
+    void openKeypad() { keypadRequestOpen = true; }
 
     uint64_t frequency;
     bool frequencyChanged = false;
