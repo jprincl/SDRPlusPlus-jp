@@ -125,12 +125,17 @@ bool ThemeManager::applyTheme(std::string name) {
 
     auto& style = ImGui::GetStyle();
 
+    // Subtle desktop rounding, in logical pixels: applyTheme() runs as the
+    // resetStyle callback of style::applyScaledStyle(), which scales these by
+    // the UI scale afterwards. Windows and children stay square: they run
+    // edge-to-edge, so rounding would only clip corners against the viewport.
     style.WindowRounding = 0.0f;
     style.ChildRounding = 0.0f;
-    style.FrameRounding = 0.0f;
-    style.GrabRounding = 0.0f;
-    style.PopupRounding = 0.0f;
-    style.ScrollbarRounding = 0.0f;
+    style.FrameRounding = 3.0f;
+    style.GrabRounding = 3.0f;
+    style.PopupRounding = 5.0f;
+    style.TabRounding = 3.0f;
+    style.ScrollbarRounding = 9.0f;
 
     ImVec4* colors = style.Colors;
     Theme thm = themes[name];
