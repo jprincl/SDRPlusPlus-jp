@@ -408,7 +408,6 @@ void FrequencySelect::drawKeypad() {
 
     ImGuiIO& kio = ImGui::GetIO();
     ImVec2 keySz(style::dp(56.0f), style::dp(42.0f));
-    float gridW = 3.0f * keySz.x + 2.0f * ImGui::GetStyle().ItemSpacing.x;
 
     // Entered value in MHz; before any key, the current frequency dimmed.
     ImGui::PushFont(style::bigFont);
@@ -434,28 +433,69 @@ void FrequencySelect::drawKeypad() {
     }
     ImGui::Spacing();
 
-    const char* keys[4][3] = {
+    // 4x4 grid, placed explicitly since the double-height ENT would otherwise
+    // stretch its row: digit block with the backspace at its bottom-right
+    // (Android PIN-pad convention), function column CE / Cancel / tall ENT.
+    ImVec2 sp = ImGui::GetStyle().ItemSpacing;
+    float fnW = style::dp(84.0f);
+    ImVec2 origin = ImGui::GetCursorPos();
+    auto cellPos = [&](int r, int c) {
+        return ImVec2(origin.x + c * (keySz.x + sp.x), origin.y + r * (keySz.y + sp.y));
+    };
+    bool close = false;
+
+    const char* dig[4][3] = {
         { "7", "8", "9" },
         { "4", "5", "6" },
         { "1", "2", "3" },
-        { ".", "0", "CE" }
+        { ".", "0", NULL } // NULL = backspace, drawn below
     };
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 3; c++) {
-            if (c) { ImGui::SameLine(); }
-            if (ImGui::Button(keys[r][c], keySz)) {
-                if (!strcmp(keys[r][c], "CE")) { entry.clear(); }
-                else { keypadKey(keys[r][c][0]); }
-            }
+            if (!dig[r][c]) { continue; }
+            ImGui::SetCursorPos(cellPos(r, c));
+            if (ImGui::Button(dig[r][c], keySz)) { keypadKey(dig[r][c][0]); }
         }
     }
 
-    ImGui::Spacing();
-    float halfW = (gridW - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
-    bool close = false;
-    if (ImGui::Button("Cancel##sdrpp_finp", ImVec2(halfW, keySz.y))) { close = true; }
-    ImGui::SameLine();
-    if (ImGui::Button("ENT##sdrpp_finp", ImVec2(halfW, keySz.y))) {
+    // Backspace key: undoes the last keypress. Roboto-Medium ships no arrow or
+    // erase glyph, so the icon is drawn by hand; GetColorU32 picks up the
+    // disabled-state alpha automatically.
+    ImGui::SetCursorPos(cellPos(3, 2));
+    ImGui::BeginDisabled(entry.empty());
+    bool bksp = ImGui::Button("##sdrpp_finp_bksp", keySz);
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 bmin = ImGui::GetItemRectMin();
+        ImVec2 bmax = ImGui::GetItemRectMax();
+        ImVec2 ctr((bmin.x + bmax.x) / 2.0f, (bmin.y + bmax.y) / 2.0f);
+        float iw = style::dp(11.0f);    // icon half-width
+        float ih = style::dp(7.0f);     // icon half-height
+        float notch = style::dp(7.0f);  // depth of the pointed tip
+        float th = style::dp(1.5f);
+        ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+        ImVec2 pts[5] = {
+            ImVec2(ctr.x - iw, ctr.y),
+            ImVec2(ctr.x - iw + notch, ctr.y - ih),
+            ImVec2(ctr.x + iw, ctr.y - ih),
+            ImVec2(ctr.x + iw, ctr.y + ih),
+            ImVec2(ctr.x - iw + notch, ctr.y + ih)
+        };
+        dl->AddPolyline(pts, 5, col, ImDrawFlags_Closed, th);
+        float bx = ctr.x + notch / 2.0f; // center of the icon body
+        float xr = style::dp(3.0f);
+        dl->AddLine(ImVec2(bx - xr, ctr.y - xr), ImVec2(bx + xr, ctr.y + xr), col, th);
+        dl->AddLine(ImVec2(bx - xr, ctr.y + xr), ImVec2(bx + xr, ctr.y - xr), col, th);
+    }
+    ImGui::EndDisabled();
+    if (bksp) { entry.pop_back(); }
+
+    ImGui::SetCursorPos(cellPos(0, 3));
+    if (ImGui::Button("CE", ImVec2(fnW, keySz.y))) { entry.clear(); }
+    ImGui::SetCursorPos(cellPos(1, 3));
+    if (ImGui::Button("Cancel##sdrpp_finp", ImVec2(fnW, keySz.y))) { close = true; }
+    ImGui::SetCursorPos(cellPos(2, 3));
+    if (ImGui::Button("ENT##sdrpp_finp", ImVec2(fnW, 2.0f * keySz.y + sp.y))) {
         commitEntry();
         close = true;
     }
