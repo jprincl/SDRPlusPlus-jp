@@ -12,6 +12,7 @@
 #include <gui/file_dialogs.h>
 #include <utils/freq_formatting.h>
 #include <gui/dialogs/dialog_box.h>
+#include <gui/widgets/popup_dialog.h>
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -112,7 +113,7 @@ private:
     void saveBookmarkEdit(const std::string& targetListName) {
         if (targetListName != selectedListName) {
             // Moving to another list: remove from the current one if editing
-            if (editOpen) {
+            if (bookmarkDialogMode == BookmarkDialogMode::Edit) {
                 bookmarks.erase(firstEditedBookmarkName);
                 saveByName(selectedListName);
             }
@@ -130,7 +131,7 @@ private:
         }
         else {
             // Same list: normal add or edit
-            if (editOpen) {
+            if (bookmarkDialogMode == BookmarkDialogMode::Edit) {
                 bookmarks.erase(firstEditedBookmarkName);
             }
             bookmarks[editedBookmarkName] = editedBookmark;
@@ -138,23 +139,20 @@ private:
         }
     }
 
-    bool bookmarkEditDialog() {
-        bool open = true;
+    void bookmarkEditDialog() {
         gui::mainWindow.lockWaterfallControls = true;
 
         std::string id = "Edit##freq_manager_edit_popup_" + name;
-        ImGui::OpenPopup(id.c_str());
+        if (editDialog.begin(id.c_str(), ImGuiWindowFlags_NoResize)) {
+            char nameBuf[1024];
+            snprintf(nameBuf, sizeof(nameBuf), "%s", editedBookmarkName.c_str());
 
-        char nameBuf[1024];
-        snprintf(nameBuf, sizeof(nameBuf), "%s", editedBookmarkName.c_str());
+            char geoinfoBuf[2048];
+            snprintf(geoinfoBuf, sizeof(geoinfoBuf), "%s", editedBookmark.geoinfo.c_str());
 
-        char geoinfoBuf[2048];
-        snprintf(geoinfoBuf, sizeof(geoinfoBuf), "%s", editedBookmark.geoinfo.c_str());
+            char notesBuf[4096];
+            snprintf(notesBuf, sizeof(notesBuf), "%s", editedBookmark.notes.c_str());
 
-        char notesBuf[4096];
-        snprintf(notesBuf, sizeof(notesBuf), "%s", editedBookmark.notes.c_str());
-
-        if (ImGui::BeginPopup(id.c_str(), ImGuiWindowFlags_NoResize)) {
             float editWinSize = 250.0f * style::uiScale;
             ImGui::BeginTable(("freq_manager_edit_table" + name).c_str(), 2);
 
@@ -272,40 +270,28 @@ private:
             }
 
             bool applyDisabled = (strlen(nameBuf) == 0) || nameExists || !timeValid(editedBookmark.startTime) || !timeValid(editedBookmark.endTime);
-            bool popupFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
-            bool applyRequested = popupFocused && !notesFieldActive && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
-            bool cancelRequested = popupFocused && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
-
-            if (applyDisabled) { style::beginDisabled(); }
-            if (ImGui::Button("Apply") || (!applyDisabled && applyRequested)) {
-                open = false;
+            if (editDialog.applyButton("Apply", applyDisabled, notesFieldActive)) {
                 saveBookmarkEdit(targetListName);
-                ImGui::CloseCurrentPopup();
+                editDialog.close();
             }
-            if (applyDisabled) { style::endDisabled(); }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel") || cancelRequested) {
-                open = false;
-                ImGui::CloseCurrentPopup();
+            if (editDialog.cancelButton()) {
+                editDialog.close();
             }
-            ImGui::EndPopup();
+            editDialog.end();
         }
-        return open;
     }
 
-    bool newListDialog() {
-        bool open = true;
+    void newListDialog() {
         gui::mainWindow.lockWaterfallControls = true;
 
         float menuWidth = ImGui::GetContentRegionAvail().x;
 
         std::string id = "New##freq_manager_new_popup_" + name;
-        ImGui::OpenPopup(id.c_str());
+        if (listDialog.begin(id.c_str(), ImGuiWindowFlags_NoResize)) {
+            char nameBuf[1024];
+            snprintf(nameBuf, sizeof(nameBuf), "%s", editedListName.c_str());
 
-        char nameBuf[1024];
-        snprintf(nameBuf, sizeof(nameBuf), "%s", editedListName.c_str());
-
-        if (ImGui::BeginPopup(id.c_str(), ImGuiWindowFlags_NoResize)) {
             ImGui::LeftLabel("Name");
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
             if (ImGui::InputText(("##freq_manager_edit_name" + name).c_str(), nameBuf, sizeof(nameBuf) - 1)) {
@@ -316,15 +302,12 @@ private:
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
             ImGui::ColorEdit3(("##freq_manager_list_color_" + name).c_str(), (float*)&editedListColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
 
-            bool nameChanged = !renameListOpen || (editedListName != firstEditedListName);
+            bool nameChanged = (listDialogMode != ListDialogMode::Rename) || (editedListName != firstEditedListName);
             bool alreadyExists = nameChanged && (std::find(listNames.begin(), listNames.end(), editedListName) != listNames.end());
 
-            if (strlen(nameBuf) == 0 || alreadyExists) { style::beginDisabled(); }
-            if (ImGui::Button("Apply")) {
-                open = false;
-
+            if (listDialog.applyButton("Apply", (strlen(nameBuf) == 0) || alreadyExists)) {
                 config.acquire();
-                if (renameListOpen) {
+                if (listDialogMode == ListDialogMode::Rename) {
                     if (editedListName != firstEditedListName) {
                         config.conf["lists"][editedListName] = config.conf["lists"][firstEditedListName];
                         config.conf["lists"].erase(firstEditedListName);
@@ -343,26 +326,21 @@ private:
                 config.release(true);
                 refreshLists();
                 loadByName(editedListName);
+                listDialog.close();
             }
-            if (strlen(nameBuf) == 0 || alreadyExists) { style::endDisabled(); }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel")) {
-                open = false;
+            if (listDialog.cancelButton()) {
+                listDialog.close();
             }
-            ImGui::EndPopup();
+            listDialog.end();
         }
-        return open;
     }
 
-    bool selectListsDialog() {
+    void selectListsDialog() {
         gui::mainWindow.lockWaterfallControls = true;
 
         std::string id = "Select lists##freq_manager_sel_popup_" + name;
-        ImGui::OpenPopup(id.c_str());
-
-        bool open = true;
-
-        if (ImGui::BeginPopup(id.c_str(), ImGuiWindowFlags_NoResize)) {
+        if (selectDialog.begin(id.c_str(), ImGuiWindowFlags_NoResize)) {
             // No need to lock config since we're not modifying anything and there's only one instance
             for (auto [listName, list] : config.conf["lists"].items()) {
                 bool shown = list["showOnWaterfall"];
@@ -374,12 +352,12 @@ private:
                 }
             }
 
-            if (ImGui::Button("Ok")) {
-                open = false;
+            // Checkbox changes apply immediately, so Escape and Ok both just dismiss
+            if (selectDialog.applyButton("Ok") || selectDialog.cancelRequested()) {
+                selectDialog.close();
             }
-            ImGui::EndPopup();
+            selectDialog.end();
         }
-        return open;
     }
 
     void refreshLists() {
@@ -489,7 +467,8 @@ private:
                 _this->editedListColor = color32ToVec4(hexStrToColor(config.conf["lists"][_this->firstEditedListName]["color"]));
             }
             config.release();
-            _this->renameListOpen = true;
+            _this->listDialogMode = ListDialogMode::Rename;
+            _this->listDialog.request();
         }
         if (_this->listNames.size() == 0) { style::endDisabled(); }
         ImGui::SameLine();
@@ -507,7 +486,8 @@ private:
                 _this->editedListName = buf;
             }
             _this->editedListColor = ImVec4(1.0f, 1.0f, 0.0f, 1.0f);
-            _this->newListOpen = true;
+            _this->listDialogMode = ListDialogMode::New;
+            _this->listDialog.request();
         }
         ImGui::SameLine();
         if (_this->selectedListName == "") { style::beginDisabled(); }
@@ -569,7 +549,8 @@ private:
             _this->editedBookmarkListId = _this->selectedListId;
             _this->firstEditedBookmarkName = "";
 
-            _this->createOpen = true;
+            _this->bookmarkDialogMode = BookmarkDialogMode::Create;
+            _this->editDialog.request();
 
             // Find new unique default name
             if (_this->bookmarks.find("New Bookmark") == _this->bookmarks.end()) {
@@ -594,7 +575,8 @@ private:
         ImGui::TableSetColumnIndex(2);
         if (selectedNames.size() != 1 && _this->selectedListName != "") { style::beginDisabled(); }
         if (ImGui::Button(("Edit##_freq_mgr_edt_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-            _this->editOpen = true;
+            _this->bookmarkDialogMode = BookmarkDialogMode::Edit;
+            _this->editDialog.request();
             _this->editedBookmark = _this->bookmarks[selectedNames[0]];
             _this->editedBookmarkName = selectedNames[0];
             _this->firstEditedBookmarkName = selectedNames[0];
@@ -710,7 +692,7 @@ private:
         ImGui::EndTable();
 
         if (ImGui::ActionButton(("Select displayed lists##_freq_mgr_exp_" + _this->name).c_str())) {
-            _this->selectListsOpen = true;
+            _this->selectDialog.request();
         }
 
         ImGui::LeftLabel("Bookmark display mode");
@@ -749,24 +731,18 @@ private:
 
         if (_this->selectedListName == "") { style::endDisabled(); }
 
-        if (_this->createOpen) {
-            _this->createOpen = _this->bookmarkEditDialog();
+        if (_this->bookmarkDialogMode != BookmarkDialogMode::None) {
+            _this->bookmarkEditDialog();
+            if (!_this->editDialog.isOpen()) { _this->bookmarkDialogMode = BookmarkDialogMode::None; }
         }
 
-        if (_this->editOpen) {
-            _this->editOpen = _this->bookmarkEditDialog();
+        if (_this->listDialogMode != ListDialogMode::None) {
+            _this->newListDialog();
+            if (!_this->listDialog.isOpen()) { _this->listDialogMode = ListDialogMode::None; }
         }
 
-        if (_this->newListOpen) {
-            _this->newListOpen = _this->newListDialog();
-        }
-
-        if (_this->renameListOpen) {
-            _this->renameListOpen = _this->newListDialog();
-        }
-
-        if (_this->selectListsOpen) {
-            _this->selectListsOpen = _this->selectListsDialog();
+        if (_this->selectDialog.isOpen()) {
+            _this->selectListsDialog();
         }
 
         // Handle import and export
@@ -1024,11 +1000,13 @@ private:
 
     std::string name;
     bool enabled = true;
-    bool createOpen = false;
-    bool editOpen = false;
-    bool newListOpen = false;
-    bool renameListOpen = false;
-    bool selectListsOpen = false;
+    enum class BookmarkDialogMode { None, Create, Edit };
+    BookmarkDialogMode bookmarkDialogMode = BookmarkDialogMode::None;
+    PopupDialog editDialog;
+    enum class ListDialogMode { None, New, Rename };
+    ListDialogMode listDialogMode = ListDialogMode::None;
+    PopupDialog listDialog;
+    PopupDialog selectDialog;
 
     bool deleteListOpen = false;
     bool deleteBookmarksOpen = false;
