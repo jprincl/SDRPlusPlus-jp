@@ -1,6 +1,9 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <string>
 #include <dsp/stream.h>
 #include <dsp/types.h>
 #include <gui/widgets/waterfall.h>
@@ -34,6 +37,104 @@ enum SquelchMode {
 };
 
 namespace demod {
+    template <std::size_t PresetCount>
+    static inline void drawHzPresetPopup(float currentValue, float minValue, float maxValue, const std::array<int, PresetCount>& presets, float* selectedValue) {
+        ImGui::Text("Current: %.0f Hz", currentValue);
+        ImGui::Separator();
+        for (int presetValue : presets) {
+            float preset = (float)presetValue;
+            if (preset < minValue || preset > maxValue) { continue; }
+            std::string label = std::to_string(presetValue) + " Hz";
+            bool selected = (std::round(currentValue) == preset);
+            if (ImGui::Selectable(label.c_str(), selected)) {
+                *selectedValue = preset;
+            }
+        }
+    }
+
+    template <std::size_t PresetCount>
+    static inline bool showHzPresetInput(const char* id, float& value, float minValue, float maxValue, const std::array<int, PresetCount>& presets, float step, float stepFast) {
+        ImGui::PushID(id);
+
+        bool changed = false;
+        ImGuiStyle& imguiStyle = ImGui::GetStyle();
+        float arrowWidth = ImGui::GetFrameHeight();
+        float spacing = imguiStyle.ItemInnerSpacing.x;
+        float availableWidth = ImGui::GetContentRegionAvail().x;
+        bool useStepButtons = !style::touchStyle && availableWidth >= style::dp(160.0f);
+        float inputWidth = std::max(1.0f, availableWidth - arrowWidth - spacing);
+
+        ImGui::SetNextItemWidth(inputWidth);
+        float editedValue = value;
+        if (ImGui::InputFloat("##value", &editedValue, useStepButtons ? step : 0.0f, useStepButtons ? stepFast : 0.0f, "%.0f")) {
+            editedValue = std::clamp<float>(editedValue, minValue, maxValue);
+            if (editedValue != value) {
+                value = editedValue;
+                changed = true;
+            }
+        }
+
+        ImGui::SameLine(0.0f, spacing);
+        if (ImGui::ArrowButton("##presets", ImGuiDir_Down)) {
+            ImGui::OpenPopup("presets");
+        }
+
+        if (ImGui::BeginPopup("presets")) {
+            float selectedValue = value;
+            drawHzPresetPopup(value, minValue, maxValue, presets, &selectedValue);
+            if (selectedValue != value) {
+                value = selectedValue;
+                changed = true;
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopID();
+        return changed;
+    }
+
+    template <std::size_t PresetCount>
+    static inline bool showHzPresetInput(const char* id, int& value, int minValue, int maxValue, const std::array<int, PresetCount>& presets, int step, int stepFast) {
+        ImGui::PushID(id);
+
+        bool changed = false;
+        ImGuiStyle& imguiStyle = ImGui::GetStyle();
+        float arrowWidth = ImGui::GetFrameHeight();
+        float spacing = imguiStyle.ItemInnerSpacing.x;
+        float availableWidth = ImGui::GetContentRegionAvail().x;
+        bool useStepButtons = !style::touchStyle && availableWidth >= style::dp(160.0f);
+        float inputWidth = std::max(1.0f, availableWidth - arrowWidth - spacing);
+
+        ImGui::SetNextItemWidth(inputWidth);
+        int editedValue = value;
+        if (ImGui::InputInt("##value", &editedValue, useStepButtons ? step : 0, useStepButtons ? stepFast : 0)) {
+            editedValue = std::clamp<int>(editedValue, minValue, maxValue);
+            if (editedValue != value) {
+                value = editedValue;
+                changed = true;
+            }
+        }
+
+        ImGui::SameLine(0.0f, spacing);
+        if (ImGui::ArrowButton("##presets", ImGuiDir_Down)) {
+            ImGui::OpenPopup("presets");
+        }
+
+        if (ImGui::BeginPopup("presets")) {
+            float selectedValue = (float)value;
+            drawHzPresetPopup((float)value, (float)minValue, (float)maxValue, presets, &selectedValue);
+            int newValue = std::clamp<int>((int)std::round(selectedValue), minValue, maxValue);
+            if (newValue != value) {
+                value = newValue;
+                changed = true;
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopID();
+        return changed;
+    }
+
     class Demodulator {
     public:
         virtual ~Demodulator() {}

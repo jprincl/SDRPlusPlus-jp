@@ -215,9 +215,19 @@ private:
 
         if (!_this->bandwidthLocked) {
             ImGui::LeftLabel("Bandwidth");
-            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-            if (ImGui::InputFloat(("##_radio_bw_" + _this->name).c_str(), &_this->bandwidth, 1, 100, "%.0f")) {
-                _this->bandwidth = std::clamp<float>(_this->bandwidth, _this->minBandwidth, _this->maxBandwidth);
+            bool changed = false;
+            if (_this->selectedDemodID == RADIO_DEMOD_CW || _this->selectedDemodID == RADIO_DEMOD_CWR) {
+                static constexpr std::array<int, 5> cwBandwidthPresets = { 100, 200, 250, 400, 500 };
+                changed = demod::showHzPresetInput(("_radio_bw_" + _this->name).c_str(), _this->bandwidth, _this->minBandwidth, _this->maxBandwidth, cwBandwidthPresets, 1.0f, 100.0f);
+            }
+            else {
+                ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+                if (ImGui::InputFloat(("##_radio_bw_" + _this->name).c_str(), &_this->bandwidth, 1, 100, "%.0f")) {
+                    _this->bandwidth = std::clamp<float>(_this->bandwidth, _this->minBandwidth, _this->maxBandwidth);
+                    changed = true;
+                }
+            }
+            if (changed) {
                 _this->setBandwidth(_this->bandwidth);
             }
         }

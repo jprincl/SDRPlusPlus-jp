@@ -36,9 +36,8 @@ namespace demod {
         void showMenu() {
             agc.showMenu(demod, this, "cwr", getIFSampleRate(), ImGui::GetContentRegionAvail().x);
             ImGui::LeftLabel("Tone Frequency");
-            ImGui::FillWidth();
-            if (ImGui::InputInt(("Stereo##_radio_cwr_tone_" + name).c_str(), &tone, 10, 100)) {
-                tone = std::clamp<int>(tone, 250, 1250);
+            static constexpr std::array<int, 6> tonePresets = { 500, 600, 700, 750, 800, 900 };
+            if (showHzPresetInput(("_radio_cwr_tone_" + name).c_str(), tone, 250, 1250, tonePresets, 10, 100)) {
                 demod.setTone(-tone);
                 saveConf("tone", tone);
             }
