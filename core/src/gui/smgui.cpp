@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 
 namespace SmGui {
     std::map<FormatString, const char*> fmtStr = {
@@ -60,6 +61,7 @@ namespace SmGui {
     #define SET_DIFF_BOOL(id, bo)   diffId = id; diffValue.type = DRAW_LIST_ELEM_TYPE_BOOL; diffValue.b = bo; syncRequired = elem.forceSync;
     #define SET_DIFF_INT(id, in)    diffId = id; diffValue.type = DRAW_LIST_ELEM_TYPE_INT; diffValue.i = in; syncRequired = elem.forceSync;
     #define SET_DIFF_FLOAT(id, fl)  diffId = id; diffValue.type = DRAW_LIST_ELEM_TYPE_FLOAT; diffValue.f = fl; syncRequired = elem.forceSync;
+    #define SET_DIFF_DOUBLE(id, db) diffId = id; diffValue.type = DRAW_LIST_ELEM_TYPE_DOUBLE; diffValue.d = db; syncRequired = elem.forceSync;
     #define SET_DIFF_STRING(id, st) diffId = id; diffValue.type = DRAW_LIST_ELEM_TYPE_STRING; diffValue.str = st; syncRequired = elem.forceSync;
 
     void DrawList::draw(std::string& diffId, DrawListElem& diffValue, bool& syncRequired) {
@@ -125,6 +127,18 @@ namespace SmGui {
                     SET_DIFF_INT(elements[i].str, elements[i+1].i);
                 }
                 i += 5;
+            }
+            else if (elem.step == DRAW_STEP_INPUT_FLOAT) {
+                if (InputFloat(elements[i].str.c_str(), &elements[i+1].f, elements[i+2].f, elements[i+3].f, elements[i+4].str.c_str(), elements[i+5].i)) {
+                    SET_DIFF_FLOAT(elements[i].str, elements[i+1].f);
+                }
+                i += 6;
+            }
+            else if (elem.step == DRAW_STEP_INPUT_DOUBLE) {
+                if (InputDouble(elements[i].str.c_str(), &elements[i+1].d, elements[i+2].d, elements[i+3].d, elements[i+4].str.c_str(), elements[i+5].i)) {
+                    SET_DIFF_DOUBLE(elements[i].str, elements[i+1].d);
+                }
+                i += 6;
             }
             else if (elem.step == DRAW_STEP_CHECKBOX) {
                 if (Checkbox(elements[i].str.c_str(), &elements[i+1].b)) {
@@ -241,6 +255,13 @@ namespace SmGui {
         elem.f = f;
         elements.push_back(elem);
     }
+
+    void DrawList::pushDouble(double d) {
+        DrawListElem elem;
+        elem.type = DRAW_LIST_ELEM_TYPE_DOUBLE;
+        elem.d = d;
+        elements.push_back(elem);
+    }
     
     void DrawList::pushString(std::string str) {
         DrawListElem elem;
@@ -274,6 +295,10 @@ namespace SmGui {
         else if (elem.type == DRAW_LIST_ELEM_TYPE_FLOAT && len >= 5) {
             elem.f = *(float*)&data[i];
             i += 4;
+        }
+        else if (elem.type == DRAW_LIST_ELEM_TYPE_DOUBLE && len >= 9) {
+            memcpy(&elem.d, &data[i], sizeof(elem.d));
+            i += (int)sizeof(elem.d);
         }
         else if (elem.type == DRAW_LIST_ELEM_TYPE_STRING && len >= 3) {
             uint16_t slen = *(uint16_t*)&data[i];
@@ -342,6 +367,10 @@ namespace SmGui {
             *(float*)&buf[i] = elem.f;
             i += 4;
         }
+        else if (elem.type == DRAW_LIST_ELEM_TYPE_DOUBLE && len >= 8) {
+            memcpy(&buf[i], &elem.d, sizeof(elem.d));
+            i += (int)sizeof(elem.d);
+        }
         else if (elem.type == DRAW_LIST_ELEM_TYPE_STRING) {
             int slen = elem.str.size();
             if (len < slen + 2) { return -1; }
@@ -376,6 +405,7 @@ namespace SmGui {
         else if (elem.type == DRAW_LIST_ELEM_TYPE_BOOL) { return 2; }
         else if (elem.type == DRAW_LIST_ELEM_TYPE_INT) { return 5; }
         else if (elem.type == DRAW_LIST_ELEM_TYPE_FLOAT) { return 5; }
+        else if (elem.type == DRAW_LIST_ELEM_TYPE_DOUBLE) { return 9; }
         else if (elem.type == DRAW_LIST_ELEM_TYPE_STRING) { return 3 + elem.str.size(); }
         return -1;
     }
@@ -440,6 +470,12 @@ namespace SmGui {
             
             E_VALIDATE_WIDGET(5, DRAW_STEP_INPUT_INT, DRAW_LIST_ELEM_TYPE_STRING, DRAW_LIST_ELEM_TYPE_INT, DRAW_LIST_ELEM_TYPE_INT,
                                                         DRAW_LIST_ELEM_TYPE_INT, DRAW_LIST_ELEM_TYPE_INT)
+
+            E_VALIDATE_WIDGET(6, DRAW_STEP_INPUT_FLOAT, DRAW_LIST_ELEM_TYPE_STRING, DRAW_LIST_ELEM_TYPE_FLOAT, DRAW_LIST_ELEM_TYPE_FLOAT,
+                                                        DRAW_LIST_ELEM_TYPE_FLOAT, DRAW_LIST_ELEM_TYPE_STRING, DRAW_LIST_ELEM_TYPE_INT)
+
+            E_VALIDATE_WIDGET(6, DRAW_STEP_INPUT_DOUBLE, DRAW_LIST_ELEM_TYPE_STRING, DRAW_LIST_ELEM_TYPE_DOUBLE, DRAW_LIST_ELEM_TYPE_DOUBLE,
+                                                        DRAW_LIST_ELEM_TYPE_DOUBLE, DRAW_LIST_ELEM_TYPE_STRING, DRAW_LIST_ELEM_TYPE_INT)
             
             E_VALIDATE_WIDGET(2, DRAW_STEP_CHECKBOX, DRAW_LIST_ELEM_TYPE_STRING, DRAW_LIST_ELEM_TYPE_BOOL)
             
@@ -642,6 +678,46 @@ namespace SmGui {
         }
         if (diffId == label && diffValue.type == DRAW_LIST_ELEM_TYPE_INT) {
             *v = diffValue.i;
+            return true;
+        }
+        return false;
+    }
+
+    bool InputFloat(const char *label, float *v, float step, float step_fast, const char *format, ImGuiInputTextFlags flags) {
+        nextItemFillWidth = false;
+        if (!serverMode) { return ImGui::InputFloat(label, v, step, step_fast, format, flags); }
+        if (rdl) {
+            rdl->pushStep(DRAW_STEP_INPUT_FLOAT, forceSyncForNext);
+            rdl->pushString(label);
+            rdl->pushFloat(*v);
+            rdl->pushFloat(step);
+            rdl->pushFloat(step_fast);
+            rdl->pushString(format);
+            rdl->pushInt(flags);
+            forceSyncForNext = false;
+        }
+        if (diffId == label && diffValue.type == DRAW_LIST_ELEM_TYPE_FLOAT) {
+            *v = diffValue.f;
+            return true;
+        }
+        return false;
+    }
+
+    bool InputDouble(const char *label, double *v, double step, double step_fast, const char *format, ImGuiInputTextFlags flags) {
+        nextItemFillWidth = false;
+        if (!serverMode) { return ImGui::InputDouble(label, v, step, step_fast, format, flags); }
+        if (rdl) {
+            rdl->pushStep(DRAW_STEP_INPUT_DOUBLE, forceSyncForNext);
+            rdl->pushString(label);
+            rdl->pushDouble(*v);
+            rdl->pushDouble(step);
+            rdl->pushDouble(step_fast);
+            rdl->pushString(format);
+            rdl->pushInt(flags);
+            forceSyncForNext = false;
+        }
+        if (diffId == label && diffValue.type == DRAW_LIST_ELEM_TYPE_DOUBLE) {
+            *v = diffValue.d;
             return true;
         }
         return false;

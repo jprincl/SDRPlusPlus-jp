@@ -48,7 +48,9 @@ namespace SmGui {
         DRAW_STEP_SET_NEXT_ITEM_WIDTH,
         // Appended after the original set to keep prior opcode values stable
         // across server/client versions.
-        DRAW_STEP_SEPARATOR
+        DRAW_STEP_SEPARATOR,
+        DRAW_STEP_INPUT_FLOAT,
+        DRAW_STEP_INPUT_DOUBLE
     };
 
     enum DrawListElemType {
@@ -57,6 +59,7 @@ namespace SmGui {
         DRAW_LIST_ELEM_TYPE_INT,
         DRAW_LIST_ELEM_TYPE_FLOAT,
         DRAW_LIST_ELEM_TYPE_STRING,
+        DRAW_LIST_ELEM_TYPE_DOUBLE,
     };
 
     struct DrawListElem {
@@ -66,6 +69,7 @@ namespace SmGui {
         bool b;
         int i;
         float f;
+        double d;
         std::string str;
     };
 
@@ -94,6 +98,7 @@ namespace SmGui {
         void pushBool(bool b);
         void pushInt(int i);
         void pushFloat(float f);
+        void pushDouble(double d);
         void pushString(std::string str);
 
         void draw(std::string& diffId, DrawListElem& diffValue, bool& syncRequired);
@@ -139,6 +144,8 @@ namespace SmGui {
     bool SliderInt(const char *label, int *v, int v_min, int v_max, FormatString format = FMT_STR_INT_DEFAULT, ImGuiSliderFlags flags = 0);
     bool SliderFloatWithSteps(const char *label, float *v, float v_min, float v_max, float v_step, FormatString display_format = FMT_STR_FLOAT_THREE_DECIMAL);
     bool InputInt(const char *label, int *v, int step = 1, int step_fast = 100, ImGuiInputTextFlags flags = 0);
+    bool InputFloat(const char *label, float *v, float step = 0.0f, float step_fast = 0.0f, const char *format = "%.3f", ImGuiInputTextFlags flags = 0);
+    bool InputDouble(const char *label, double *v, double step = 0.0, double step_fast = 0.0, const char *format = "%.6f", ImGuiInputTextFlags flags = 0);
     bool Checkbox(const char *label, bool *v);
     bool SliderFloat(const char *label, float *v, float v_min, float v_max, FormatString format = FMT_STR_FLOAT_THREE_DECIMAL, ImGuiSliderFlags flags = 0);
     bool InputText(const char *label, char *buf, size_t buf_size, ImGuiInputTextFlags flags = 0);

@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <imgui.h>
 #include <utils/flog.h>
 #include <module.h>
@@ -308,6 +310,7 @@ public:
         bandwidthId = 8;
         lnaGain = lnaSteps - 1;
         gain = 59;
+        ppm = 0.0;
         agc = false;
         agcAttack = 500;
         agcDecay = 500;
@@ -354,6 +357,9 @@ public:
         }
         if (config.conf["devices"][selectedName].contains("ifGain")) {
             gain = config.conf["devices"][selectedName]["ifGain"];
+        }
+        if (config.conf["devices"][selectedName].contains("ppm")) {
+            ppm = config.conf["devices"][selectedName]["ppm"];
         }
         if (config.conf["devices"][selectedName].contains("agc")) {
             agc = config.conf["devices"][selectedName]["agc"];
@@ -431,6 +437,7 @@ public:
 
         config.release();
 
+        ppm = clampPPM(ppm);
         if (lnaGain >= lnaSteps) { lnaGain = lnaSteps - 1; }
 
         // Release device after selecting
@@ -593,6 +600,7 @@ private:
         _this->channelParams->ctrlParams.dcOffset.IQenable = true;
         _this->channelParams->tunerParams.ifType = ifModes[_this->ifModeId].ifValue;
         _this->channelParams->tunerParams.loMode = sdrplay_api_LO_Auto;
+        _this->applyPPM();
 
         // Hard coded AGC parameters
         _this->channelParams->ctrlParams.agc.attack_ms = _this->agcAttack;
@@ -638,6 +646,16 @@ private:
         }
         _this->freq = freq;
         flog::info("SDRPlaySourceModule '{0}': Tune: {1}!", _this->name, freq);
+    }
+
+    static double clampPPM(double value) {
+        if (!std::isfinite(value)) { return 0.0; }
+        return std::clamp<double>(value, -200.0, 200.0);
+    }
+
+    void applyPPM() {
+        openDevParams->devParams->ppm = ppm;
+        sdrplay_api_Update(openDev.dev, openDev.tuner, sdrplay_api_Update_Dev_Ppm, sdrplay_api_Update_Ext1_None);
     }
 
     static void menuHandler(void* ctx) {
@@ -766,6 +784,17 @@ private:
             }
             if (_this->agc > 0) { SmGui::EndDisabled(); }
 
+            SmGui::LeftLabel("PPM Correction");
+            SmGui::FillWidth();
+            if (SmGui::InputDouble(CONCAT("##sdrplay_ppm", _this->name), &_this->ppm, 0.01, 0.1, "%.2f")) {
+                _this->ppm = clampPPM(_this->ppm);
+                if (_this->running) {
+                    _this->applyPPM();
+                }
+                config.acquire();
+                config.conf["devices"][_this->selectedName]["ppm"] = _this->ppm;
+                config.release(true);
+            }
 
             if (_this->agcParamEdit) {
                 bool valid = false;
@@ -1137,6 +1166,7 @@ private:
     int lnaGain = 9;
     int gain = 59;
     int lnaSteps = 9;
+    double ppm = 0.0;
 
     bool agc = false;
     bool agcParamEdit = false;
