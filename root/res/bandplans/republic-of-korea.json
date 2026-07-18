@@ -21,7 +21,8 @@
             "name": "Standard Frequency Time Signal",
             "type": "utility",
             "start": 19950,
-            "end": 20250
+            "end": 20250,
+            "def_mode": "LSB"
         },
         {
             "name": "Coastal Telegraph",
@@ -75,7 +76,9 @@
             "name": "Standard Broadcast",
             "type": "broadcast",
             "start": 526500,
-            "end": 1606500
+            "end": 1606500,
+            "def_freq": 1000000,
+            "chan": 9000
         },
         {
             "name": "Radiobuoy",

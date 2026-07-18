@@ -21,7 +21,9 @@
       "name": "Medium Wave Broadcast (AM Broadcast)",
       "type": "broadcast",
       "start": 520000,
-      "end": 1710000
+      "end": 1710000,
+      "def_freq": 1000000,
+      "chan": 9000
     },
     {
       "name": "160m Ham Band",

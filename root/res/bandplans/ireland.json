@@ -15,13 +15,16 @@
             "name": "Long wave",
             "type": "broadcast",
             "start": 148500,
-            "end": 282500
+            "end": 282500,
+            "chan": 9000
         },
         {
             "name": "AM broadcast",
             "type": "broadcast",
             "start": 531000,
-            "end": 1602000
+            "end": 1602000,
+            "def_freq": 1000000,
+            "chan": 9000
         },
         {
             "name": "160m ham band",

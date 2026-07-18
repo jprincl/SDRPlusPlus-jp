@@ -15,7 +15,8 @@
             "name": "Long Wave",
             "type": "broadcast",
             "start": 148500,
-            "end": 283500
+            "end": 283500,
+            "chan": 9000
         },
         {
             "name": "Air/Marine Nav Beacons",
@@ -27,7 +28,9 @@
             "name": "Medium Wave (AM Broadcast)",
             "type": "broadcast",
             "start": 526500,
-            "end": 1606500
+            "end": 1606500,
+            "def_freq": 1000000,
+            "chan": 10000
         },
         {
             "name": "160m Ham Band",

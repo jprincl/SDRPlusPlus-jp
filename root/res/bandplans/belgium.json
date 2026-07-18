@@ -27,7 +27,9 @@
       "name": "AM Broadcast",
       "type": "broadcast",
       "start": 526500,
-      "end": 1606500
+      "end": 1606500,
+      "def_freq": 1000000,
+      "chan": 9000
     },
     {
       "name": "160m - Amateur",

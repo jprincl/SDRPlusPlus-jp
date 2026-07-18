@@ -15,7 +15,8 @@
             "name": "LW-Broadcast",
             "type": "broadcast",
             "start": 148500,
-            "end": 283500
+            "end": 283500,
+            "chan": 9000
         },
         {
             "name": "630m-Amateur",
@@ -27,7 +28,9 @@
             "name": "MW-Broadcast",
             "type": "broadcast",
             "start": 526500,
-            "end": 1606500
+            "end": 1606500,
+            "def_freq": 1000000,
+            "chan": 9000
         },
         {
             "name": "160m-Amateur",

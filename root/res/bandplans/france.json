@@ -15,7 +15,8 @@
             "name": "Grande ondes",
             "type": "broadcast",
             "start": 148500,
-            "end": 519000
+            "end": 519000,
+            "chan": 9000
         },
 		{
             "name": "472KHz - Radioamateur",
@@ -27,7 +28,9 @@
             "name": "Ondes moyennes (AM Broadcast)",
             "type": "broadcast",
             "start": 520000,
-            "end": 1705000
+            "end": 1705000,
+            "def_freq": 1000000,
+            "chan": 9000
         },
         {
             "name": "Marine - HF",

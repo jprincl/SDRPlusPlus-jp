@@ -8,7 +8,8 @@
             "name": "Ausili metereologici",
             "type": "utility",
             "start": 8300,
-            "end": 11300
+            "end": 11300,
+            "def_mode": "LSB"
         },
         {
             "name": "Radionavigazione",
@@ -26,7 +27,8 @@
             "name": "Radiodiffusione OL",
             "type": "broadcast",
             "start": 148500,
-            "end": 283500
+            "end": 283500,
+            "chan": 9000
         },
         {
             "name": "Radiofari e NDB",
@@ -56,7 +58,9 @@
             "name": "Radiodiffusione OM",
             "type": "broadcast",
             "start": 520000,
-            "end": 1606500
+            "end": 1606500,
+            "def_freq": 1000000,
+            "chan": 9000
         },
         {
             "name": "Mobile marittimo",

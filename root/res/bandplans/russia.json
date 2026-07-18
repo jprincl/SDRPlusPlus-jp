@@ -15,13 +15,16 @@
             "name": "LW",
             "type": "broadcast",
             "start": 144000,
-            "end": 415000
+            "end": 415000,
+            "chan": 9000
         },
         {
             "name": "MW",
             "type": "broadcast",
             "start": 520000,
-            "end": 1602000
+            "end": 1602000,
+            "def_freq": 1000000,
+            "chan": 9000
         },
         {
             "name": "160m CW",

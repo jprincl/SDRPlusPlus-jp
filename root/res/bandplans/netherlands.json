@@ -21,7 +21,8 @@
             "start": 9000,
             "end": 11300,
             "type": "utility",
-            "name": "Radionavigation / Weather (LDS)"
+            "name": "Radionavigation / Weather (LDS)",
+            "def_mode": "LSB"
         },
         {
             "start": 11300,
@@ -39,7 +40,8 @@
             "start": 19950,
             "end": 20050,
             "type": "utility",
-            "name": "20KHz Time Signal"
+            "name": "20KHz Time Signal",
+            "def_mode": "LSB"
         },
         {
             "start": 20050,
@@ -51,7 +53,8 @@
             "start": 76850,
             "end": 78150,
             "type": "utility",
-            "name": "DCF77 (DE)"
+            "name": "DCF77 (DE)",
+            "def_mode": "CW"
         },
         {
             "start": 78150,
@@ -99,13 +102,15 @@
             "start": 148500,
             "end": 255000,
             "type": "broadcast",
-            "name": "Long Wave"
+            "name": "Long Wave",
+            "chan": 9000
         },
         {
             "start": 255000,
             "end": 283500,
             "type": "broadcast",
-            "name": "Long Wave / Aeronautical Radionavigation"
+            "name": "Long Wave / Aeronautical Radionavigation",
+            "chan": 9000
         },
         {
             "start": 283500,
@@ -135,7 +140,9 @@
             "start": 526500,
             "end": 1606500,
             "type": "broadcast",
-            "name": "Medium Wave"
+            "name": "Medium Wave",
+            "def_freq": 1000000,
+            "chan": 9000
         },
         {
             "start": 1606500,
