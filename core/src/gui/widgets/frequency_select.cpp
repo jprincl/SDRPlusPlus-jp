@@ -4,6 +4,13 @@
 #include <gui/gui.h>
 #include <backend.h>
 #include <utils/hrfreq.h>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <algorithm>
+#ifdef __ANDROID__
+#include <android_backend.h>
+#endif
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -197,14 +204,18 @@ void FrequencySelect::draw() {
             if (isInArea(mousePos, digitTopMins[i], digitTopMaxs[i])) {
                 window->DrawList->AddRectFilled(digitTopMins[i], digitTopMaxs[i], IM_COL32(255, 0, 0, 75));
                 if (leftClick) {
-                    incrementDigit(i);
+                    pressDigit = i;
+                    pressDir = 1;
+                    longPressDone = false;
                 }
                 onDigit = true;
             }
             if (isInArea(mousePos, digitBottomMins[i], digitBottomMaxs[i])) {
                 window->DrawList->AddRectFilled(digitBottomMins[i], digitBottomMaxs[i], IM_COL32(0, 0, 255, 75));
                 if (leftClick) {
-                    decrementDigit(i);
+                    pressDigit = i;
+                    pressDir = -1;
+                    longPressDone = false;
                 }
                 onDigit = true;
             }
@@ -235,6 +246,7 @@ void FrequencySelect::draw() {
                 // For each keyboard characters, type it
                 for (int j = 0; j < chars.Size; j++) {
                     if (chars[j] >= '0' && chars[j] <= '9') {
+                        if ((i + j) > 11) { break; }
                         digits[i + j] = chars[j] - '0';
                         if ((i + j) < 11) { moveCursorToDigit(i + j + 1); }
                         frequencyChanged = true;
@@ -247,6 +259,41 @@ void FrequencySelect::draw() {
                         mw > 0 ? incrementDigit(i) : decrementDigit(i);
                     }
                 }
+            }
+        }
+
+        // A press armed on a digit half steps it on a quick release; held
+        // motionless past the threshold it opens the F-INP keypad instead.
+        // Stepping waits for the release so the two can't both fire.
+        if (pressDigit >= 0) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                float slop = 10.0f * style::uiScale;
+                float dx = mousePos.x - io.MouseClickedPos[ImGuiMouseButton_Left].x;
+                float dy = mousePos.y - io.MouseClickedPos[ImGuiMouseButton_Left].y;
+                if ((dx * dx) + (dy * dy) > (slop * slop)) {
+                    pressDigit = -1; // moved away: neither a tap nor a long press
+                }
+                else if (!longPressDone && io.MouseDownDuration[ImGuiMouseButton_Left] >= 0.5f) {
+                    longPressDone = true;
+                    keypadRequestOpen = true;
+#ifdef __ANDROID__
+                    backend::hapticTick();
+#endif
+                }
+            }
+            else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                if (!longPressDone) {
+                    if (pressDir > 0 && isInArea(mousePos, digitTopMins[pressDigit], digitTopMaxs[pressDigit])) {
+                        incrementDigit(pressDigit);
+                    }
+                    else if (pressDir < 0 && isInArea(mousePos, digitBottomMins[pressDigit], digitBottomMaxs[pressDigit])) {
+                        decrementDigit(pressDigit);
+                    }
+                }
+                pressDigit = -1;
+            }
+            else {
+                pressDigit = -1; // press was lost without a release event
             }
         }
 
@@ -302,6 +349,132 @@ void FrequencySelect::draw() {
     ImGui::PopFont();
 
     ImGui::SetCursorPosX(digitBottomMaxs[11].x + (17.0f * style::uiScale));
+
+    drawKeypad();
+}
+
+// Format a frequency in Hz with '.' group separators, matching the widget.
+static std::string groupHz(uint64_t hz) {
+    std::string s = std::to_string(hz);
+    for (int pos = (int)s.size() - 3; pos > 0; pos -= 3) {
+        s.insert(pos, ".");
+    }
+    return s;
+}
+
+void FrequencySelect::keypadKey(char key) {
+    if (key >= '0' && key <= '9') {
+        size_t dot = entry.find('.');
+        if (dot == std::string::npos) {
+            if (entry == "0") { entry.clear(); }
+            if (entry.size() < 6) { entry += key; } // up to 999999 MHz
+        }
+        else if (entry.size() - dot - 1 < 6) { // down to 1 Hz
+            entry += key;
+        }
+    }
+    else if (key == '.') {
+        if (entry.empty()) {
+            // IC-705 shorthand: [.] first re-enters the current MHz digits, so
+            // retuning within the band is just [.] plus the kHz digits.
+            entry = std::to_string(frequency / 1000000) + '.';
+        }
+        else if (entry.find('.') == std::string::npos) {
+            entry += '.';
+        }
+    }
+}
+
+void FrequencySelect::commitEntry() {
+    if (entry.empty()) { return; }
+    // The entry is a decimal number in MHz; digits left blank below the last
+    // entered one become zeros, same as the IC-705's [ENT].
+    double hz = round(atof(entry.c_str()) * 1e6);
+    hz = std::min(hz, 999999999999.0);
+    if (limitFreq) { hz = std::clamp(hz, (double)minFreq, (double)maxFreq); }
+    setFrequency((int64_t)hz);
+    frequencyChanged = true;
+}
+
+void FrequencySelect::drawKeypad() {
+    if (keypadRequestOpen) {
+        keypadRequestOpen = false;
+        entry.clear();
+        ImGui::OpenPopup("F-INP##sdrpp_freq_keypad");
+    }
+
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("F-INP##sdrpp_freq_keypad", NULL, ImGuiWindowFlags_AlwaysAutoResize)) { return; }
+
+    ImGuiIO& kio = ImGui::GetIO();
+    ImVec2 keySz(style::dp(56.0f), style::dp(42.0f));
+    float gridW = 3.0f * keySz.x + 2.0f * ImGui::GetStyle().ItemSpacing.x;
+
+    // Entered value in MHz; before any key, the current frequency dimmed.
+    ImGui::PushFont(style::bigFont);
+    if (entry.empty()) {
+        char cur[32];
+        snprintf(cur, sizeof(cur), "%.6f", (double)frequency / 1e6);
+        char* end = cur + strlen(cur) - 1;
+        while (*end == '0') { *end-- = 0; }
+        if (*end == '.') { *end = 0; }
+        ImGui::TextDisabled("%s", cur);
+    }
+    else {
+        ImGui::TextUnformatted(entry.c_str());
+    }
+    ImGui::PopFont();
+
+    if (entry.empty()) {
+        ImGui::TextDisabled("Enter frequency in MHz");
+    }
+    else {
+        double hz = std::min(round(atof(entry.c_str()) * 1e6), 999999999999.0);
+        ImGui::Text("= %s Hz", groupHz((uint64_t)hz).c_str());
+    }
+    ImGui::Spacing();
+
+    const char* keys[4][3] = {
+        { "7", "8", "9" },
+        { "4", "5", "6" },
+        { "1", "2", "3" },
+        { ".", "0", "CE" }
+    };
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 3; c++) {
+            if (c) { ImGui::SameLine(); }
+            if (ImGui::Button(keys[r][c], keySz)) {
+                if (!strcmp(keys[r][c], "CE")) { entry.clear(); }
+                else { keypadKey(keys[r][c][0]); }
+            }
+        }
+    }
+
+    ImGui::Spacing();
+    float halfW = (gridW - ImGui::GetStyle().ItemSpacing.x) / 2.0f;
+    bool close = false;
+    if (ImGui::Button("Cancel##sdrpp_finp", ImVec2(halfW, keySz.y))) { close = true; }
+    ImGui::SameLine();
+    if (ImGui::Button("ENT##sdrpp_finp", ImVec2(halfW, keySz.y))) {
+        commitEntry();
+        close = true;
+    }
+
+    // Hardware keyboard: digits, '.', Backspace, Enter, Escape.
+    for (int j = 0; j < kio.InputQueueCharacters.Size; j++) {
+        char c = (char)kio.InputQueueCharacters[j];
+        if ((c >= '0' && c <= '9') || c == '.') { keypadKey(c); }
+        else if (c == ',') { keypadKey('.'); }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && !entry.empty()) { entry.pop_back(); }
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+        commitEntry();
+        close = true;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { close = true; }
+
+    if (close) { ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
 }
 
 void FrequencySelect::setFrequency(int64_t freq) {

@@ -33,7 +33,7 @@ only briefly for context.
 | Native IME / text input | **Not implemented** — highest priority |
 | Window insets / edge-to-edge / cutouts | **Not implemented** |
 | Storage Access Framework file dialogs | **Not implemented** |
-| Long-press interactions | **Not implemented** |
+| Long-press interactions | **Partial** — long-press on a frequency digit opens the F-INP direct-entry keypad (IC-705 style, works on desktop too); no generic long-press → context-menu mechanism yet |
 | Toggle switches replacing checkboxes | **Not implemented** |
 | Contextual overflow menus (⋮) | **Not implemented** |
 | ImGui upgrade (vendored 1.87) | **Not implemented** — separate track |
@@ -103,10 +103,12 @@ on Android; pass content URIs as fds (same pattern as the USB fd path).
 
 ### 4. Touch ergonomics polish
 
-- **Long-press**: nothing in the codebase uses it. The drag-scroll recognizer
-  already has a 200 ms hold state (`TouchScrollRecognizer::HOLD_TIMEOUT_MS`) —
-  extend to report long-press + `hapticTick()`. Uses: context menus,
-  long-press frequency digits for direct numeric entry.
+- **Long-press**: frequency digits now open the F-INP direct-entry keypad on a
+  0.5 s motionless hold (`FrequencySelect`, with `hapticTick()`; entry is in
+  MHz with IC-705 semantics — '.' first re-enters the current MHz digits, ENT
+  zero-fills). Remaining: a generic long-press → context-menu mechanism; the
+  drag-scroll recognizer's 200 ms hold state
+  (`TouchScrollRecognizer::HOLD_TIMEOUT_MS`) could report it centrally.
 - **Toggle switches**: replace on/off checkboxes with Android-style switches.
   Options: `imgui_toggle` (two files; targets newer ImGui than 1.87, needs a
   compat check), a hand-rolled ~60-line widget in `simple_widgets`, or —
