@@ -362,12 +362,41 @@ static std::string groupHz(uint64_t hz) {
     return s;
 }
 
+static int digitCount(uint64_t value) {
+    int count = 1;
+    while (value >= 10) {
+        value /= 10;
+        count++;
+    }
+    return count;
+}
+
+static int keypadIntegerDigitLimit(bool limitFreq, uint64_t maxFreq) {
+    if (!limitFreq) { return 6; } // dialog entry is MHz, capped at 999999 MHz
+    uint64_t maxMHz = maxFreq / 1000000;
+    return std::min(6, digitCount(maxMHz));
+}
+
+static uint64_t clampKeypadHz(double hz, bool limitFreq, uint64_t minFreq, uint64_t maxFreq) {
+    if (!std::isfinite(hz) || hz < 0.0) { hz = 0.0; }
+    hz = std::min(hz, 999999999999.0);
+
+    if (limitFreq) {
+        const uint64_t lo = std::min(minFreq, maxFreq);
+        const uint64_t hi = std::max(minFreq, maxFreq);
+        hz = std::clamp(hz, (double)lo, (double)hi);
+    }
+
+    return (uint64_t)hz;
+}
+
 void FrequencySelect::keypadKey(char key) {
     if (key >= '0' && key <= '9') {
         size_t dot = entry.find('.');
         if (dot == std::string::npos) {
             if (entry == "0") { entry.clear(); }
-            if (entry.size() < 6) { entry += key; } // up to 999999 MHz
+            uint64_t activeMax = limitFreq ? std::max(minFreq, maxFreq) : maxFreq;
+            if ((int)entry.size() < keypadIntegerDigitLimit(limitFreq, activeMax)) { entry += key; }
         }
         else if (entry.size() - dot - 1 < 6) { // down to 1 Hz
             entry += key;
@@ -377,7 +406,8 @@ void FrequencySelect::keypadKey(char key) {
         if (entry.empty()) {
             // IC-705 shorthand: [.] first re-enters the current MHz digits, so
             // retuning within the band is just [.] plus the kHz digits.
-            entry = std::to_string(frequency / 1000000) + '.';
+            uint64_t currentHz = clampKeypadHz((double)frequency, limitFreq, minFreq, maxFreq);
+            entry = std::to_string(currentHz / 1000000) + '.';
         }
         else if (entry.find('.') == std::string::npos) {
             entry += '.';
@@ -389,9 +419,7 @@ void FrequencySelect::commitEntry() {
     if (entry.empty()) { return; }
     // The entry is a decimal number in MHz; digits left blank below the last
     // entered one become zeros, same as the IC-705's [ENT].
-    double hz = round(atof(entry.c_str()) * 1e6);
-    hz = std::min(hz, 999999999999.0);
-    if (limitFreq) { hz = std::clamp(hz, (double)minFreq, (double)maxFreq); }
+    uint64_t hz = clampKeypadHz(round(atof(entry.c_str()) * 1e6), limitFreq, minFreq, maxFreq);
     setFrequency((int64_t)hz);
     frequencyChanged = true;
 }
@@ -408,6 +436,21 @@ void FrequencySelect::drawKeypad() {
 
     ImGuiIO& kio = ImGui::GetIO();
     ImVec2 keySz(style::dp(56.0f), style::dp(42.0f));
+    const bool hasRange = limitFreq;
+    const uint64_t rangeLo = hasRange ? std::min(minFreq, maxFreq) : 0;
+    const uint64_t rangeHi = hasRange ? std::max(minFreq, maxFreq) : 0;
+    const ImVec4 errorCol(1.0f, 0.20f, 0.12f, 1.0f);
+    double rawHz = 0.0;
+    uint64_t targetHz = 0;
+    bool belowRange = false;
+    bool aboveRange = false;
+    if (!entry.empty()) {
+        rawHz = std::min(round(atof(entry.c_str()) * 1e6), 999999999999.0);
+        targetHz = clampKeypadHz(rawHz, limitFreq, minFreq, maxFreq);
+        belowRange = hasRange && rawHz < (double)rangeLo;
+        aboveRange = hasRange && rawHz > (double)rangeHi;
+    }
+    const bool outOfRange = belowRange || aboveRange;
 
     // Entered value in MHz; before any key, the current frequency dimmed.
     ImGui::PushFont(style::bigFont);
@@ -420,7 +463,9 @@ void FrequencySelect::drawKeypad() {
         ImGui::TextDisabled("%s", cur);
     }
     else {
+        if (outOfRange) { ImGui::PushStyleColor(ImGuiCol_Text, errorCol); }
         ImGui::TextUnformatted(entry.c_str());
+        if (outOfRange) { ImGui::PopStyleColor(); }
     }
     ImGui::PopFont();
 
@@ -428,8 +473,23 @@ void FrequencySelect::drawKeypad() {
         ImGui::TextDisabled("Enter frequency in MHz");
     }
     else {
-        double hz = std::min(round(atof(entry.c_str()) * 1e6), 999999999999.0);
-        ImGui::Text("= %s Hz", groupHz((uint64_t)hz).c_str());
+        if (outOfRange) { ImGui::PushStyleColor(ImGuiCol_Text, errorCol); }
+        if (limitFreq && targetHz != (uint64_t)rawHz) {
+            ImGui::Text("= %s Hz -> %s Hz", groupHz((uint64_t)rawHz).c_str(), groupHz(targetHz).c_str());
+        }
+        else {
+            ImGui::Text("= %s Hz", groupHz(targetHz).c_str());
+        }
+        if (outOfRange) { ImGui::PopStyleColor(); }
+        if (belowRange) {
+            ImGui::TextColored(errorCol, "Below source range: minimum is %s Hz", groupHz(rangeLo).c_str());
+        }
+        else if (aboveRange) {
+            ImGui::TextColored(errorCol, "Above source range: maximum is %s Hz", groupHz(rangeHi).c_str());
+        }
+    }
+    if (hasRange) {
+        ImGui::TextDisabled("Range: %s - %s Hz", groupHz(rangeLo).c_str(), groupHz(rangeHi).c_str());
     }
     ImGui::Spacing();
 
