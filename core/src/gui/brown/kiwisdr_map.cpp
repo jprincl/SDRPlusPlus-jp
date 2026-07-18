@@ -97,7 +97,7 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     }
 
     const ImVec2 contentSize = ImGui::GetContentRegionAvail();
-    const float footerHeight = getFingerButtonHeight() + ImGui::GetStyle().ItemSpacing.y;
+    const float footerHeight = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
     ImGui::BeginChild("##geomap-kiwisdr", ImVec2(contentSize.x, ImMax(1.0f, contentSize.y - footerHeight)), true, 0);
     const char* filterButtonLabel = showExtApiOnly ? "Show all stations" : "Show EXT API only";
     // Bump button alpha for the whole map control row (Zoom/Reset/filter
@@ -133,7 +133,7 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     ImGui::SameLine();
     const char* markerStyleLabel = (markerStyle == MarkerStyle::StatusColored)
         ? "Hide full servers" : "Show full as red";
-    if (doFingerButton(markerStyleLabel)) {
+    if (ImGui::Button(markerStyleLabel)) {
         markerStyle = (markerStyle == MarkerStyle::StatusColored)
             ? MarkerStyle::HideFull : MarkerStyle::StatusColored;
     }
@@ -179,7 +179,7 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     ImGui::EndChild();
 
     if (desktopPopup) {
-        if (doFingerButton(mapPopupMaximized ? "Restore" : "Maximize")) {
+        if (ImGui::Button(mapPopupMaximized ? "Restore" : "Maximize")) {
             if (mapPopupMaximized) {
                 mapPopupMaximized = false;
                 if (mapPopupRestoreValid) {
@@ -198,7 +198,7 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
         }
         ImGui::SameLine();
     }
-    if (doFingerButton("Cancel")) {
+    if (ImGui::Button("Cancel")) {
         ImGui::CloseCurrentPopup();
     }
     // Phone-landscape: the Test button lives here in the fixed footer (not in
@@ -208,7 +208,7 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
         if (const ServerEntry* sel = selectedServer()) {
             ImGui::SameLine();
             ImGui::BeginDisabled(tester.isInProgress());
-            const bool doTest = doFingerButton("Test server");
+            const bool doTest = ImGui::Button("Test server");
             ImGui::EndDisabled();
             if (doTest) {
                 tester.start(sel->url, sel->loc, sel->band);
@@ -217,7 +217,7 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
     }
     if (auto ok = tester.lastOk()) {
         ImGui::SameLine();
-        if (doFingerButton("Use tested server: " + ok->hostPort)) {
+        if (ImGui::Button(("Use tested server: " + ok->hostPort).c_str())) {
             onSelected(ok->hostPort, ok->loc, ok->band);
             ImGui::CloseCurrentPopup();
         }
@@ -396,13 +396,13 @@ void KiwiSDRMapSelector::drawClusterPicker() {
     ImGui::TextUnformatted("Multiple stations here - pick one:");
     // Cap the visible height so a dense cluster (e.g. central Europe) scrolls
     // instead of running off the screen; zooming in still thins the stack.
-    const float rowH = getFingerButtonHeight() + ImGui::GetStyle().ItemSpacing.y;
+    const float rowH = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
     const bool scroll = clusterPicks.size() > 8;
     if (scroll) ImGui::BeginChild("##cluster-scroll", ImVec2(0.0f, rowH * 8.0f), false);
     for (size_t k = 0; k < clusterPicks.size(); k++) {
         const auto& c = clusterPicks[k];
         // Suffix a unique id so duplicate names still get distinct buttons.
-        if (doFingerButton(c.label + "##pick" + std::to_string(k))) {
+        if (ImGui::Button((c.label + "##pick" + std::to_string(k)).c_str())) {
             selectServerByUrl(c.url);
             ImGui::CloseCurrentPopup();
         }
@@ -453,7 +453,7 @@ void KiwiSDRMapSelector::drawSelectionPanel(bool showTestButton) {
         // instead (see drawPopup), so skip it here.
         if (showTestButton) {
             ImGui::BeginDisabled(tester.isInProgress());
-            const bool doTest = doFingerButton("Test server");
+            const bool doTest = ImGui::Button("Test server");
             ImGui::EndDisabled();
             if (doTest) {
                 tester.start(s.url, s.loc, s.band);

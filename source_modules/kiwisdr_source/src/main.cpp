@@ -452,7 +452,7 @@ struct KiwiSDRSourceModule : public ModuleManager::Instance {
         const bool playing = gui::mainWindow.isPlaying();
 
         ImGui::BeginDisabled(playing);
-        if (doFingerButton("Choose on map...")) {
+        if (ImGui::Button("Choose on map...")) {
             _this->selector.openPopup();
         }
         ImGui::EndDisabled();

@@ -213,7 +213,7 @@ public:
                     ImGui::TextUnformatted(("KiwiSDR: " + url).c_str());
                     ImGui::TextUnformatted("Auto STOP in 15 sec");
                 }
-                if (doFingerButton("Start all")) {
+                if (ImGui::Button("Start all")) {
                     for (auto &r: mod->receivers) {
                         r->start();
                     }
@@ -335,7 +335,7 @@ private:
             config.conf["visible"] = visible;
             config.release(true);
         }
-        if (doFingerButton("Add new...")) {
+        if (ImGui::Button("Add new...")) {
             selector.openPopup();
         }
         for (int ri=0; ri< receivers.size(); ri++) {

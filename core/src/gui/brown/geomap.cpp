@@ -513,22 +513,22 @@ namespace geomap {
         // Anchor button zoom to the viewport centre (pivot = w2) so the map
         // grows/shrinks around what the user is looking at, instead of the
         // projection origin off in the Atlantic.
-        if (doFingerButton("Zoom In##geomap-zoom-in")) {
+        if (ImGui::Button("Zoom In##geomap-zoom-in")) {
             zoomAround(w2, 2.0f);
         }
         ImGui::SameLine();
-        if (doFingerButton("Zoom Out##geomap-zoom-out")) {
+        if (ImGui::Button("Zoom Out##geomap-zoom-out")) {
             zoomAround(w2, 0.5f);
         }
         ImGui::SameLine();
-        if (doFingerButton("Reset Map##reset-map")) {
+        if (ImGui::Button("Reset Map##reset-map")) {
             scale = ImVec2(1.0, 1.0);
             translate = ImVec2(0.0, 0.0);
             scaleTranslateDirty = true;
         }
         if (extraButtonLabel && extraButtonAction) {
             ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
-            if (doFingerButton(extraButtonLabel)) {
+            if (ImGui::Button(extraButtonLabel)) {
                 extraButtonAction();
             }
         }
