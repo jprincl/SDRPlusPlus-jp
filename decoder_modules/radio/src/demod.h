@@ -58,15 +58,16 @@ namespace demod {
 
         bool changed = false;
         ImGuiStyle& imguiStyle = ImGui::GetStyle();
-        float arrowWidth = ImGui::GetFrameHeight();
+        float buttonWidth = ImGui::GetFrameHeight();
         float spacing = imguiStyle.ItemInnerSpacing.x;
         float availableWidth = ImGui::GetContentRegionAvail().x;
-        bool useStepButtons = !style::touchStyle && availableWidth >= style::dp(160.0f);
-        float inputWidth = std::max(1.0f, availableWidth - arrowWidth - spacing);
+        float inputWidth = std::max(1.0f, availableWidth - (3.0f * buttonWidth) - (3.0f * spacing));
+        ImVec2 controlMin = ImGui::GetCursorScreenPos();
+        float controlWidth = inputWidth + (3.0f * buttonWidth) + (3.0f * spacing);
 
         ImGui::SetNextItemWidth(inputWidth);
         float editedValue = value;
-        if (ImGui::InputFloat("##value", &editedValue, useStepButtons ? step : 0.0f, useStepButtons ? stepFast : 0.0f, "%.0f")) {
+        if (ImGui::InputFloat("##value", &editedValue, 0.0f, 0.0f, "%.0f")) {
             editedValue = std::clamp<float>(editedValue, minValue, maxValue);
             if (editedValue != value) {
                 value = editedValue;
@@ -74,11 +75,33 @@ namespace demod {
             }
         }
 
+        float stepAmount = ImGui::GetIO().KeyCtrl ? stepFast : step;
+        ImGui::PushButtonRepeat(true);
+        ImGui::SameLine(0.0f, spacing);
+        if (ImGui::Button("-##step_down", ImVec2(buttonWidth, 0.0f))) {
+            float steppedValue = std::clamp<float>(value - stepAmount, minValue, maxValue);
+            if (steppedValue != value) {
+                value = steppedValue;
+                changed = true;
+            }
+        }
+        ImGui::SameLine(0.0f, spacing);
+        if (ImGui::Button("+##step_up", ImVec2(buttonWidth, 0.0f))) {
+            float steppedValue = std::clamp<float>(value + stepAmount, minValue, maxValue);
+            if (steppedValue != value) {
+                value = steppedValue;
+                changed = true;
+            }
+        }
+        ImGui::PopButtonRepeat();
         ImGui::SameLine(0.0f, spacing);
         if (ImGui::ArrowButton("##presets", ImGuiDir_Down)) {
             ImGui::OpenPopup("presets");
         }
 
+        ImVec2 controlMax = ImGui::GetItemRectMax();
+        ImGui::SetNextWindowPos(ImVec2(controlMin.x, controlMax.y), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2(controlWidth, 0.0f), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("presets")) {
             float selectedValue = value;
             drawHzPresetPopup(value, minValue, maxValue, presets, &selectedValue);
@@ -99,15 +122,16 @@ namespace demod {
 
         bool changed = false;
         ImGuiStyle& imguiStyle = ImGui::GetStyle();
-        float arrowWidth = ImGui::GetFrameHeight();
+        float buttonWidth = ImGui::GetFrameHeight();
         float spacing = imguiStyle.ItemInnerSpacing.x;
         float availableWidth = ImGui::GetContentRegionAvail().x;
-        bool useStepButtons = !style::touchStyle && availableWidth >= style::dp(160.0f);
-        float inputWidth = std::max(1.0f, availableWidth - arrowWidth - spacing);
+        float inputWidth = std::max(1.0f, availableWidth - (3.0f * buttonWidth) - (3.0f * spacing));
+        ImVec2 controlMin = ImGui::GetCursorScreenPos();
+        float controlWidth = inputWidth + (3.0f * buttonWidth) + (3.0f * spacing);
 
         ImGui::SetNextItemWidth(inputWidth);
         int editedValue = value;
-        if (ImGui::InputInt("##value", &editedValue, useStepButtons ? step : 0, useStepButtons ? stepFast : 0)) {
+        if (ImGui::InputInt("##value", &editedValue, 0, 0)) {
             editedValue = std::clamp<int>(editedValue, minValue, maxValue);
             if (editedValue != value) {
                 value = editedValue;
@@ -115,11 +139,33 @@ namespace demod {
             }
         }
 
+        int stepAmount = ImGui::GetIO().KeyCtrl ? stepFast : step;
+        ImGui::PushButtonRepeat(true);
+        ImGui::SameLine(0.0f, spacing);
+        if (ImGui::Button("-##step_down", ImVec2(buttonWidth, 0.0f))) {
+            int steppedValue = std::clamp<int>(value - stepAmount, minValue, maxValue);
+            if (steppedValue != value) {
+                value = steppedValue;
+                changed = true;
+            }
+        }
+        ImGui::SameLine(0.0f, spacing);
+        if (ImGui::Button("+##step_up", ImVec2(buttonWidth, 0.0f))) {
+            int steppedValue = std::clamp<int>(value + stepAmount, minValue, maxValue);
+            if (steppedValue != value) {
+                value = steppedValue;
+                changed = true;
+            }
+        }
+        ImGui::PopButtonRepeat();
         ImGui::SameLine(0.0f, spacing);
         if (ImGui::ArrowButton("##presets", ImGuiDir_Down)) {
             ImGui::OpenPopup("presets");
         }
 
+        ImVec2 controlMax = ImGui::GetItemRectMax();
+        ImGui::SetNextWindowPos(ImVec2(controlMin.x, controlMax.y), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2(controlWidth, 0.0f), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("presets")) {
             float selectedValue = (float)value;
             drawHzPresetPopup((float)value, (float)minValue, (float)maxValue, presets, &selectedValue);
