@@ -344,20 +344,22 @@ namespace sourcemenu {
         // Offset add diaglog
         if (showAddOffsetDialog) { showAddOffsetDialog = addOffsetDialog(); }
 
-        ImGui::LeftLabel("Offset");
-        ImGui::FillWidth();
-        if (offsetId == OFFSET_ID_MANUAL) {
-            if (ImGui::InputDouble("##freq_offset", &manualOffset, 1.0, 100.0)) {
-                updateOffset();
-                core::configManager.acquire();
-                core::configManager.conf["manualOffset"] = manualOffset;
-                core::configManager.release(true);
+        if (offsetId != OFFSET_ID_NONE) {
+            ImGui::LeftLabel("Offset");
+            ImGui::FillWidth();
+            if (offsetId == OFFSET_ID_MANUAL) {
+                if (ImGui::InputDouble("##freq_offset", &manualOffset, 1.0, 100.0)) {
+                    updateOffset();
+                    core::configManager.acquire();
+                    core::configManager.conf["manualOffset"] = manualOffset;
+                    core::configManager.release(true);
+                }
             }
-        }
-        else {
-            style::beginDisabled();
-            ImGui::InputDouble("##freq_offset", &effectiveOffset, 1.0, 100.0);
-            style::endDisabled();
+            else {
+                style::beginDisabled();
+                ImGui::InputDouble("##freq_offset", &effectiveOffset, 1.0, 100.0);
+                style::endDisabled();
+            }
         }
 
         if (running) { style::beginDisabled(); }
