@@ -81,6 +81,9 @@ private:
     bool menuBtnLongPressFired = false;
     int tuningMode = tuner::TUNER_MODE_NORMAL;
     dsp::stream<dsp::complex_t> dummyStream;
+    // Used only under SDRPP_ENABLE_DEBUG_MENU, but kept unconditional: the
+    // define is not visible to out-of-tree plugins, so a conditional member
+    // would change the class layout across the module ABI.
     bool demoWindow = false;
     int selectedWindow = 0;
 

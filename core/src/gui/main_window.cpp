@@ -682,6 +682,7 @@ void MainWindow::draw() {
             firstMenuRender = false;
         }
 
+#ifdef SDRPP_ENABLE_DEBUG_MENU
         if (ImGui::CollapsingHeader("Debug")) {
             ImGui::Text("Frame time: %.3f ms/frame", ImGui::GetIO().DeltaTime * 1000.0f);
             ImGui::Text("Framerate: %.1f FPS", ImGui::GetIO().Framerate);
@@ -708,6 +709,7 @@ void MainWindow::draw() {
 
             ImGui::Spacing();
         }
+#endif
 
         ImGui::EndChild();
     }
@@ -916,9 +918,11 @@ void MainWindow::draw() {
         showCredits = credits::show();
     }
 
+#ifdef SDRPP_ENABLE_DEBUG_MENU
     if (demoWindow) {
         ImGui::ShowDemoWindow();
     }
+#endif
 }
 
 void MainWindow::setPlayState(bool _playing) {
