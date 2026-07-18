@@ -18,7 +18,7 @@
 #include <array>
 #include <algorithm>
 #include <utils/optionlist.h>
-#include "radio_interface.h"
+#include <radio_interface.h>
 #include "demod.h"
 
 ConfigManager config;

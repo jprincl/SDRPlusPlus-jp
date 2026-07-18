@@ -57,10 +57,6 @@ endif ()
 target_include_directories(sdrpp_core PUBLIC "src/")
 target_include_directories(sdrpp_core PUBLIC "src/imgui")
 
-# The F-INP band picker drives the radio decoder through its module-com
-# interface; radio_interface.h is interface-only (enums, no code).
-target_include_directories(sdrpp_core PRIVATE "../decoder_modules/radio/src")
-
 # Configure backend includes and libraries
 if (OPT_BACKEND_GLFW)
     target_include_directories(sdrpp_core PUBLIC "backends/glfw")

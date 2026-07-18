@@ -12,4 +12,4 @@ file(GLOB SRC "src/*.cpp")
 include(${SDRPP_MODULE_CMAKE})
 
 target_link_libraries(discord_integration PRIVATE discord-rpc)
-target_include_directories(discord_integration PRIVATE "src/" "discord-rpc/include" "../../decoder_modules/radio/src/")
+target_include_directories(discord_integration PRIVATE "src/" "discord-rpc/include")

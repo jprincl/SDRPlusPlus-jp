@@ -5,4 +5,4 @@ file(GLOB SRC "src/*.cpp")
 
 include(${SDRPP_MODULE_CMAKE})
 
-target_include_directories(frequency_manager PRIVATE "src/" "../../decoder_modules/radio/src")
+target_include_directories(frequency_manager PRIVATE "src/")

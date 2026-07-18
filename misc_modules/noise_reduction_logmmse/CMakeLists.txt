@@ -10,7 +10,6 @@ target_compile_definitions(noise_reduction_logmmse PRIVATE _USE_MATH_DEFINES)
 
 target_include_directories(noise_reduction_logmmse PRIVATE "src/")
 target_include_directories(noise_reduction_logmmse PRIVATE "src/omlsa_mcra")
-target_include_directories(noise_reduction_logmmse PRIVATE "../../decoder_modules/radio/src")
 
 # Recycle DSP buffers through a size-class pool instead of plain heap
 # allocation (see dsp_allocator in src/arrays.h). Must be set here so every
