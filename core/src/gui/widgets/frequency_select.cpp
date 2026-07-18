@@ -1,5 +1,6 @@
 #include <gui/widgets/frequency_select.h>
 #include <gui/widgets/bandplan.h>
+#include <gui/widgets/popup_dialog.h>
 #include <config.h>
 #include <core.h>
 #include <radio_interface.h>
@@ -226,7 +227,7 @@ void FrequencySelect::draw() {
             }
             if (onDigit) {
                 hovered = true;
-                if (rightClick || (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))) {
+                if (rightClick || ImGui::IsKeyPressed(ImGuiKey_Delete) || PopupDialog::confirmKeyPressed()) {
                     for (int j = i; j < 12; j++) {
                         digits[j] = 0;
                     }
@@ -562,7 +563,7 @@ void FrequencySelect::drawKeypad() {
     if (page == 0) { drawBandPage(close, totalWidth); }
     else { drawKeypadPage(close); }
 
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { close = true; }
+    if (PopupDialog::cancelKeyPressed()) { close = true; }
     if (close) { ImGui::CloseCurrentPopup(); }
     ImGui::EndPopup();
 }
@@ -701,7 +702,7 @@ void FrequencySelect::drawKeypadPage(bool& close) {
         else if (c == ',') { keypadKey('.'); }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && !entry.empty()) { entry.pop_back(); }
-    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+    if (PopupDialog::confirmKeyPressed()) {
         commitEntry();
         close = true;
     }

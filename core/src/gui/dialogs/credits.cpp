@@ -1,5 +1,6 @@
 #include <gui/dialogs/credits.h>
 #include <imgui.h>
+#include <gui/widgets/popup_dialog.h>
 #include <gui/icons.h>
 #include <gui/style.h>
 #include <config.h>
@@ -95,7 +96,7 @@ namespace credits {
 
         // Dismiss on Escape, or on a tap/click that didn't turn into a scroll drag
         bool tapped = dismissArmed && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && (io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < dragThreshold * dragThreshold);
-        if (tapped || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        if (tapped || PopupDialog::cancelKeyPressed()) {
             dismissArmed = false;
             ImGui::CloseCurrentPopup();
             open = false;
