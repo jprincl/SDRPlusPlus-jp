@@ -28,7 +28,17 @@ bool Menu::draw(bool updateStates) {
     bool changed = false;
     float menuWidth = ImGui::GetContentRegionAvail().x;
     ImGuiWindow* window = ImGui::GetCurrentWindow();
-    ImVec2 checkboxOffset = ImVec2(menuWidth - ImGui::GetTextLineHeight() - (6.0f * style::uiScale), - ImGui::GetTextLineHeight() - (10.0f * style::uiScale));
+    const ImGuiStyle& imStyle = ImGui::GetStyle();
+    // The enable checkbox is a GetFrameHeight() square — the exact height of a
+    // CollapsingHeader — placed flush with the header's right edge and
+    // top-aligned with the header (the cursor sits one ItemSpacing.y below the
+    // header when the checkbox is drawn, hence the negative Y). Derived from
+    // live style metrics so it stays aligned under the touch style overlay.
+    float checkboxSize = ImGui::GetFrameHeight();
+    ImVec2 checkboxOffset = ImVec2(menuWidth - checkboxSize, -(checkboxSize + imStyle.ItemSpacing.y));
+    // Width reserved at the header's right so the label ellipsis stops short
+    // of the checkbox.
+    float headerLabelReserve = checkboxSize + imStyle.ItemInnerSpacing.x;
 
     int displayedCount = 0;
     int rawId = 0;
@@ -74,7 +84,7 @@ bool Menu::draw(bool updateStates) {
 
         ImRect orginalRect = window->WorkRect;
         if (item.inst != NULL) {
-            window->WorkRect = ImRect(orginalRect.Min, ImVec2(orginalRect.Max.x - ImGui::GetTextLineHeight() - (6.0f * style::uiScale), orginalRect.Max.y));
+            window->WorkRect = ImRect(orginalRect.Min, ImVec2(orginalRect.Max.x - headerLabelReserve, orginalRect.Max.y));
         }
 
         ImVec2 posMin = ImGui::GetCursorScreenPos();
