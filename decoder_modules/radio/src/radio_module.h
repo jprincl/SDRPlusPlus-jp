@@ -3,6 +3,7 @@
 #include <module.h>
 #include <gui/gui.h>
 #include <gui/style.h>
+#include <gui/widgets/toggle_button_grid.h>
 #include <signal_path/signal_path.h>
 #include <config.h>
 #include <dsp/chain.h>
@@ -14,6 +15,8 @@
 #include <dsp/filter/deephasis.h>
 #include <core.h>
 #include <stdint.h>
+#include <array>
+#include <algorithm>
 #include <utils/optionlist.h>
 #include "radio_interface.h"
 #include "demod.h"
@@ -195,37 +198,17 @@ private:
         float menuWidth = ImGui::GetContentRegionAvail().x;
         ImGui::BeginGroup();
 
-        ImGui::Columns(4, CONCAT("RadioModeColumns##_", _this->name), false);
-        if (ImGui::RadioButton(CONCAT("NFM##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_NFM) && _this->selectedDemodID != RADIO_DEMOD_NFM) {
-            _this->selectDemodByID(RADIO_DEMOD_NFM);
-        }
-        if (ImGui::RadioButton(CONCAT("WFM##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_WFM) && _this->selectedDemodID != RADIO_DEMOD_WFM) {
-            _this->selectDemodByID(RADIO_DEMOD_WFM);
-        }
-        ImGui::NextColumn();
-        if (ImGui::RadioButton(CONCAT("AM##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_AM) && _this->selectedDemodID != RADIO_DEMOD_AM) {
-            _this->selectDemodByID(RADIO_DEMOD_AM);
-        }
-        if (ImGui::RadioButton(CONCAT("DSB##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_DSB) && _this->selectedDemodID != RADIO_DEMOD_DSB) {
-            _this->selectDemodByID(RADIO_DEMOD_DSB);
-        }
-        ImGui::NextColumn();
-        if (ImGui::RadioButton(CONCAT("USB##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_USB) && _this->selectedDemodID != RADIO_DEMOD_USB) {
-            _this->selectDemodByID(RADIO_DEMOD_USB);
-        }
-        if (ImGui::RadioButton(CONCAT("CW##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_CW) && _this->selectedDemodID != RADIO_DEMOD_CW) {
-            _this->selectDemodByID(RADIO_DEMOD_CW);
-        }
-        ImGui::NextColumn();
-        if (ImGui::RadioButton(CONCAT("LSB##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_LSB) && _this->selectedDemodID != RADIO_DEMOD_LSB) {
-            _this->selectDemodByID(RADIO_DEMOD_LSB);
-        }
-        if (ImGui::RadioButton(CONCAT("CW-R##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_CWR) && _this->selectedDemodID != RADIO_DEMOD_CWR) {
-            _this->selectDemodByID(RADIO_DEMOD_CWR);
-        }
-        ImGui::Columns(1, CONCAT("EndRadioModeColumns##_", _this->name), false);
-        if (ImGui::RadioButton(CONCAT("RAW##_", _this->name), _this->selectedDemodID == RADIO_DEMOD_RAW) && _this->selectedDemodID != RADIO_DEMOD_RAW) {
-            _this->selectDemodByID(RADIO_DEMOD_RAW);
+        // Display order differs from DemodID order: related modes grouped so
+        // the default 5+4 wrap yields NFM WFM AM DSB RAW / LSB USB CW CW-R.
+        static const std::vector<std::string> modeLabels = { "NFM", "WFM", "AM", "DSB", "RAW", "LSB", "USB", "CW", "CW-R" };
+        static const std::array<DemodID, _RADIO_DEMOD_COUNT> modeIDs = {
+            RADIO_DEMOD_NFM, RADIO_DEMOD_WFM, RADIO_DEMOD_AM, RADIO_DEMOD_DSB, RADIO_DEMOD_RAW,
+            RADIO_DEMOD_LSB, RADIO_DEMOD_USB, RADIO_DEMOD_CW, RADIO_DEMOD_CWR
+        };
+        auto modeIt = std::find(modeIDs.begin(), modeIDs.end(), (DemodID)_this->selectedDemodID);
+        int modeIdx = (modeIt != modeIDs.end()) ? (int)std::distance(modeIDs.begin(), modeIt) : 0;
+        if (doToggleButtonGrid("##_radio_mode_" + _this->name, modeIdx, modeLabels)) {
+            _this->selectDemodByID(modeIDs[modeIdx]);
         }
 
         ImGui::EndGroup();
