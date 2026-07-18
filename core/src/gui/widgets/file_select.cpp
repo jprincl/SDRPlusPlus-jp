@@ -14,12 +14,13 @@ bool FileSelect::render(std::string id) {
     bool _pathChanged = false;
     float menuColumnWidth = ImGui::GetContentRegionAvail().x;
 
-    float buttonWidth = ImGui::CalcTextSize("...").x + 20.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    float buttonWidth = ImGui::CalcTextSize("...").x + (style.FramePadding.x * 2.0f);
     bool lastPathValid = pathValid;
     if (!lastPathValid) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
     }
-    ImGui::SetNextItemWidth(menuColumnWidth - buttonWidth);
+    ImGui::SetNextItemWidth(menuColumnWidth - buttonWidth - style.ItemSpacing.x);
     if (ImGui::InputText(id.c_str(), strPath, 2047)) {
         path = std::string(strPath);
         std::string expandedPath = expandString(strPath);
@@ -35,7 +36,7 @@ bool FileSelect::render(std::string id) {
         ImGui::PopStyleColor();
     }
     ImGui::SameLine();
-    if (ImGui::Button(("..." + id + "_winselect").c_str(), ImVec2(buttonWidth - 8.0f, 0)) && !dialogOpen) {
+    if (ImGui::Button(("..." + id + "_winselect").c_str(), ImVec2(buttonWidth, 0)) && !dialogOpen) {
         dialogOpen = true;
         if (workerThread.joinable()) { workerThread.join(); }
         workerThread = std::thread(&FileSelect::worker, this);

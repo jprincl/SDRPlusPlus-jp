@@ -258,7 +258,6 @@ public:
 private:
     static void menuHandler(void* ctx) {
         RecorderModule* _this = (RecorderModule*)ctx;
-        float menuWidth = ImGui::GetContentRegionAvail().x;
 
         // Recording mode
         if (_this->recording) { style::beginDisabled(); }
@@ -402,14 +401,14 @@ private:
 
         if (!_this->recording) {
             if (!canRecord) { style::beginDisabled(); }
-            if (ImGui::Button(CONCAT("Record##_recorder_rec_", _this->name), ImVec2(menuWidth, 0))) {
+            if (ImGui::ActionButton(CONCAT("Record##_recorder_rec_", _this->name))) {
                 _this->start();
             }
             if (!canRecord) { style::endDisabled(); }
             ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_Text), "Idle --:--:--");
         }
         else {
-            if (ImGui::Button(CONCAT("Stop##_recorder_rec_", _this->name), ImVec2(menuWidth, 0))) {
+            if (ImGui::ActionButton(CONCAT("Stop##_recorder_rec_", _this->name))) {
                 _this->stop();
             }
             uint64_t seconds = _this->writer.getSamplesWritten() / _this->samplerate;

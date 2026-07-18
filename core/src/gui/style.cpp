@@ -113,6 +113,10 @@ namespace style {
         conf[markerKey] = true;
     }
 
+    float menuButtonInset() {
+        return dp(touchStyle ? 16.0f : 10.0f);
+    }
+
     void beginDisabled() {
         ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
         auto& style = ImGui::GetStyle();
@@ -154,5 +158,15 @@ namespace ImGui {
     void LeftLabelFill(const char* text) {
         LeftLabel(text);
         FillWidth();
+    }
+
+    float BeginActionRow() {
+        float inset = style::menuButtonInset();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + inset);
+        return std::max(1.0f, ImGui::GetContentRegionAvail().x - inset);
+    }
+
+    bool ActionButton(const char* label) {
+        return ImGui::Button(label, ImVec2(BeginActionRow(), 0));
     }
 }

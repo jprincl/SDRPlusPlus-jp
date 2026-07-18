@@ -31,18 +31,16 @@ namespace module_manager_menu {
     void draw(void* ctx) {
         bool modified = false;
 
-        // Calculate delete button size and cell size
+        // The delete/add buttons are FrameHeight squares like any framed
+        // widget; size the fixed table column from that metric so they fit
+        // under any style, including the enlarged touch paddings.
         ImVec2 cellpad = ImGui::GetStyle().CellPadding;
-        float lheight = ImGui::GetTextLineHeight();
-        float cellWidth = lheight - (2.0f * cellpad.y);
-        float hdiff = cellpad.x - cellpad.y;
-        ImVec2 btnSize = ImVec2(lheight, lheight - 1);
-        ImVec2 textOff = style::dp(3.0f, -5.0f);
+        float btnSize = ImGui::GetFrameHeight();
 
         if (ImGui::BeginTable("Module Manager Table", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, style::dp(200.0f)))) {
             ImGui::TableSetupColumn("Name");
             ImGui::TableSetupColumn("Type");
-            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, cellWidth);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, btnSize + cellpad.x);
             ImGui::TableSetupScrollFreeze(3, 1);
             ImGui::TableHeadersRow();
 
@@ -50,20 +48,18 @@ namespace module_manager_menu {
                 ImGui::TableNextRow();
 
                 ImGui::TableSetColumnIndex(0);
+                ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(name.c_str());
 
                 ImGui::TableSetColumnIndex(1);
+                ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(inst.module.info->name);
 
                 ImGui::TableSetColumnIndex(2);
-                ImVec2 cpos = ImGui::GetCursorPos();
-                ImGui::SetCursorPos(ImVec2(cpos.x - hdiff, cpos.y + 1));
-                if (ImGui::Button(("##module_mgr_" + name).c_str(), btnSize)) {
+                if (ImGui::Button(("-##module_mgr_" + name).c_str(), ImVec2(btnSize, 0))) {
                     toBeRemoved = name;
                     confirmOpened = true;
                 }
-                ImGui::SetCursorPos(ImVec2(cpos.x + textOff.x, cpos.y + textOff.y));
-                ImGui::TextUnformatted("_");
             }
             ImGui::EndTable();
         }
@@ -83,7 +79,7 @@ namespace module_manager_menu {
         if (ImGui::BeginTable("Module Manager Add Table", 3)) {
             ImGui::TableSetupColumn("Name");
             ImGui::TableSetupColumn("Type");
-            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, cellWidth + cellpad.x);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, btnSize + cellpad.x);
             
             ImGui::TableNextRow();
 
@@ -97,7 +93,7 @@ namespace module_manager_menu {
 
             ImGui::TableSetColumnIndex(2);
             if (strlen(modName) == 0) { style::beginDisabled(); }
-            if (ImGui::Button("+##module_mgr_add_btn", ImVec2(btnSize.x, 0))) {
+            if (ImGui::Button("+##module_mgr_add_btn", ImVec2(btnSize, 0))) {
                 if (!core::moduleManager.createInstance(modName, modTypes[modTypeId])) {
                     core::moduleManager.postInit(modName);
                     modified = true;

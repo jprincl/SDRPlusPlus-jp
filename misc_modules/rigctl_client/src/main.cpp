@@ -138,11 +138,10 @@ private:
             config.release(true);
         }
 
-        ImGui::FillWidth();
-        if (_this->running && ImGui::Button(CONCAT("Stop##_rigctl_cli_stop_", _this->name), ImVec2(menuWidth, 0))) {
+        if (_this->running && ImGui::ActionButton(CONCAT("Stop##_rigctl_cli_stop_", _this->name))) {
             _this->stop();
         }
-        else if (!_this->running && ImGui::Button(CONCAT("Start##_rigctl_cli_stop_", _this->name), ImVec2(menuWidth, 0))) {
+        else if (!_this->running && ImGui::ActionButton(CONCAT("Start##_rigctl_cli_stop_", _this->name))) {
             _this->start();
         }
 

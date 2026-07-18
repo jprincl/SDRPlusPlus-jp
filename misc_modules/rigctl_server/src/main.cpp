@@ -175,10 +175,10 @@ private:
             config.release(true);
         }
 
-        if (listening && ImGui::Button(CONCAT("Stop##_rigctl_srv_stop_", _this->name), ImVec2(menuWidth, 0))) {
+        if (listening && ImGui::ActionButton(CONCAT("Stop##_rigctl_srv_stop_", _this->name))) {
             _this->stopServer();
         }
-        else if (!listening && ImGui::Button(CONCAT("Start##_rigctl_srv_stop_", _this->name), ImVec2(menuWidth, 0))) {
+        else if (!listening && ImGui::ActionButton(CONCAT("Start##_rigctl_srv_stop_", _this->name))) {
             _this->startServer();
         }
 

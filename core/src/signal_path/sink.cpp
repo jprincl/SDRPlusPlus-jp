@@ -248,7 +248,7 @@ void SinkManager::showVolumeSlider(std::string name, std::string prefix, float w
     }
 
     float ypos = ImGui::GetCursorPosY();
-    float sliderOffset = style::dp(8.0f);
+    float sliderOffset = ImGui::GetStyle().ItemSpacing.x; // SameLine() gap between button and slider
     float minSliderWidth = style::dp(80.0f);
     width = std::max(width, height + sliderOffset + minSliderWidth);
 

@@ -81,7 +81,7 @@ private:
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
         ImGui::SliderFloat("##scanner_level", &_this->level, -150.0, 0.0);
 
-        ImGui::BeginTable(("scanner_bottom_btn_table" + _this->name).c_str(), 2);
+        ImGui::BeginTable(("scanner_bottom_btn_table" + _this->name).c_str(), 2, 0, ImVec2(ImGui::BeginActionRow(), 0));
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         if (ImGui::Button(("<<##scanner_back_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
@@ -100,13 +100,13 @@ private:
         ImGui::EndTable();
 
         if (!_this->running) {
-            if (ImGui::Button("Start##scanner_start", ImVec2(menuWidth, 0))) {
+            if (ImGui::ActionButton("Start##scanner_start")) {
                 _this->start();
             }
             ImGui::Text("Status: Idle");
         }
         else {
-            if (ImGui::Button("Stop##scanner_start", ImVec2(menuWidth, 0))) {
+            if (ImGui::ActionButton("Stop##scanner_start")) {
                 _this->stop();
             }
             if (_this->receiving) {

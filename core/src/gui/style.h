@@ -53,6 +53,10 @@ namespace style {
         return (int)std::round(std::clamp(desired, minBeforePx, maxBeforePx));
     }
 
+    // Horizontal inset of full-row action buttons in menu panels, so their
+    // silhouette differs from the edge-to-edge CollapsingHeader bars.
+    float menuButtonInset();
+
     bool setDefaultStyle(std::string resDir);
     bool loadFonts(std::string resDir);
     void applyScaledStyle(const std::function<void()>& resetStyle);
@@ -67,4 +71,10 @@ namespace ImGui {
     void FillWidth();
     void SetNextItemRemainingWidth();
     void LeftLabelFill(const char* text);
+    // Full-row action button, inset from the panel edges so it is not
+    // mistaken for a menu section header.
+    bool ActionButton(const char* label);
+    // Shift the cursor for an inset action-button row and return the row
+    // width, e.g. for a BeginTable holding a split button group.
+    float BeginActionRow();
 }

@@ -322,7 +322,7 @@ private:
     void menuHandler() {
         auto removeIndex = -1;
         ImGui::LeftLabel("Seconds to receive:");
-        ImGui::SameLine();
+        ImGui::FillWidth();
         if (ImGui::SliderInt("##_websdr_duration_", &receiveDuration, 15, 45)) {
             config.acquire();
             config.conf["duration"] = receiveDuration;
@@ -341,7 +341,9 @@ private:
         for (int ri=0; ri< receivers.size(); ri++) {
             std::shared_ptr<SingleReceiver> recvr = receivers[ri];
             ImGui::BeginDisabled(recvr->started);
-            if (ImGui::Button(("delete: "+recvr->loc).c_str())) {
+            // Receiver locations are arbitrary-length strings; keep the button
+            // inside the menu column and let the label clip instead.
+            if (ImGui::ActionButton(("delete: "+recvr->loc).c_str())) {
                 removeIndex = ri;
             }
             ImGui::EndDisabled();

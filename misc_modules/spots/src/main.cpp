@@ -203,15 +203,15 @@ private:
             config.release(true);
         }
 
-        // compute enable button size
+        // The enable checkbox is a FrameHeight square (font height plus frame
+        // padding); size its fixed column from that, not the bare line height.
         ImVec2 cellpad = ImGui::GetStyle().CellPadding;
-        float lheight = ImGui::GetTextLineHeight();
-        float cellWidth = lheight;// - (2.0f * cellpad.y);
+        float checkboxSize = ImGui::GetFrameHeight();
 
         if (ImGui::BeginTable("Spots Source Table", 3)) {
             ImGui::TableSetupColumn("Source");
             ImGui::TableSetupColumn("Color");
-            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, cellWidth + cellpad.x);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, checkboxSize + cellpad.x);
             ImGui::TableSetupScrollFreeze(3, 1);
             ImGui::TableHeadersRow();
 
@@ -259,16 +259,13 @@ private:
             ImGui::EndTable();
         }
 
-        ImGui::FillWidth();
-
         //start/stop server
-        ImGui::FillWidth();
         std::string stopId = "Stop##_spots_stop_" + _this->name;
         std::string startId = "Start##_spots_stop_" + _this->name;
-        if (_this->running && ImGui::Button(stopId.c_str(), ImVec2(menuWidth, 0))) {
+        if (_this->running && ImGui::ActionButton(stopId.c_str())) {
             _this->stop();
         }
-        else if (!_this->running && ImGui::Button(startId.c_str(), ImVec2(menuWidth, 0))) {
+        else if (!_this->running && ImGui::ActionButton(startId.c_str())) {
             _this->start();
         }
 

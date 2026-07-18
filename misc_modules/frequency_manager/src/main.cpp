@@ -457,10 +457,11 @@ private:
             if (bm.selected) { selectedNames.push_back(name); }
         }
 
-        float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+        ImGuiStyle& imStyle = ImGui::GetStyle();
+        float sqBtnSize = ImGui::GetFrameHeight();
 
-        float btnSize = ImGui::CalcTextSize("Rename").x + 8;
-        ImGui::SetNextItemWidth(menuWidth - btnSize - (2 * lineHeight) - (24 * style::uiScale));
+        float btnSize = ImGui::CalcTextSize("Rename").x + (imStyle.FramePadding.x * 2.0f);
+        ImGui::SetNextItemWidth(menuWidth - btnSize - (2.0f * sqBtnSize) - (3.0f * imStyle.ItemSpacing.x));
         if (ImGui::Combo(("##freq_manager_list_sel" + _this->name).c_str(), &_this->selectedListId, _this->listNamesTxt.c_str())) {
             _this->loadByName(_this->listNames[_this->selectedListId]);
             config.acquire();
@@ -482,7 +483,7 @@ private:
         }
         if (_this->listNames.size() == 0) { style::endDisabled(); }
         ImGui::SameLine();
-        if (ImGui::Button(("+##_freq_mgr_add_lst_" + _this->name).c_str(), ImVec2(lineHeight, 0))) {
+        if (ImGui::Button(("+##_freq_mgr_add_lst_" + _this->name).c_str(), ImVec2(sqBtnSize, 0))) {
             // Find new unique default name
             if (std::find(_this->listNames.begin(), _this->listNames.end(), "New List") == _this->listNames.end()) {
                 _this->editedListName = "New List";
@@ -500,7 +501,7 @@ private:
         }
         ImGui::SameLine();
         if (_this->selectedListName == "") { style::beginDisabled(); }
-        if (ImGui::Button(("-##_freq_mgr_del_lst_" + _this->name).c_str(), ImVec2(lineHeight, 0))) {
+        if (ImGui::Button(("-##_freq_mgr_del_lst_" + _this->name).c_str(), ImVec2(sqBtnSize, 0))) {
             _this->deleteListOpen = true;
         }
         if (_this->selectedListName == "") { style::endDisabled(); }
@@ -526,7 +527,7 @@ private:
 
         if (_this->selectedListName == "") { style::beginDisabled(); }
         //Draw buttons on top of the list
-        ImGui::BeginTable(("freq_manager_btn_table" + _this->name).c_str(), 3);
+        ImGui::BeginTable(("freq_manager_btn_table" + _this->name).c_str(), 3, 0, ImVec2(ImGui::BeginActionRow(), 0));
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
@@ -666,7 +667,7 @@ private:
 
 
         if (selectedNames.size() != 1 && _this->selectedListName != "") { style::beginDisabled(); }
-        if (ImGui::Button(("Apply##_freq_mgr_apply_" + _this->name).c_str(), ImVec2(menuWidth, 0))) {
+        if (ImGui::ActionButton(("Apply##_freq_mgr_apply_" + _this->name).c_str())) {
             FrequencyBookmark& bm = _this->bookmarks[selectedNames[0]];
             applyBookmark(bm, gui::waterfall.selectedVFO);
             bm.selected = false;
@@ -674,7 +675,7 @@ private:
         if (selectedNames.size() != 1 && _this->selectedListName != "") { style::endDisabled(); }
 
         //Draw import and export buttons
-        ImGui::BeginTable(("freq_manager_bottom_btn_table" + _this->name).c_str(), 2);
+        ImGui::BeginTable(("freq_manager_bottom_btn_table" + _this->name).c_str(), 2, 0, ImVec2(ImGui::BeginActionRow(), 0));
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
@@ -698,7 +699,7 @@ private:
         if (selectedNames.size() == 0 && _this->selectedListName != "") { style::endDisabled(); }
         ImGui::EndTable();
 
-        if (ImGui::Button(("Select displayed lists##_freq_mgr_exp_" + _this->name).c_str(), ImVec2(menuWidth, 0))) {
+        if (ImGui::ActionButton(("Select displayed lists##_freq_mgr_exp_" + _this->name).c_str())) {
             _this->selectListsOpen = true;
         }
 
