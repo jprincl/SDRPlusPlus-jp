@@ -98,7 +98,12 @@ void KiwiSDRMapSelector::drawPopup(std::function<void(const std::string&, const 
 
     const ImVec2 contentSize = ImGui::GetContentRegionAvail();
     const float footerHeight = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
-    ImGui::BeginChild("##geomap-kiwisdr", ImVec2(contentSize.x, ImMax(1.0f, contentSize.y - footerHeight)), true, 0);
+    // NoScrollbar/NoScrollWithMouse: the selection-panel labels (server URL
+    // etc.) can overflow the child, but the map must never scroll — panning
+    // belongs to the map's own drag handling, and the Android drag-scroll
+    // recognizer also leaves NoScrollWithMouse windows alone.
+    ImGui::BeginChild("##geomap-kiwisdr", ImVec2(contentSize.x, ImMax(1.0f, contentSize.y - footerHeight)), true,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     const char* filterButtonLabel = showExtApiOnly ? "Show all stations" : "Show EXT API only";
     // Bump button alpha for the whole map control row (Zoom/Reset/filter
     // submitted inside geoMap.draw, plus the "Hide full" button on the
