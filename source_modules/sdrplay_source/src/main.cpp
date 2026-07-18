@@ -310,7 +310,7 @@ public:
         bandwidthId = 8;
         lnaGain = lnaSteps - 1;
         gain = 59;
-        ppm = 0.0;
+        ppm = 0.0f;
         agc = false;
         agcAttack = 500;
         agcDecay = 500;
@@ -648,13 +648,13 @@ private:
         flog::info("SDRPlaySourceModule '{0}': Tune: {1}!", _this->name, freq);
     }
 
-    static double clampPPM(double value) {
-        if (!std::isfinite(value)) { return 0.0; }
-        return std::clamp<double>(value, -200.0, 200.0);
+    static float clampPPM(float value) {
+        if (!std::isfinite(value)) { return 0.0f; }
+        return std::clamp<float>(value, -200.0f, 200.0f);
     }
 
     void applyPPM() {
-        openDevParams->devParams->ppm = ppm;
+        openDevParams->devParams->ppm = static_cast<double>(ppm);
         sdrplay_api_Update(openDev.dev, openDev.tuner, sdrplay_api_Update_Dev_Ppm, sdrplay_api_Update_Ext1_None);
     }
 
@@ -786,7 +786,7 @@ private:
 
             SmGui::LeftLabel("PPM Correction");
             SmGui::FillWidth();
-            if (SmGui::InputDouble(CONCAT("##sdrplay_ppm", _this->name), &_this->ppm, 0.01, 0.1, "%.2f")) {
+            if (SmGui::InputFloat(CONCAT("##sdrplay_ppm", _this->name), &_this->ppm, 0.01f, 0.1f, "%.2f")) {
                 _this->ppm = clampPPM(_this->ppm);
                 if (_this->running) {
                     _this->applyPPM();
@@ -1166,7 +1166,7 @@ private:
     int lnaGain = 9;
     int gain = 59;
     int lnaSteps = 9;
-    double ppm = 0.0;
+    float ppm = 0.0f;
 
     bool agc = false;
     bool agcParamEdit = false;
