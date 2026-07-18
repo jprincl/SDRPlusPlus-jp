@@ -203,7 +203,8 @@ private:
                 }
                 std::string cpuText = std::to_string((int)ifnrProcessor.percentUsage) + "% cpu";
                 ImVec2 textSize = ImGui::CalcTextSize(cpuText.c_str());
-                bool clicked = ImGui::Selectable(cpuText.c_str(), false, ImGuiSelectableFlags_None, textSize);
+                std::string cpuLabel = cpuText + "##_sdrpp_ifnr_cpu_load";
+                bool clicked = ImGui::Selectable(cpuLabel.c_str(), false, ImGuiSelectableFlags_None, textSize);
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Baseband NR processing load. Above ~95%% the NR shuts off\n"
                                       "automatically; click to disable that safeguard (strikethrough\n"
