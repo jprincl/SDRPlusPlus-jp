@@ -109,6 +109,35 @@ private:
         }
     }
 
+    void saveBookmarkEdit(const std::string& targetListName) {
+        if (targetListName != selectedListName) {
+            // Moving to another list: remove from the current one if editing
+            if (editOpen) {
+                bookmarks.erase(firstEditedBookmarkName);
+                saveByName(selectedListName);
+            }
+
+            // Add to the target list and switch to it
+            config.acquire();
+            config.conf["lists"][targetListName]["bookmarks"][editedBookmarkName] = bookmarkToJson(editedBookmark);
+            refreshWaterfallBookmarks(false);
+            config.release(true);
+
+            loadByName(targetListName);
+            config.acquire();
+            config.conf["selectedList"] = targetListName;
+            config.release(true);
+        }
+        else {
+            // Same list: normal add or edit
+            if (editOpen) {
+                bookmarks.erase(firstEditedBookmarkName);
+            }
+            bookmarks[editedBookmarkName] = editedBookmark;
+            saveByName(selectedListName);
+        }
+    }
+
     bool bookmarkEditDialog() {
         bool open = true;
         gui::mainWindow.lockWaterfallControls = true;
@@ -225,6 +254,7 @@ private:
             if (ImGui::InputTextMultiline(("##freq_manager_edit_notes" + name).c_str(), notesBuf, sizeof(notesBuf) - 1)) {
                 editedBookmark.notes = notesBuf;
             }
+            bool notesFieldActive = ImGui::IsItemActive();
 
             ImGui::EndTable();
 
@@ -242,41 +272,21 @@ private:
             }
 
             bool applyDisabled = (strlen(nameBuf) == 0) || nameExists || !timeValid(editedBookmark.startTime) || !timeValid(editedBookmark.endTime);
+            bool popupFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows | ImGuiFocusedFlags_NoPopupHierarchy);
+            bool applyRequested = popupFocused && !notesFieldActive && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
+            bool cancelRequested = popupFocused && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+
             if (applyDisabled) { style::beginDisabled(); }
-            if (ImGui::Button("Apply")) {
+            if (ImGui::Button("Apply") || (!applyDisabled && applyRequested)) {
                 open = false;
-
-                if (targetListName != selectedListName) {
-                    // Moving to another list: remove from the current one if editing
-                    if (editOpen) {
-                        bookmarks.erase(firstEditedBookmarkName);
-                        saveByName(selectedListName);
-                    }
-
-                    // Add to the target list and switch to it
-                    config.acquire();
-                    config.conf["lists"][targetListName]["bookmarks"][editedBookmarkName] = bookmarkToJson(editedBookmark);
-                    refreshWaterfallBookmarks(false);
-                    config.release(true);
-
-                    loadByName(targetListName);
-                    config.acquire();
-                    config.conf["selectedList"] = targetListName;
-                    config.release(true);
-                }
-                else {
-                    // Same list: normal add or edit
-                    if (editOpen) {
-                        bookmarks.erase(firstEditedBookmarkName);
-                    }
-                    bookmarks[editedBookmarkName] = editedBookmark;
-                    saveByName(selectedListName);
-                }
+                saveBookmarkEdit(targetListName);
+                ImGui::CloseCurrentPopup();
             }
             if (applyDisabled) { style::endDisabled(); }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel")) {
+            if (ImGui::Button("Cancel") || cancelRequested) {
                 open = false;
+                ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
         }
