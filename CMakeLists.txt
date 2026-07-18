@@ -186,46 +186,30 @@ endif ()
 # letting Windows resolve via our deps install prefix.
 include(${CMAKE_SOURCE_DIR}/cmake/sdrpp_find_dep.cmake)
 
-# Debug menu: compiled in only for dev builds — commits past the release tag,
-# where scripts/get_version.sh derives a "+<count>-g<hash>" build-info suffix
-# (same tag-match pattern here). Builds exactly on a vX.Y.Z tag, and non-git
-# builds such as source tarballs, get the menu compiled out along with the
-# ImGui demo window it references (IMGUI_DISABLE_DEMO_WINDOWS turns
-# imgui_demo.cpp into empty stubs). Applied before any add_subdirectory so
-# every in-tree target sees the same definitions.
-find_package(Git QUIET)
-set(SDRPP_DEV_BUILD OFF)
-if (GIT_FOUND)
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} -C "${CMAKE_SOURCE_DIR}" describe --tags --long --match "v[0-9]*.[0-9]*.[0-9]*"
-        OUTPUT_VARIABLE _sdrpp_describe
-        ERROR_QUIET
-        RESULT_VARIABLE _sdrpp_describe_res
-        OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if (_sdrpp_describe_res EQUAL 0)
-        # "v1.2.3[-pre]-<count>-g<hash>": a zero count means HEAD is the tag.
-        if (NOT _sdrpp_describe MATCHES "-0-g[0-9a-f]+$")
-            set(SDRPP_DEV_BUILD ON)
-        endif ()
-    else ()
-        # No matching tag: get_version.sh then always emits a +g suffix, so
-        # any git checkout without release tags counts as a dev build.
-        execute_process(
-            COMMAND ${GIT_EXECUTABLE} -C "${CMAKE_SOURCE_DIR}" rev-parse --short HEAD
-            OUTPUT_QUIET
-            ERROR_QUIET
-            RESULT_VARIABLE _sdrpp_head_res)
-        if (_sdrpp_head_res EQUAL 0)
-            set(SDRPP_DEV_BUILD ON)
-        endif ()
-    endif ()
+# Debug menu: off by default. Compiled in for
+#   1) CI nightly builds — any GitHub Actions build that is not a release-tag
+#      build (GITHUB_REF_TYPE is "tag" only when a pushed vX.Y.Z tag is being
+#      built; the docker-based Linux/AppImage workflows forward the two
+#      GITHUB_* variables into the container), and
+#   2) Debug configurations — per-config generator expression, so
+#      multi-config generators (MSVC) get it in Debug builds only.
+# All other builds compile the menu out along with the ImGui demo window it
+# references (IMGUI_DISABLE_DEMO_WINDOWS turns imgui_demo.cpp into empty
+# stubs; the symbols remain, keeping the generated exports.def valid).
+# Applied before any add_subdirectory so every in-tree target agrees.
+option(OPT_DEBUG_MENU "Compile the debug menu into all configurations" OFF)
+set(_sdrpp_debug_menu ${OPT_DEBUG_MENU})
+if (NOT _sdrpp_debug_menu AND DEFINED ENV{GITHUB_ACTIONS} AND NOT "$ENV{GITHUB_REF_TYPE}" STREQUAL "tag")
+    set(_sdrpp_debug_menu ON)
 endif ()
-if (SDRPP_DEV_BUILD)
-    message(STATUS "Dev build (past release tag): debug menu enabled")
+if (_sdrpp_debug_menu)
+    message(STATUS "Debug menu: enabled in all configurations (OPT_DEBUG_MENU or CI nightly)")
     add_compile_definitions(SDRPP_ENABLE_DEBUG_MENU)
 else ()
-    message(STATUS "Labeled build (on release tag or no git): debug menu and ImGui demo compiled out")
-    add_compile_definitions(IMGUI_DISABLE_DEMO_WINDOWS)
+    message(STATUS "Debug menu: Debug configuration only")
+    add_compile_definitions(
+        $<$<CONFIG:Debug>:SDRPP_ENABLE_DEBUG_MENU>
+        $<$<NOT:$<CONFIG:Debug>>:IMGUI_DISABLE_DEMO_WINDOWS>)
 endif ()
 
 # Core of SDR++

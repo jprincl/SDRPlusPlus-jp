@@ -44,6 +44,8 @@ jobs:
             docker run --name build \
               -v $GITHUB_WORKSPACE:/root/SDRPlusPlus \
               --env VERSION_FULL="${{ inputs.version_full }}" \
+              --env GITHUB_ACTIONS \
+              --env GITHUB_REF_TYPE \
               sdrpp_appimage_build /root/make_appimage.sh
 
         # The container writes into the bind-mounted source tree as root,
