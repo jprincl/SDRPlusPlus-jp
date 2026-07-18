@@ -1,6 +1,7 @@
 #include <imgui.h>
 #include <module.h>
 #include <gui/gui.h>
+#include <gui/widgets/popup_dialog.h>
 #include <sched_task.h>
 #include <map>
 
@@ -67,8 +68,7 @@ private:
         if (!_this->editedTask.empty()) {
             gui::mainWindow.lockWaterfallControls = true;
             std::string id = "Edit Task##scheduler_edit_task_" + _this->name;
-            ImGui::OpenPopup(id.c_str());
-            if (ImGui::BeginPopup(id.c_str(), ImGuiWindowFlags_NoResize)) {
+            if (_this->editDialog.begin(id.c_str(), ImGuiWindowFlags_NoResize)) {
                 bool valid = false;
                 bool open = _this->tasks[_this->editedTask].showEditMenu(_this->editedName, valid);
 
@@ -83,9 +83,14 @@ private:
 
                     // Stop showing edit window
                     _this->editedTask.clear();
+                    _this->editDialog.close();
                 }
 
-                ImGui::EndPopup();
+                _this->editDialog.end();
+            }
+            else {
+                // Closed at the ImGui level (back gesture, click outside)
+                _this->editedTask.clear();
             }
         }
 
@@ -110,6 +115,7 @@ private:
                 if (ImGui::TableGetHoveredColumn() >= 0 && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && _this->editedTask.empty()) {
                     _this->editedTask = name;
                     strcpy(_this->editedName, name.c_str());
+                    _this->editDialog.request();
                 }
 
                 ImGui::TableSetColumnIndex(1);
@@ -124,6 +130,7 @@ private:
 
     std::string editedTask = "";
     char editedName[1024];
+    PopupDialog editDialog;
 
     std::map<std::string, Task> tasks;
 };

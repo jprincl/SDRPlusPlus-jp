@@ -7,6 +7,7 @@
 #include <signal_path/signal_path.h>
 #include <utils/optionlist.h>
 #include <gui/dialogs/dialog_box.h>
+#include <gui/widgets/popup_dialog.h>
 
 namespace sourcemenu {
     int sourceId = 0;
@@ -28,7 +29,7 @@ namespace sourcemenu {
     OptionList<std::string, double> offsets;
     std::map<std::string, double> namedOffsets;
 
-    bool showAddOffsetDialog = false;
+    PopupDialog addOffsetDlg;
     char newOffsetName[1024];
     double newOffset = 0.0;
 
@@ -236,14 +237,11 @@ namespace sourcemenu {
         selectOffsetByName(selectedOffset);
     }
 
-    bool addOffsetDialog() {
-        bool open = true;
+    void addOffsetDialog() {
         gui::mainWindow.lockWaterfallControls = true;
 
         const char* id = "Add offset##sdrpp_add_offset_dialog_";
-        ImGui::OpenPopup(id);
-
-        if (ImGui::BeginPopup(id, ImGuiWindowFlags_NoResize)) {
+        if (addOffsetDlg.begin(id, ImGuiWindowFlags_NoResize)) {
             ImGui::LeftLabelFill("Name");
             ImGui::InputText("##sdrpp_add_offset_name", newOffsetName, 1023);
 
@@ -261,19 +259,16 @@ namespace sourcemenu {
                 ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "The given name is reserved.");
             }
 
-            if (denyApply) { style::beginDisabled(); }
-            if (ImGui::Button("Apply")) {
+            if (addOffsetDlg.applyButton("Apply", denyApply)) {
                 addOffset(newOffsetName, newOffset);
-                open = false;
+                addOffsetDlg.close();
             }
-            if (denyApply) { style::endDisabled(); }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel")) {
-                open = false;
+            if (addOffsetDlg.cancelButton()) {
+                addOffsetDlg.close();
             }
-            ImGui::EndPopup();
+            addOffsetDlg.end();
         }
-        return open;
     }
 
     void draw(void* ctx) {
@@ -331,7 +326,7 @@ namespace sourcemenu {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() - spacing);
         if (ImGui::Button("+##_sdrpp_offset_add_", ImVec2(lineHeight + 0.5f*spacing, 0))) {
             strcpy(newOffsetName, "New Offset");
-            showAddOffsetDialog = true;
+            addOffsetDlg.request();
         }
 
         // Offset delete confirmation
@@ -342,7 +337,7 @@ namespace sourcemenu {
         }
 
         // Offset add diaglog
-        if (showAddOffsetDialog) { showAddOffsetDialog = addOffsetDialog(); }
+        if (addOffsetDlg.isOpen()) { addOffsetDialog(); }
 
         if (offsetId != OFFSET_ID_NONE) {
             ImGui::LeftLabel("Offset");
