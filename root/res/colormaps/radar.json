@@ -1,0 +1,10 @@
+{
+    "name": "Radar",
+    "author": "CubicSDR devs",
+    "map": [
+        "#052D0A",
+        "#1E9628",
+        "#28F03C",
+        "#FAFAFA"
+    ]
+}

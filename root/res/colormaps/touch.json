@@ -1,0 +1,14 @@
+{
+    "name": "Touch",
+    "author": "SDR Touch devs",
+    "map": [
+        "#000000",
+        "#372837",
+        "#3D3958",
+        "#00FFFF",
+        "#0AFF55",
+        "#FFFF4B",
+        "#FF0000",
+        "#FFFFFF"
+    ]
+}
