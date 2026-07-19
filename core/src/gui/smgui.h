@@ -66,10 +66,17 @@ namespace SmGui {
         DrawListElemType type;
         DrawStep step;
         bool forceSync;
-        bool b;
-        int i;
-        float f;
-        double d;
+        // Exactly one scalar payload is live per element, selected by `type`.
+        // They are mutually exclusive, so overlay them in a union to avoid
+        // carrying all four in every element. `str` stays a separate member:
+        // std::string is non-trivial and can't share the union without manual
+        // lifetime management.
+        union {
+            bool b;
+            int i;
+            float f;
+            double d;
+        };
         std::string str;
     };
 
