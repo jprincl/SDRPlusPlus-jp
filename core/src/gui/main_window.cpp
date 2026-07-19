@@ -905,12 +905,15 @@ void MainWindow::draw() {
 
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - 10 * style::uiScale);
     if (ImGui::Button("A##_sdrpp_autoscale", ImVec2(20.0 * style::uiScale, 20.0 * style::uiScale))) {
-        gui::waterfall.getAutorangeValues(fftMin, fftMax);
-        fftMax = std::max<float>(fftMax, fftMin + 10);
-        core::configManager.acquire();
-        core::configManager.conf["min"] = fftMin;
-        core::configManager.conf["max"] = fftMax;
-        core::configManager.release(true);
+        float newMin, newMax;
+        if (gui::waterfall.getAutorangeValues(newMin, newMax)) {
+            fftMin = newMin;
+            fftMax = std::max<float>(newMax, fftMin + 10);
+            core::configManager.acquire();
+            core::configManager.conf["min"] = fftMin;
+            core::configManager.conf["max"] = fftMax;
+            core::configManager.release(true);
+        }
     }
 
     ImGui::EndChild();

@@ -3,6 +3,7 @@
 #include <imgui_internal.h>
 #include <imutils.h>
 #include <algorithm>
+#include <cmath>
 #include <volk/volk.h>
 #include <utils/flog.h>
 #include <gui/gui.h>
@@ -108,6 +109,12 @@ namespace ImGui {
         lastWidgetSize.y = 0;
         latestFFT = new float[dataWidth];
         latestFFTHold = new float[dataWidth];
+        // Fill with the "hide everything" sentinel so the buffers hold a
+        // well-defined value before the first FFT frame / onResize() fill.
+        for (int i = 0; i < dataWidth; i++) {
+            latestFFT[i] = -1000.0f;
+            latestFFTHold[i] = -1000.0f;
+        }
         waterfallFb = new uint32_t[1];
 
         viewBandwidth = 1.0;
@@ -1162,18 +1169,30 @@ namespace ImGui {
         updateWaterfallFb();
     }
 
-    void WaterFall::getAutorangeValues(float& targetMin, float& targetMax) {
+    bool WaterFall::getAutorangeValues(float& targetMin, float& targetMax) {
         std::lock_guard<std::recursive_mutex> lck(latestFFTMtx);
-        float min = INFINITY;
-        float max = -INFINITY;
+        // Require at least one real FFT frame. Before that latestFFT holds the
+        // -1000 "hide everything" sentinel and would yield a bogus range.
+        if (fftLines <= 0 || latestFFT == NULL) { return false; }
         // Scan only the middle 60% of the FFT to avoid band edges, filter
         // roll-off and the DC/center spike skewing the range.
-        for (int i = dataWidth * 0.2; i < dataWidth * 0.8; i++) {
+        int start = dataWidth * 0.2;
+        int end = dataWidth * 0.8;
+        if (start >= end) { return false; }
+        float min = INFINITY;
+        float max = -INFINITY;
+        for (int i = start; i < end; i++) {
             min = std::min<float>(min, latestFFT[i]);
             max = std::max<float>(max, latestFFT[i]);
         }
+        // Reject non-finite results and the sentinel / smoothing-warmup range
+        // (nothing real sits below -200 dBFS).
+        if (!std::isfinite(min) || !std::isfinite(max) || max <= min || max < -200.0f) {
+            return false;
+        }
         targetMin = min - 10;
         targetMax = max + 10;
+        return true;
     }
 
     void WaterFall::setCenterFrequency(double freq) {
