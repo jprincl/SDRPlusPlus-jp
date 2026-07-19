@@ -1,3 +1,3 @@
 #pragma once
 
-#define VERSION_STR "1.2.2-beta3"
+#define VERSION_STR "1.4.0-alpha"
