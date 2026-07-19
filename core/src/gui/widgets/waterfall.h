@@ -121,7 +121,7 @@ namespace ImGui {
         void setZoom(double zoomLevel);
         void setOffset(double zoomOffset);
 
-        void autoRange();
+        void getAutorangeValues(float& targetMin, float& targetMax);
 
         void selectFirstVFO();
 

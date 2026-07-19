@@ -901,6 +901,18 @@ void MainWindow::draw() {
         core::configManager.release(true);
     }
 
+    if (sliderSeparators) ImGui::NewLine();
+
+    ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - 10 * style::uiScale);
+    if (ImGui::Button("A##_sdrpp_autoscale", ImVec2(20.0 * style::uiScale, 20.0 * style::uiScale))) {
+        gui::waterfall.getAutorangeValues(fftMin, fftMax);
+        fftMax = std::max<float>(fftMax, fftMin + 10);
+        core::configManager.acquire();
+        core::configManager.conf["min"] = fftMin;
+        core::configManager.conf["max"] = fftMax;
+        core::configManager.release(true);
+    }
+
     ImGui::EndChild();
 
     gui::waterfall.setFFTMin(fftMin);

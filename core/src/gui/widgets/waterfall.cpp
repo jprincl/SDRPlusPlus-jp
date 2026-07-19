@@ -1162,20 +1162,18 @@ namespace ImGui {
         updateWaterfallFb();
     }
 
-    void WaterFall::autoRange() {
+    void WaterFall::getAutorangeValues(float& targetMin, float& targetMax) {
         std::lock_guard<std::recursive_mutex> lck(latestFFTMtx);
         float min = INFINITY;
         float max = -INFINITY;
-        for (int i = 0; i < dataWidth; i++) {
-            if (latestFFT[i] < min) {
-                min = latestFFT[i];
-            }
-            if (latestFFT[i] > max) {
-                max = latestFFT[i];
-            }
+        // Scan only the middle 60% of the FFT to avoid band edges, filter
+        // roll-off and the DC/center spike skewing the range.
+        for (int i = dataWidth * 0.2; i < dataWidth * 0.8; i++) {
+            min = std::min<float>(min, latestFFT[i]);
+            max = std::max<float>(max, latestFFT[i]);
         }
-        fftMin = min - 5;
-        fftMax = max + 5;
+        targetMin = min - 10;
+        targetMax = max + 10;
     }
 
     void WaterFall::setCenterFrequency(double freq) {
