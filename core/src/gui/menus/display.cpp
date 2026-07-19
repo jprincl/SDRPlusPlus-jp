@@ -147,6 +147,8 @@ namespace displaymenu {
     }
 
     void draw(void* ctx) {
+        thememenu::draw(ctx);
+
         if (ImGui::Checkbox("Show Waterfall##_sdrpp", &showWaterfall)) {
             setWaterfallShown(showWaterfall);
         }

@@ -20,7 +20,6 @@
 #include <gui/menus/sink.h>
 #include <gui/menus/vfo_color.h>
 #include <gui/menus/module_manager.h>
-#include <gui/menus/theme.h>
 #include <gui/menus/android.h>
 #include <gui/dialogs/credits.h>
 #ifdef __ANDROID__
@@ -101,7 +100,6 @@ void MainWindow::init() {
     gui::menu.registerEntry("Sinks", sinkmenu::draw, NULL);
     gui::menu.registerEntry("Band Plan", bandplanmenu::draw, NULL, bandplanmenu::getInstance());
     gui::menu.registerEntry("Display", displaymenu::draw, NULL);
-    gui::menu.registerEntry("Theme", thememenu::draw, NULL);
     gui::menu.registerEntry("VFO Color", vfo_color_menu::draw, NULL);
     gui::menu.registerEntry("Module Manager", module_manager_menu::draw, NULL);
 #ifdef __ANDROID__
