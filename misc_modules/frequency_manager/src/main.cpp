@@ -110,6 +110,70 @@ private:
         }
     }
 
+    // Bandwidth and mode captured from the currently selected VFO (0 / RAW if
+    // no VFO is selected), used to seed a freshly created bookmark.
+    void currentBookmarkBwMode(double& bandwidth, int& mode) {
+        if (gui::waterfall.selectedVFO == "") {
+            bandwidth = 0;
+            mode = 7;
+            return;
+        }
+        bandwidth = sigpath::vfoManager.getBandwidth(gui::waterfall.selectedVFO);
+        mode = 7;
+        if (core::modComManager.getModuleName(gui::waterfall.selectedVFO) == "radio") {
+            int m;
+            core::modComManager.callInterface(gui::waterfall.selectedVFO, RADIO_IFACE_CMD_GET_MODE, NULL, &m);
+            mode = m;
+        }
+    }
+
+    // Seed editedBookmark for a brand new bookmark and open the edit dialog in
+    // Create mode. Shared by the "Add" button and the right-click-on-spectrum
+    // gesture.
+    void beginCreateBookmark(double frequency, double bandwidth, int mode) {
+        editedBookmark.frequency = frequency;
+        editedBookmark.bandwidth = bandwidth;
+        editedBookmark.mode = mode;
+        editedBookmark.startTime = 0;
+        editedBookmark.endTime = 0;
+        for (int i = 0; i < 7; i++) { editedBookmark.days[i] = true; }
+        editedBookmark.geoinfo = "";
+        editedBookmark.notes = "";
+        editedBookmark.selected = false;
+        editedBookmarkListId = selectedListId;
+        firstEditedBookmarkName = "";
+
+        bookmarkDialogMode = BookmarkDialogMode::Create;
+        editDialog.request();
+
+        // Find a unique default name
+        if (bookmarks.find("New Bookmark") == bookmarks.end()) {
+            editedBookmarkName = "New Bookmark";
+        }
+        else {
+            char buf[64];
+            for (int i = 1; i < 1000; i++) {
+                sprintf(buf, "New Bookmark (%d)", i);
+                if (bookmarks.find(buf) == bookmarks.end()) { break; }
+            }
+            editedBookmarkName = buf;
+        }
+    }
+
+    // Expand this module's menu section so the create dialog is actually drawn:
+    // the dialog is only rendered from menuHandler, which the menu skips while
+    // the section is collapsed. Used when the dialog is triggered from outside
+    // the menu (right-click on the spectrum).
+    void ensureMenuExpanded() {
+        for (auto& opt : gui::menu.order) {
+            if (opt.name == name) {
+                opt.open = true;
+                break;
+            }
+        }
+        gui::mainWindow.setFirstMenuRender();
+    }
+
     void saveBookmarkEdit(const std::string& targetListName) {
         if (targetListName != selectedListName) {
             // Moving to another list: remove from the current one if editing
@@ -523,47 +587,13 @@ private:
         ImGui::TableSetColumnIndex(0);
         if (ImGui::Button(("Add##_freq_mgr_add_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
             // If there's no VFO selected, just save the center freq
-            if (gui::waterfall.selectedVFO == "") {
-                _this->editedBookmark.frequency = gui::waterfall.getCenterFrequency();
-                _this->editedBookmark.bandwidth = 0;
-                _this->editedBookmark.mode = 7;
-            }
-            else {
-                _this->editedBookmark.frequency = gui::waterfall.getCenterFrequency() + sigpath::vfoManager.getOffset(gui::waterfall.selectedVFO);
-                _this->editedBookmark.bandwidth = sigpath::vfoManager.getBandwidth(gui::waterfall.selectedVFO);
-                _this->editedBookmark.mode = 7;
-                if (core::modComManager.getModuleName(gui::waterfall.selectedVFO) == "radio") {
-                    int mode;
-                    core::modComManager.callInterface(gui::waterfall.selectedVFO, RADIO_IFACE_CMD_GET_MODE, NULL, &mode);
-                    _this->editedBookmark.mode = mode;
-                }
-            }
-
-            // Default values for the new bookmark
-            _this->editedBookmark.startTime = 0;
-            _this->editedBookmark.endTime = 0;
-            for (int i = 0; i < 7; i++) { _this->editedBookmark.days[i] = true; }
-            _this->editedBookmark.geoinfo = "";
-            _this->editedBookmark.notes = "";
-            _this->editedBookmark.selected = false;
-            _this->editedBookmarkListId = _this->selectedListId;
-            _this->firstEditedBookmarkName = "";
-
-            _this->bookmarkDialogMode = BookmarkDialogMode::Create;
-            _this->editDialog.request();
-
-            // Find new unique default name
-            if (_this->bookmarks.find("New Bookmark") == _this->bookmarks.end()) {
-                _this->editedBookmarkName = "New Bookmark";
-            }
-            else {
-                char buf[64];
-                for (int i = 1; i < 1000; i++) {
-                    sprintf(buf, "New Bookmark (%d)", i);
-                    if (_this->bookmarks.find(buf) == _this->bookmarks.end()) { break; }
-                }
-                _this->editedBookmarkName = buf;
-            }
+            double bw;
+            int mode;
+            _this->currentBookmarkBwMode(bw, mode);
+            double freq = (gui::waterfall.selectedVFO == "")
+                              ? gui::waterfall.getCenterFrequency()
+                              : gui::waterfall.getCenterFrequency() + sigpath::vfoManager.getOffset(gui::waterfall.selectedVFO);
+            _this->beginCreateBookmark(freq, bw, mode);
         }
 
         ImGui::TableSetColumnIndex(1);
@@ -858,6 +888,34 @@ private:
     bool mouseClickedInLabel = false;
     static void fftInput(ImGui::WaterFall::InputHandlerArgs args, void* ctx) {
         FrequencyManagerModule* _this = (FrequencyManagerModule*)ctx;
+
+        // Right-click on the spectrum or waterfall: create a bookmark at the
+        // frequency under the cursor. Independent of the bookmark display mode,
+        // but needs a list to save into (matches the disabled "Add" button).
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && _this->selectedListName != "") {
+            ImVec2 mp = ImGui::GetMousePos();
+            bool inFFT = mp.x >= args.fftRectMin.x && mp.x < args.fftRectMax.x && mp.y >= args.fftRectMin.y && mp.y < args.fftRectMax.y;
+            bool inWaterfall = mp.x >= args.waterfallRectMin.x && mp.x < args.waterfallRectMax.x && mp.y >= args.waterfallRectMin.y && mp.y < args.waterfallRectMax.y;
+            if (inFFT || inWaterfall) {
+                double freq = args.lowFreq + ((double)mp.x - args.fftRectMin.x) * args.pixelToFreqRatio;
+
+                // Snap to the selected VFO's grid when there is one
+                if (gui::waterfall.selectedVFO != "") {
+                    double snap = gui::waterfall.vfos[gui::waterfall.selectedVFO]->snapInterval;
+                    if (snap > 0) { freq = std::round(freq / snap) * snap; }
+                }
+
+                double bw;
+                int mode;
+                _this->currentBookmarkBwMode(bw, mode);
+                _this->beginCreateBookmark(freq, bw, mode);
+                _this->ensureMenuExpanded();
+
+                gui::waterfall.inputHandled = true;
+                return;
+            }
+        }
+
         if (_this->bookmarkDisplayMode == BOOKMARK_DISP_MODE_OFF) { return; }
 
         if (_this->mouseClickedInLabel) {
