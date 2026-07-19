@@ -5,11 +5,13 @@
 #include <signal_path/sink.h>
 #include <dsp/buffer/packer.h>
 #include <dsp/convert/stereo_to_mono.h>
+#include <dsp/sink/null_sink.h>
 #include <utils/flog.h>
 #include <RtAudio.h>
 #include <config.h>
 #include <core.h>
 #include <chrono>
+#include <memory>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -70,6 +72,13 @@ public:
                 flog::error("AudioSinkModule Error getting audio device ({}) info: {}", i, e.what());
             }
         }
+        // On a machine with no audio output devices, keep a valid sample rate
+        // so the upstream resampler has a target. The pipeline is kept draining
+        // by the null sink (see doStart) so the spectrum still works.
+        if (devList.empty()) {
+            _stream->setSampleRate(sampleRate);
+        }
+
         selectByName(device);
     }
 
@@ -89,6 +98,7 @@ public:
     }
 
     void selectFirst() {
+        if (devList.empty()) { return; }
         selectById(defaultDevId);
     }
 
@@ -103,6 +113,7 @@ public:
     }
 
     void selectById(int id) {
+        if (id < 0 || id >= (int)devList.size()) { return; }
         devId = id;
 #ifdef __linux__
         alsaMode = (audio.getCurrentApi() == RtAudio::LINUX_ALSA);
@@ -149,6 +160,11 @@ public:
     void menuHandler() {
         float menuWidth = ImGui::GetContentRegionAvail().x;
 
+        if (devList.empty()) {
+            ImGui::TextUnformatted("No audio output devices");
+            return;
+        }
+
         ImGui::SetNextItemWidth(menuWidth);
         if (ImGui::Combo(("##_audio_sink_dev_" + _streamName).c_str(), &devId, txtDevList.c_str())) {
             selectById(devId);
@@ -188,7 +204,26 @@ public:
 #endif
 
 private:
+    // Drain the audio stream into a null sink so the shared upstream splitter
+    // (which also feeds the FFT) keeps flowing when no real device is running.
+    // Constructed lazily: on a machine with an active output device this is
+    // never allocated. init() must run exactly once, before start().
+    void startNullDrain() {
+        if (!nullSink) {
+            nullSink = std::make_unique<dsp::sink::Null<dsp::stereo_t>>();
+            nullSink->init(_stream->sinkOut);
+        }
+        nullSink->start();
+        nullMode = true;
+    }
+
     bool doStart() {
+        // No usable output device: keep the pipeline draining.
+        if (devList.empty() || devId < 0 || devId >= (int)deviceIds.size()) {
+            startNullDrain();
+            return true;
+        }
+
         RtAudio::StreamParameters parameters;
         parameters.deviceId = deviceIds[devId];
         parameters.nChannels = 2;
@@ -216,14 +251,23 @@ private:
         }
         catch (const std::exception& e) {
             flog::error("Could not open audio device {0}", e.what());
-            return false;
+            // Fall back to draining the stream so the pipeline (and the
+            // spectrum/waterfall) doesn't stall on the undrained sink output.
+            startNullDrain();
+            return true;
         }
 
+        nullMode = false;
         flog::info("RtAudio stream open");
         return true;
     }
 
     void doStop() {
+        if (nullMode) {
+            nullSink->stop();
+            nullMode = false;
+            return;
+        }
         s2m.stop();
         monoPacker.stop();
         stereoPacker.stop();
@@ -265,6 +309,8 @@ private:
     dsp::convert::StereoToMono s2m;
     dsp::buffer::Packer<float> monoPacker;
     dsp::buffer::Packer<dsp::stereo_t> stereoPacker;
+    std::unique_ptr<dsp::sink::Null<dsp::stereo_t>> nullSink;
+    bool nullMode = false;
 
     std::string _streamName;
 
