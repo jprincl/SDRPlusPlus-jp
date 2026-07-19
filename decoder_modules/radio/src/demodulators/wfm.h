@@ -287,16 +287,17 @@ namespace demod {
             WFM* _this = (WFM*)ctx;
             if (!_this->_rds) { return; }
 
-            // Generate string depending on RDS mode
-            char buf[256];
+            // Generate string depending on RDS mode. Buffer is sized for the
+            // worst-case UTF-8 expansion of the repertoire-decoded fields.
+            char buf[512];
             if (_this->rdsDecode.PSNameValid() && _this->rdsDecode.radioTextValid()) {
-                sprintf(buf, "RDS: %s - %s", _this->rdsDecode.getPSName(_this->_rdsIncremental).c_str(), _this->rdsDecode.getRadioText(_this->_rdsIncremental).c_str());
+                snprintf(buf, sizeof(buf), "RDS: %s - %s", _this->rdsDecode.getPSName(_this->_rdsIncremental).c_str(), _this->rdsDecode.getRadioText(_this->_rdsIncremental).c_str());
             }
             else if (_this->rdsDecode.PSNameValid()) {
-                sprintf(buf, "RDS: %s", _this->rdsDecode.getPSName(_this->_rdsIncremental).c_str());
+                snprintf(buf, sizeof(buf), "RDS: %s", _this->rdsDecode.getPSName(_this->_rdsIncremental).c_str());
             }
             else if (_this->rdsDecode.radioTextValid()) {
-                sprintf(buf, "RDS: %s", _this->rdsDecode.getRadioText(_this->_rdsIncremental).c_str());
+                snprintf(buf, sizeof(buf), "RDS: %s", _this->rdsDecode.getRadioText(_this->_rdsIncremental).c_str());
             }
             else {
                 return;

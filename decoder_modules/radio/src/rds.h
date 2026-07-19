@@ -228,13 +228,13 @@ namespace rds {
         bool musicValid() { std::lock_guard<std::mutex> lck(group0Mtx); return group0Valid(); }
         bool getMusic() { std::lock_guard<std::mutex> lck(group0Mtx); return music; }
         bool PSNameValid() { std::lock_guard<std::mutex> lck(group0Mtx); return group0Valid(); }
-        std::string getPSName(bool incremental) { std::lock_guard<std::mutex> lck(group0Mtx); return (incremental ? programServiceName : programServiceNameFullUpdate); }
+        std::string getPSName(bool incremental) { std::lock_guard<std::mutex> lck(group0Mtx); return repertoireToUtf8(incremental ? programServiceName : programServiceNameFullUpdate); }
 
         bool radioTextValid() { std::lock_guard<std::mutex> lck(group2Mtx); return group2Valid(); }
-        std::string getRadioText(bool incremental) { std::lock_guard<std::mutex> lck(group2Mtx); return (incremental ? radioText : radioTextFullUpdate); }
+        std::string getRadioText(bool incremental) { std::lock_guard<std::mutex> lck(group2Mtx); return repertoireToUtf8(incremental ? radioText : radioTextFullUpdate); }
 
         bool programTypeNameValid() { std::lock_guard<std::mutex> lck(group10Mtx); return group10Valid(); }
-        std::string getProgramTypeName() { std::lock_guard<std::mutex> lck(group10Mtx); return programTypeName; }
+        std::string getProgramTypeName() { std::lock_guard<std::mutex> lck(group10Mtx); return repertoireToUtf8(programTypeName); }
 
     private:
         static uint16_t calcSyndrome(uint32_t block);
@@ -248,6 +248,9 @@ namespace rds {
 
         static std::string base26ToCall(uint16_t pi);
         static std::string decodeCallsign(uint16_t pi);
+
+        // Translate raw RDS bytes (EBU G0 repertoire) into a UTF-8 string
+        static std::string repertoireToUtf8(const std::string& raw);
 
         bool blockAValid();
         bool blockBValid();

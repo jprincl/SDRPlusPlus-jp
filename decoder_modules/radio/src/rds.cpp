@@ -130,6 +130,53 @@ namespace rds {
     const int DATA_LEN = 16;
     const int POLY_LEN = 10;
 
+    // RDS/EBU G0 default character repertoire (IEC 62106, Annex E), as UTF-8.
+    // Control positions (0x00-0x1F) and undefined slots render as space; the
+    // five glyphs Roboto-Medium lacks (arrows, box-draw bar) use ASCII fallbacks.
+    // Written as \xNN byte escapes so the table is charset-independent (no MSVC
+    // /utf-8 dependency).
+    static const char* const EBU_REPERTOIRE[256] = {
+        /* 0x00 */ " ", " ", " ", " ", " ", " ", " ", " ",
+        /* 0x08 */ " ", " ", " ", " ", " ", " ", " ", " ",
+        /* 0x10 */ " ", " ", " ", " ", " ", " ", " ", " ",
+        /* 0x18 */ " ", " ", " ", " ", " ", " ", " ", " ",
+        /* 0x20 */ " ", "!", "\x22", "#", "\xc2\xa4", "%", "&", "'",
+        /* 0x28 */ "(", ")", "*", "+", ",", "-", ".", "/",
+        /* 0x30 */ "0", "1", "2", "3", "4", "5", "6", "7",
+        /* 0x38 */ "8", "9", ":", ";", "<", "=", ">", "?",
+        /* 0x40 */ "@", "A", "B", "C", "D", "E", "F", "G",
+        /* 0x48 */ "H", "I", "J", "K", "L", "M", "N", "O",
+        /* 0x50 */ "P", "Q", "R", "S", "T", "U", "V", "W",
+        /* 0x58 */ "X", "Y", "Z", "[", "\x5c", "]", "\xe2\x80\x95", "_",
+        /* 0x60 */ "|", "a", "b", "c", "d", "e", "f", "g",
+        /* 0x68 */ "h", "i", "j", "k", "l", "m", "n", "o",
+        /* 0x70 */ "p", "q", "r", "s", "t", "u", "v", "w",
+        /* 0x78 */ "x", "y", "z", "{", "|", "}", "\xc2\xaf", "-",
+        /* 0x80 */ "\xc3\xa1", "\xc3\xa0", "\xc3\xa9", "\xc3\xa8", "\xc3\xad", "\xc3\xac", "\xc3\xb3", "\xc3\xb2",
+        /* 0x88 */ "\xc3\xba", "\xc3\xb9", "\xc3\x91", "\xc3\x87", "\xc5\x9e", "\xc3\x9f", "\xc2\xa1", "\xc4\xb2",
+        /* 0x90 */ "\xc3\xa2", "\xc3\xa4", "\xc3\xaa", "\xc3\xab", "\xc3\xae", "\xc3\xaf", "\xc3\xb4", "\xc3\xb6",
+        /* 0x98 */ "\xc3\xbb", "\xc3\xbc", "\xc3\xb1", "\xc3\xa7", "\xc5\x9f", "\xc4\x9f", "\xc4\xb1", "\xc4\xb3",
+        /* 0xA0 */ "\xc2\xaa", "\xce\xb1", "\xc2\xa9", "\xe2\x80\xb0", "\xc4\x9e", "\xc4\x9b", "\xc5\x88", "\xc5\x91",
+        /* 0xA8 */ "\xcf\x80", "\xe2\x82\xac", "\xc2\xa3", "$", "<", "^", ">", "v",
+        /* 0xB0 */ "\xc2\xba", "\xc2\xb9", "\xc2\xb2", "\xc2\xb3", "\xc2\xb1", "\xc4\xb0", "\xc5\x84", "\xc5\xb1",
+        /* 0xB8 */ "\xc2\xb5", "\xc2\xbf", "\xc3\xb7", "\xc2\xb0", "\xc2\xbc", "\xc2\xbd", "\xc2\xbe", "\xc2\xa7",
+        /* 0xC0 */ "\xc3\x81", "\xc3\x80", "\xc3\x89", "\xc3\x88", "\xc3\x8d", "\xc3\x8c", "\xc3\x93", "\xc3\x92",
+        /* 0xC8 */ "\xc3\x9a", "\xc3\x99", "\xc5\x98", "\xc4\x8c", "\xc5\xa0", "\xc5\xbd", "\xc3\x90", "\xc4\xbf",
+        /* 0xD0 */ "\xc3\x82", "\xc3\x84", "\xc3\x8a", "\xc3\x8b", "\xc3\x8e", "\xc3\x8f", "\xc3\x94", "\xc3\x96",
+        /* 0xD8 */ "\xc3\x9b", "\xc3\x9c", "\xc5\x99", "\xc4\x8d", "\xc5\xa1", "\xc5\xbe", "\xc4\x91", "\xc5\x80",
+        /* 0xE0 */ "\xc3\x83", "\xc3\x85", "\xc3\x86", "\xc5\x92", "\xc5\xb7", "\xc3\x9d", "\xc3\x95", "\xc3\x98",
+        /* 0xE8 */ "\xc3\x9e", "\xc5\x8a", "\xc5\x94", "\xc4\x86", "\xc5\x9a", "\xc5\xb9", "\xc5\xa6", "\xc3\xb0",
+        /* 0xF0 */ "\xc3\xa3", "\xc3\xa5", "\xc3\xa6", "\xc5\x93", "\xc5\xb5", "\xc3\xbd", "\xc3\xb5", "\xc3\xb8",
+        /* 0xF8 */ "\xc3\xbe", "\xc5\x8b", "\xc5\x95", "\xc4\x87", "\xc5\x9b", "\xc5\xba", "\xc5\xa7", "?",
+    };
+
+    std::string Decoder::repertoireToUtf8(const std::string& raw) {
+        std::string out;
+        out.reserve(raw.size() * 2);
+        for (unsigned char c : raw) { out += EBU_REPERTOIRE[c]; }
+        return out;
+    }
+
     void Decoder::process(uint8_t* symbols, int count) {
         for (int i = 0; i < count; i++) {
             // Shift in the bit

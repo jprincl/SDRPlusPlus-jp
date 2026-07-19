@@ -44,6 +44,15 @@ namespace style {
         ImFontGlyphRangesBuilder baseBuilder;
         baseBuilder.AddRanges(fonts->GetGlyphRangesDefault());
         baseBuilder.AddRanges(fonts->GetGlyphRangesCyrillic());
+        // Extra glyphs from the RDS/EBU G0 repertoire that Roboto-Medium has but
+        // the default ranges omit (Latin Extended-A, plus a few singletons).
+        static const ImWchar latinExtA[] = { 0x0100, 0x017F, 0 };
+        baseBuilder.AddRanges(latinExtA);
+        baseBuilder.AddChar(0x03B1); // α
+        baseBuilder.AddChar(0x03C0); // π
+        baseBuilder.AddChar(0x2015); // ―
+        baseBuilder.AddChar(0x2030); // ‰
+        baseBuilder.AddChar(0x20AC); // €
         baseBuilder.BuildRanges(&baseRanges);
 
         // Create big font range
