@@ -443,6 +443,7 @@ namespace backend {
         // the scroll target set here is consumed by the window's Begin().
         void tick() {
             if (!ImGui::GetCurrentContext()) { state = State::IDLE; return; }
+            if (state == State::IDLE) return; // nothing to animate; lastTickTime is refreshed on PENDING/PANNING before any fling
             auto now = std::chrono::steady_clock::now();
             float dt = std::chrono::duration<float>(now - lastTickTime).count();
             lastTickTime = now;
