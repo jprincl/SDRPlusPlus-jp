@@ -654,7 +654,11 @@ private:
     }
 
     void applyPPM() {
-        openDevParams->devParams->ppm = static_cast<double>(ppm);
+        double newPpm = static_cast<double>(ppm);
+        // Skip the device update if the value hasn't actually changed (e.g. a
+        // clamp that snapped back to the same rail, or a re-applied value).
+        if (openDevParams->devParams->ppm == newPpm) { return; }
+        openDevParams->devParams->ppm = newPpm;
         sdrplay_api_Update(openDev.dev, openDev.tuner, sdrplay_api_Update_Dev_Ppm, sdrplay_api_Update_Ext1_None);
     }
 
