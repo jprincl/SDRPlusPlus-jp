@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <string>
+#include <type_traits>
 #include <dsp/stream.h>
 #include <dsp/types.h>
 #include <gui/widgets/waterfall.h>
@@ -52,8 +53,12 @@ namespace demod {
         }
     }
 
-    template <std::size_t PresetCount>
-    static inline bool showHzPresetInput(const char* id, float& value, float minValue, float maxValue, const std::array<int, PresetCount>& presets, float step, float stepFast) {
+    // Numeric input (int or float) with a "current" readout, -/+ repeat-step buttons and a
+    // dropdown of Hz presets. The layout, stepping and popup are shared; only the input widget
+    // and the popup-result conversion are type-specific (handled at the edges via if constexpr).
+    template <typename T, std::size_t PresetCount>
+    static inline bool showHzPresetInput(const char* id, T& value, T minValue, T maxValue, const std::array<int, PresetCount>& presets, T step, T stepFast) {
+        static_assert(std::is_same_v<T, int> || std::is_same_v<T, float>, "showHzPresetInput supports int and float");
         ImGui::PushID(id);
 
         bool changed = false;
@@ -66,20 +71,27 @@ namespace demod {
         float controlWidth = inputWidth + (3.0f * buttonWidth) + (3.0f * spacing);
 
         ImGui::SetNextItemWidth(inputWidth);
-        float editedValue = value;
-        if (ImGui::InputFloat("##value", &editedValue, 0.0f, 0.0f, "%.0f")) {
-            editedValue = std::clamp<float>(editedValue, minValue, maxValue);
+        T editedValue = value;
+        bool edited;
+        if constexpr (std::is_same_v<T, int>) {
+            edited = ImGui::InputInt("##value", &editedValue, 0, 0);
+        }
+        else {
+            edited = ImGui::InputFloat("##value", &editedValue, 0.0f, 0.0f, "%.0f");
+        }
+        if (edited) {
+            editedValue = std::clamp<T>(editedValue, minValue, maxValue);
             if (editedValue != value) {
                 value = editedValue;
                 changed = true;
             }
         }
 
-        float stepAmount = ImGui::GetIO().KeyCtrl ? stepFast : step;
+        T stepAmount = ImGui::GetIO().KeyCtrl ? stepFast : step;
         ImGui::PushButtonRepeat(true);
         ImGui::SameLine(0.0f, spacing);
         if (ImGui::Button("-##step_down", ImVec2(buttonWidth, 0.0f))) {
-            float steppedValue = std::clamp<float>(value - stepAmount, minValue, maxValue);
+            T steppedValue = std::clamp<T>(value - stepAmount, minValue, maxValue);
             if (steppedValue != value) {
                 value = steppedValue;
                 changed = true;
@@ -87,71 +99,7 @@ namespace demod {
         }
         ImGui::SameLine(0.0f, spacing);
         if (ImGui::Button("+##step_up", ImVec2(buttonWidth, 0.0f))) {
-            float steppedValue = std::clamp<float>(value + stepAmount, minValue, maxValue);
-            if (steppedValue != value) {
-                value = steppedValue;
-                changed = true;
-            }
-        }
-        ImGui::PopButtonRepeat();
-        ImGui::SameLine(0.0f, spacing);
-        if (ImGui::ArrowButton("##presets", ImGuiDir_Down)) {
-            ImGui::OpenPopup("presets");
-        }
-
-        ImVec2 controlMax = ImGui::GetItemRectMax();
-        ImGui::SetNextWindowPos(ImVec2(controlMin.x, controlMax.y), ImGuiCond_Appearing);
-        ImGui::SetNextWindowSize(ImVec2(controlWidth, 0.0f), ImGuiCond_Appearing);
-        if (ImGui::BeginPopup("presets")) {
-            float selectedValue = value;
-            drawHzPresetPopup(value, minValue, maxValue, presets, &selectedValue);
-            if (selectedValue != value) {
-                value = selectedValue;
-                changed = true;
-            }
-            ImGui::EndPopup();
-        }
-
-        ImGui::PopID();
-        return changed;
-    }
-
-    template <std::size_t PresetCount>
-    static inline bool showHzPresetInput(const char* id, int& value, int minValue, int maxValue, const std::array<int, PresetCount>& presets, int step, int stepFast) {
-        ImGui::PushID(id);
-
-        bool changed = false;
-        ImGuiStyle& imguiStyle = ImGui::GetStyle();
-        float buttonWidth = ImGui::GetFrameHeight();
-        float spacing = imguiStyle.ItemInnerSpacing.x;
-        float availableWidth = ImGui::GetContentRegionAvail().x;
-        float inputWidth = std::max(1.0f, availableWidth - (3.0f * buttonWidth) - (3.0f * spacing));
-        ImVec2 controlMin = ImGui::GetCursorScreenPos();
-        float controlWidth = inputWidth + (3.0f * buttonWidth) + (3.0f * spacing);
-
-        ImGui::SetNextItemWidth(inputWidth);
-        int editedValue = value;
-        if (ImGui::InputInt("##value", &editedValue, 0, 0)) {
-            editedValue = std::clamp<int>(editedValue, minValue, maxValue);
-            if (editedValue != value) {
-                value = editedValue;
-                changed = true;
-            }
-        }
-
-        int stepAmount = ImGui::GetIO().KeyCtrl ? stepFast : step;
-        ImGui::PushButtonRepeat(true);
-        ImGui::SameLine(0.0f, spacing);
-        if (ImGui::Button("-##step_down", ImVec2(buttonWidth, 0.0f))) {
-            int steppedValue = std::clamp<int>(value - stepAmount, minValue, maxValue);
-            if (steppedValue != value) {
-                value = steppedValue;
-                changed = true;
-            }
-        }
-        ImGui::SameLine(0.0f, spacing);
-        if (ImGui::Button("+##step_up", ImVec2(buttonWidth, 0.0f))) {
-            int steppedValue = std::clamp<int>(value + stepAmount, minValue, maxValue);
+            T steppedValue = std::clamp<T>(value + stepAmount, minValue, maxValue);
             if (steppedValue != value) {
                 value = steppedValue;
                 changed = true;
@@ -169,10 +117,20 @@ namespace demod {
         if (ImGui::BeginPopup("presets")) {
             float selectedValue = (float)value;
             drawHzPresetPopup((float)value, (float)minValue, (float)maxValue, presets, &selectedValue);
-            int newValue = std::clamp<int>((int)std::round(selectedValue), minValue, maxValue);
-            if (newValue != value) {
-                value = newValue;
-                changed = true;
+            if constexpr (std::is_same_v<T, int>) {
+                int newValue = std::clamp<int>((int)std::round(selectedValue), minValue, maxValue);
+                if (newValue != value) {
+                    value = newValue;
+                    changed = true;
+                }
+            }
+            else {
+                // Presets are exact integers within range; assign directly (no round) so merely
+                // opening the popup never perturbs a non-integer value.
+                if (selectedValue != value) {
+                    value = selectedValue;
+                    changed = true;
+                }
             }
             ImGui::EndPopup();
         }
