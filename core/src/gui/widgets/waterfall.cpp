@@ -608,8 +608,17 @@ namespace ImGui {
                         ImGui::Text("Bandwidth: %sHz", buf);
                         ImGui::Text("Bandwidth Locked: %s", _vfo->bandwidthLocked ? "Yes" : "No");
 
+                        // Hold buf_mtx while reading rawFFTs: this runs on the UI
+                        // thread, and without the lock the FFT worker (getFFTBuffer/
+                        // pushFFT) or onResize() can move currentFFTLine / reallocate
+                        // rawFFTs underneath us and produce an out-of-bounds read.
                         float strength, snr;
-                        if (calculateVFOSignalInfo(waterfallVisible ? &rawFFTs[currentFFTLine * rawFFTSize] : rawFFTs, _vfo, strength, snr)) {
+                        bool infoValid;
+                        {
+                            std::lock_guard<std::recursive_mutex> lck(buf_mtx);
+                            infoValid = calculateVFOSignalInfo(waterfallVisible ? &rawFFTs[currentFFTLine * rawFFTSize] : rawFFTs, _vfo, strength, snr);
+                        }
+                        if (infoValid) {
                             ImGui::Text("Strength: %0.1fdBFS", strength);
                             ImGui::Text("SNR: %0.1fdB", snr);
                         }
@@ -834,6 +843,15 @@ namespace ImGui {
     }
 
     void WaterFall::onResize() {
+        // buf_mtx must be held first: it guards rawFFTs, currentFFTLine and
+        // waterfallHeight, which the FFT worker reads/writes in getFFTBuffer()/
+        // pushFFT(). onResize() reallocates rawFFTs and rewrites those fields, so
+        // without this lock the worker can index the old (smaller) allocation with
+        // a currentFFTLine sized for the new waterfallHeight and read out of bounds
+        // (e.g. on SpyServer connect, when FFT frames arrive mid-relayout). It is a
+        // recursive_mutex and the other onResize() call sites already hold it, so
+        // re-locking there is a no-op. Lock order: buf_mtx -> latestFFTMtx -> smoothingBufMtx.
+        std::lock_guard<std::recursive_mutex> lck0(buf_mtx);
         std::lock_guard<std::recursive_mutex> lck(latestFFTMtx);
         std::lock_guard<std::mutex> lck2(smoothingBufMtx);
         // return if widget is too small
