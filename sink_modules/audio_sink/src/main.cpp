@@ -251,6 +251,17 @@ private:
         }
         catch (const std::exception& e) {
             flog::error("Could not open audio device {0}", e.what());
+            // Unwind any partially-opened stream: a failure past openStream()
+            // (startStream/stereoPacker.start) would otherwise leave the device
+            // open, and doStop() skips RtAudio teardown in null mode.
+            try {
+                if (audio.isStreamRunning()) { audio.stopStream(); }
+            }
+            catch (...) {}
+            try {
+                if (audio.isStreamOpen()) { audio.closeStream(); }
+            }
+            catch (...) {}
             // Fall back to draining the stream so the pipeline (and the
             // spectrum/waterfall) doesn't stall on the undrained sink output.
             startNullDrain();
