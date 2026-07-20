@@ -411,7 +411,9 @@ void MainWindow::draw() {
     // ImGui::BeginChild("TopBarChild", ImVec2(0, 49.0f * style::uiScale), false, ImGuiWindowFlags_HorizontalScrollbar);
     float topBarWidth = ImGui::GetWindowSize().x;
 
-    ImVec2 btnSize(30 * style::uiScale, 30 * style::uiScale);
+    // Whole-pixel icon quads — a fractional size (37.5px at 1.25x) blurs the
+    // toolbar icon textures no matter where they land.
+    ImVec2 btnSize((float)style::scale(30.0f), (float)style::scale(30.0f));
     int toolbarButtonPadding = style::scale(5.0f);
     ImGui::PushID(ImGui::GetID("sdrpp_menu_btn"));
     bool menuClicked = ImGui::ImageButton(icons::MENU, btnSize, ImVec2(0, 0), ImVec2(1, 1), toolbarButtonPadding, ImVec4(0, 0, 0, 0), textCol) || ImGui::IsKeyPressed(ImGuiKey_Menu, false);
@@ -558,9 +560,9 @@ void MainWindow::draw() {
     // ImGui::EndChild();
 
     // Logo button
-    ImGui::SetCursorPosX(ImGui::GetWindowSize().x - (48 * style::uiScale));
-    ImGui::SetCursorPosY(10.0f * style::uiScale);
-    if (ImGui::ImageButton(icons::LOGO, ImVec2(32 * style::uiScale, 32 * style::uiScale), ImVec2(0, 0), ImVec2(1, 1), 0)) {
+    ImGui::SetCursorPosX(ImGui::GetWindowSize().x - (float)style::scale(48.0f));
+    ImGui::SetCursorPosY((float)style::scale(10.0f));
+    if (ImGui::ImageButton(icons::LOGO, ImVec2((float)style::scale(32.0f), (float)style::scale(32.0f)), ImVec2(0, 0), ImVec2(1, 1), 0)) {
         showCredits = true;
     }
 
