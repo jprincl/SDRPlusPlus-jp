@@ -125,11 +125,14 @@ namespace displaymenu {
         uiScaleFactors.define(0.50f, "50%",  0.50f);
         uiScaleFactors.define(0.75f, "75%",  0.75f);
         uiScaleFactors.define(1.00f, "100%", 1.00f);
+        uiScaleFactors.define(1.25f, "125%", 1.25f);
         uiScaleFactors.define(1.50f, "150%", 1.50f);
+        uiScaleFactors.define(1.75f, "175%", 1.75f);
         uiScaleFactors.define(2.00f, "200%", 2.00f);
+        // valueId() throws on unknown values (it never returns negative), so a
+        // hand-edited config must be checked first or it aborts startup.
         float factor = core::configManager.conf["uiScaleFactor"];
-        uiScaleFactorId = uiScaleFactors.valueId(factor);
-        if (uiScaleFactorId < 0) { uiScaleFactorId = uiScaleFactors.valueId(1.00f); }
+        uiScaleFactorId = uiScaleFactors.valueExists(factor) ? uiScaleFactors.valueId(factor) : uiScaleFactors.valueId(1.00f);
     }
 
     void setWaterfallShown(bool shown) {
@@ -206,8 +209,22 @@ namespace displaymenu {
 
         ImGui::LeftLabel("UI Scale Adjustment");
         ImGui::FillWidth();
-        if (ImGui::Combo("##sdrpp_ui_scale", &uiScaleFactorId, uiScaleFactors.txt)) {
-            backend::setUserScaleFactor(uiScaleFactors[uiScaleFactorId]);
+        // Factors that would clamp at the 1.0 effective-scale floor on this
+        // display (detected DPI scale x factor < 1) silently do nothing, so
+        // show them disabled instead of pretending they apply. Evaluated per
+        // frame because the detected scale follows the current monitor.
+        float detectedScale = backend::getContentScale();
+        if (ImGui::BeginCombo("##sdrpp_ui_scale", uiScaleFactors.name(uiScaleFactorId).c_str())) {
+            for (int i = 0; i < uiScaleFactors.size(); i++) {
+                bool dead = (detectedScale * uiScaleFactors.value(i)) < 0.999f;
+                bool selected = (i == uiScaleFactorId);
+                if (ImGui::Selectable(uiScaleFactors.name(i).c_str(), selected, dead ? ImGuiSelectableFlags_Disabled : 0) && !dead) {
+                    uiScaleFactorId = i;
+                    backend::setUserScaleFactor(uiScaleFactors.value(i));
+                }
+                if (selected) { ImGui::SetItemDefaultFocus(); }
+            }
+            ImGui::EndCombo();
         }
 
         ImGui::LeftLabelFill("FFT Framerate");
