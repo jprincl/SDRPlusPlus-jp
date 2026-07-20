@@ -37,10 +37,14 @@ void FrequencySelect::init() {
 }
 
 void FrequencySelect::onPosChange() {
+    // Round the glyph metrics (fractional at fractional UI scales) so this
+    // computation stays identical to getWidth() — both must produce the same
+    // cachedWidth_ or the top-bar layout shifts whenever the other one runs.
     ImVec2 digitSz = ImGui::CalcTextSize("0");
     ImVec2 commaSz = ImGui::CalcTextSize(".");
-    int digitHeight = digitSz.y;
-    int digitWidth = digitSz.x;
+    int digitHeight = (int)roundf(digitSz.y);
+    int digitWidth = (int)roundf(digitSz.x);
+    int commaWidth = (int)roundf(commaSz.x);
     int commaOffset = 0;
     for (int i = firstDigit; i < 12; i++) {
         int pos = i - firstDigit;
@@ -51,12 +55,12 @@ void FrequencySelect::onPosChange() {
         digitBottomMaxs[i] = ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset + digitWidth, widgetPos.y + digitHeight);
 
         if ((i + 1) % 3 == 0 && i < 11) {
-            commaOffset += commaSz.x;
+            commaOffset += commaWidth;
         }
     }
     // commaOffset now holds the total accumulated comma width — reuse it for the
     // width cache rather than recomputing with a separate PushFont/CalcTextSize pair.
-    cachedWidth_ = (12 - firstDigit) * digitWidth + commaOffset + 17.0f * style::uiScale;
+    cachedWidth_ = (12 - firstDigit) * digitWidth + commaOffset + style::dp(17.0f);
 }
 
 void FrequencySelect::incrementDigit(int i) {
@@ -113,14 +117,15 @@ float FrequencySelect::getWidth() {
     uint64_t currentScaleEpoch = style::scaleEpoch();
     if (currentScaleEpoch != lastScaleEpoch || cachedWidth_ == 0.0f) {
         ImGui::PushFont(style::bigFont);
-        float digitWidth = ImGui::CalcTextSize("0").x;
-        float commaWidth = ImGui::CalcTextSize(".").x;
+        // Same rounded metrics as onPosChange() — the two must agree exactly.
+        int digitWidth = (int)roundf(ImGui::CalcTextSize("0").x);
+        int commaWidth = (int)roundf(ImGui::CalcTextSize(".").x);
         ImGui::PopFont();
         int commaCount = 0;
         for (int i = firstDigit; i < 11; i++) {
             if ((i + 1) % 3 == 0) { commaCount++; }
         }
-        cachedWidth_ = (12 - firstDigit) * digitWidth + commaCount * commaWidth + 17.0f * style::uiScale;
+        cachedWidth_ = (12 - firstDigit) * digitWidth + commaCount * commaWidth + style::dp(17.0f);
         // Don't update lastScaleEpoch here — draw() still needs to see the
         // change to recompute the digit position arrays.
     }
@@ -136,7 +141,10 @@ void FrequencySelect::draw() {
     ImGui::PushFont(style::bigFont);
     ImVec2 digitSz = ImGui::CalcTextSize("0");
     ImVec2 commaSz = ImGui::CalcTextSize(".");
-    widgetPos.y = window->Pos.y + cursorPos.y - ((digitSz.y / 2.0f) - ceilf(15 * style::uiScale) - 5);
+    // Snap the origin to whole pixels — a fractional baseline blurs the big
+    // digits at fractional UI scales.
+    widgetPos.x = roundf(widgetPos.x);
+    widgetPos.y = roundf(window->Pos.y + cursorPos.y - ((digitSz.y / 2.0f) - ceilf(15 * style::uiScale) - 5));
 
     // Recompute the first visible digit only when maxFreq or limitFreq changes
     bool firstDigitChanged = false;
@@ -169,12 +177,15 @@ void FrequencySelect::draw() {
     ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
 
     
-    int digitWidth = digitSz.x;
+    // Same rounded metrics as onPosChange() so drawn digits line up with the
+    // cached hitboxes.
+    int digitWidth = (int)roundf(digitSz.x);
+    int commaWidth = (int)roundf(commaSz.x);
     int commaOffset = 0;
-    float textOffset = 11.0f * style::uiScale;
+    float textOffset = (float)style::scale(11.0f);
     bool zeros = true;
 
-    ImGui::ItemSize(ImRect(digitTopMins[firstDigit], ImVec2(digitBottomMaxs[11].x + 15, digitBottomMaxs[11].y)));
+    ImGui::ItemSize(ImRect(digitTopMins[firstDigit], ImVec2(digitBottomMaxs[11].x + style::dp(17.0f), digitBottomMaxs[11].y)));
 
     for (int i = firstDigit; i < 12; i++) {
         if (digits[i] != 0) {
@@ -185,7 +196,7 @@ void FrequencySelect::draw() {
         window->DrawList->AddText(ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset, widgetPos.y),
                                   zeros ? disabledColor : textColor, buf);
         if ((i + 1) % 3 == 0 && i < 11) {
-            commaOffset += commaSz.x;
+            commaOffset += commaWidth;
             window->DrawList->AddText(ImVec2(widgetPos.x + (pos * digitWidth) + commaOffset + textOffset, widgetPos.y),
                                       zeros ? disabledColor : textColor, ".");
         }
@@ -354,7 +365,7 @@ void FrequencySelect::draw() {
 
     ImGui::PopFont();
 
-    ImGui::SetCursorPosX(digitBottomMaxs[11].x + (17.0f * style::uiScale));
+    ImGui::SetCursorPosX(digitBottomMaxs[11].x + (float)style::scale(17.0f));
 
     drawKeypad();
 }
