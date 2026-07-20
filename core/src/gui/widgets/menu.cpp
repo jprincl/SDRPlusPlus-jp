@@ -45,7 +45,13 @@ bool Menu::draw(bool updateStates) {
 
     ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
 
-    for (MenuOption_t& opt : order) {
+    // Index-based iteration: a menu's draw handler may create a module
+    // instance (Module Manager "+"), whose constructor registers a menu entry
+    // and thus appends to `order` mid-loop. Re-evaluating size()/order[i]
+    // every pass keeps the loop valid across the vector reallocation, where
+    // a range-for's cached iterators would dangle (issue #816).
+    for (size_t i = 0; i < order.size(); i++) {
+        MenuOption_t& opt = order[i];
         rawId++;
         if (items.find(opt.name) == items.end()) {
             continue;
