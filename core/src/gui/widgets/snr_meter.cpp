@@ -54,7 +54,9 @@ namespace ImGui {
         ImGuiWindow* window = GetCurrentWindow();
         ImGuiStyle& style = GImGui->Style;
 
-        ImVec2 min = window->DC.CursorPos;
+        // The meter is placed via a float-computed SetCursorPosX, so snap the
+        // origin — all bar/tick geometry below assumes whole-pixel offsets.
+        ImVec2 min = ImVec2(floorf(window->DC.CursorPos.x), floorf(window->DC.CursorPos.y));
         ImVec2 size = CalcItemSize(size_arg, CalcItemWidth(), 26);
         ImRect bb(min, min + size);
 
@@ -91,7 +93,10 @@ namespace ImGui {
         float it = barWidth / 9;
         char buf[32];
 
-        float barHeight = style::dp(10.0f);
+        // Whole pixels: the bar fill bottom, the axis baseline at barHeight-1
+        // and the tick ends must land on the same pixel row at fractional
+        // scales (dp(10) would be 12.5 at 1.25x).
+        float barHeight = (float)style::scale(10.0f);
 
         // Level bar and peak hold marker
         if (std::isfinite(level)) {
@@ -104,8 +109,8 @@ namespace ImGui {
             window->DrawList->AddRectFilled(min + ImVec2(px, 1), min + ImVec2(px + std::max(2.0f, style::dp(2.0f)), barHeight), IM_COL32(255, 255, 0, 255));
         }
 
-        window->DrawList->AddLine(min, min + ImVec2(0, barHeight - 1), text, style::uiScale);
-        window->DrawList->AddLine(min + ImVec2(0, barHeight - 1), min + ImVec2(barWidth + 1, barHeight - 1), text, style::uiScale);
+        window->DrawList->AddLine(min, min + ImVec2(0, barHeight - 1), text, style::lineWidth());
+        window->DrawList->AddLine(min + ImVec2(0, barHeight - 1), min + ImVec2(barWidth + 1, barHeight - 1), text, style::lineWidth());
 
         // Which ticks get a numeric label: all of them at full density, else
         // every other one — odd ticks in dBFS mode (…-20, 0), even ticks in
@@ -141,15 +146,15 @@ namespace ImGui {
         for (int i = 0; i < 10; i++) {
             // Sparse mode draws the unlabeled 10 dB ticks in between shorter.
             bool labeled = tickLabeled(i);
-            float tickBottom = labeled ? style::dp(15.0f) : style::dp(12.5f);
-            window->DrawList->AddLine(min + ImVec2(roundf((float)i * it), barHeight - 1), min + ImVec2(roundf((float)i * it), tickBottom - 1), text, style::uiScale);
+            float tickBottom = (float)style::scale(labeled ? 15.0f : 12.5f);
+            window->DrawList->AddLine(min + ImVec2(roundf((float)i * it), barHeight - 1), min + ImVec2(roundf((float)i * it), tickBottom - 1), text, style::lineWidth());
             if (!labeled) { continue; }
             if (i == firstLabelIdx && skipFirstLabel) { continue; }
             sprintf(buf, "%d", tickLabelValue(i));
             ImVec2 sz = ImGui::CalcTextSize(buf);
             // Center the label on the tick, but keep the first one inside the widget
             float labelX = std::max(roundf(((float)i * it) - (sz.x / 2.0f)) + 1, 0.0f);
-            window->DrawList->AddText(min + ImVec2(labelX, style::dp(16.0f)), text, buf);
+            window->DrawList->AddText(min + ImVec2(labelX, (float)style::scale(16.0f)), text, buf);
         }
 
         // Numeric readout: peak level on top, SNR below. Hidden when the widget

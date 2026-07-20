@@ -81,7 +81,7 @@ bool Menu::draw(bool updateStates) {
                 ImGui::SetCursorPos(pos);
             }
             style::endDisabled();
-            window->DrawList->AddRect(posMin, posMax, textColor, 0.0f, 0, style::uiScale);
+            window->DrawList->AddRect(posMin, posMax, textColor, 0.0f, 0, style::lineWidth());
         }
         displayedCount++;
 
@@ -209,7 +209,7 @@ bool Menu::draw(bool updateStates) {
             ImGui::SetCursorPos(pos);
         }
         style::endDisabled();
-        window->DrawList->AddRect(posMin, posMax, textColor, 0.0f, 0, style::uiScale);
+        window->DrawList->AddRect(posMin, posMax, textColor, 0.0f, 0, style::lineWidth());
     }
 
     if (!draggedMenuName.empty()) {
