@@ -29,6 +29,12 @@ namespace style {
         return (int)std::round(dp(logical));
     }
 
+    // DrawList stroke thickness: whole pixels only, so 1px lines stay crisp at
+    // fractional UI scales instead of antialiasing across a half pixel.
+    inline float lineWidth(float logical = 1.0f) {
+        return std::max(1.0f, std::round(dp(logical)));
+    }
+
     inline int scaleOrPhysical(float logicalOrPhysical, float physicalThresholdLogical) {
         if (uiScale > 1.0f && logicalOrPhysical >= dp(physicalThresholdLogical)) {
             return (int)std::round(logicalOrPhysical);

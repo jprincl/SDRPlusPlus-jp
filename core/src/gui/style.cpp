@@ -66,10 +66,13 @@ namespace style {
         hugeBuilder.AddText("SDR++ iak");
         hugeBuilder.BuildRanges(&hugeRanges);
         
-        // Add bigger fonts for frequency select and title
-        baseFont = fonts->AddFontFromFileTTF(((std::string)(resDir + "/fonts/Roboto-Medium.ttf")).c_str(), 16.0f * uiScale, NULL, baseRanges.Data);
-        bigFont = fonts->AddFontFromFileTTF(((std::string)(resDir + "/fonts/Roboto-Medium.ttf")).c_str(), 45.0f * uiScale, NULL, bigRanges.Data);
-        hugeFont = fonts->AddFontFromFileTTF(((std::string)(resDir + "/fonts/Roboto-Medium.ttf")).c_str(), 128.0f * uiScale, NULL, hugeRanges.Data);
+        // Add bigger fonts for frequency select and title. Rasterize at
+        // whole-pixel sizes: fractional scales (1.25x, 1.75x, ...) would
+        // otherwise yield fractional glyph metrics that leak into every layout
+        // computed from CalcTextSize().
+        baseFont = fonts->AddFontFromFileTTF(((std::string)(resDir + "/fonts/Roboto-Medium.ttf")).c_str(), roundf(16.0f * uiScale), NULL, baseRanges.Data);
+        bigFont = fonts->AddFontFromFileTTF(((std::string)(resDir + "/fonts/Roboto-Medium.ttf")).c_str(), roundf(45.0f * uiScale), NULL, bigRanges.Data);
+        hugeFont = fonts->AddFontFromFileTTF(((std::string)(resDir + "/fonts/Roboto-Medium.ttf")).c_str(), roundf(128.0f * uiScale), NULL, hugeRanges.Data);
 
         return true;
     }
