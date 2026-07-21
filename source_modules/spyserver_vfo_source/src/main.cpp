@@ -385,6 +385,18 @@ private:
             SmGui::Text("Status:");
             SmGui::SameLine();
             SmGui::TextColoredF(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%s)", svfoDeviceTypesStr[_this->client->devInfo.DeviceType]);
+
+            // DIAGNOSTIC: what the server last reported after our requests.
+            // Remove once the non-center tuning bug is tracked down.
+            SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "SYNC: Device=%u IQ=%u FFT=%u",
+                _this->client->lastSync.DeviceCenterFrequency,
+                _this->client->lastSync.IQCenterFrequency,
+                _this->client->lastSync.FFTCenterFrequency);
+            SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "SYNC: IQRange=[%u..%u] FFTRange=[%u..%u]",
+                _this->client->lastSync.MinimumIQCenterFrequency,
+                _this->client->lastSync.MaximumIQCenterFrequency,
+                _this->client->lastSync.MinimumFFTCenterFrequency,
+                _this->client->lastSync.MaximumFFTCenterFrequency);
         }
         else {
             SmGui::Text("Status:");
