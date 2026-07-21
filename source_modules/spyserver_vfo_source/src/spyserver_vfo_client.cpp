@@ -71,6 +71,7 @@ namespace spyservervfo {
     }
 
     void SpyServerVFOClientClass::sendCommand(uint32_t command, void* data, int len) {
+        std::lock_guard lck(writeMtx);
         SpyServerCommandHeader* hdr = (SpyServerCommandHeader*)writeBuf;
         hdr->CommandType = command;
         hdr->BodySize = len;
