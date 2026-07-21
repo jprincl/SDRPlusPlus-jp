@@ -52,6 +52,7 @@ namespace spyservervfo {
 
         uint8_t* readBuf;
         uint8_t* writeBuf;
+        std::mutex writeMtx; // guards writeBuf + the command write - setSetting() can now be called from more than one thread
 
         bool deviceInfoAvailable = false;
         std::mutex deviceInfoMtx;
