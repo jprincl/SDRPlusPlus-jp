@@ -40,6 +40,10 @@ double VFOManager::VFO::getOffset() {
     return wtfVFO->generalOffset;
 }
 
+double VFOManager::VFO::getCenterOffset() {
+    return wtfVFO->centerOffset;
+}
+
 void VFOManager::VFO::setCenterOffset(double offset) {
     wtfVFO->setCenterOffset(offset);
     dspVFO->setOffset(offset);
@@ -135,6 +139,13 @@ double VFOManager::getOffset(std::string name) {
         return 0;
     }
     return vfos[name]->getOffset();
+}
+
+double VFOManager::getCenterOffset(std::string name) {
+    if (vfos.find(name) == vfos.end()) {
+        return 0;
+    }
+    return vfos[name]->getCenterOffset();
 }
 
 void VFOManager::setDspOffset(std::string name, double offset) {
