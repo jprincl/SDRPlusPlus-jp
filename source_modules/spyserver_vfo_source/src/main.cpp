@@ -500,17 +500,22 @@ private:
                 iqRatesTxt += getBandwdithScaled(iqSr);
                 iqRatesTxt += '\0';
 
-                // MaximumBandwidth is the analog front-end's alias-free
-                // limit, which only binds at full (undecimated) rate. Once
-                // actually decimated, the digital decimation filter (much
-                // sharper than the analog front-end) is the real
-                // constraint, and its Nyquist limit is just
-                // MaximumSampleRate/2^i - NOT that same analog fraction
-                // shrunk again at every stage. Take whichever is smaller.
-                double fftSr = std::min((double)client->devInfo.MaximumBandwidth,
-                                         (double)client->devInfo.MaximumSampleRate / ((double)(1 << i)));
-                fftRates.push_back(fftSr);
-                fftRatesTxt += getBandwdithScaled(fftSr);
+                // Empirically confirmed (measured against real stations at
+                // several decimation stages): the analog front-end's
+                // alias-free fraction (MaximumBandwidth/MaximumSampleRate)
+                // applies proportionally at every decimation stage, not
+                // just the undecimated one - my earlier "only at full
+                // rate" theory was wrong. So the value actually used for
+                // display-bandwidth/click-math scaling is the simple
+                // proportional MaximumBandwidth/2^i. The dropdown *label*
+                // still shows the raw MaximumSampleRate/2^i though - that's
+                // the recognizable "sample rate" figure, consistent with
+                // how the IQ dropdown reads, and matches what SDR#/spyserver
+                // documentation refers to (e.g. "768 ksps").
+                double fftSrLabel = (double)client->devInfo.MaximumSampleRate / ((double)(1 << i));
+                double fftSrActual = (double)client->devInfo.MaximumBandwidth / ((double)(1 << i));
+                fftRates.push_back(fftSrActual);
+                fftRatesTxt += getBandwdithScaled(fftSrLabel);
                 fftRatesTxt += '\0';
             }
 
