@@ -199,13 +199,19 @@ private:
         // switch it off and feed the waterfall from the server's FFT
         // stream instead.
         core::setInputSampleRate(_this->iqSampleRate);
-        sigpath::iqFrontEnd.setExternalFFTMode(true);
-        core::setDisplayBandwidth(_this->fftSampleRate);
 
         // Force off in case it was left non-1 from a previous source - the
         // control is hidden for us now, so the user has no way to fix this
-        // themselves if it's stale.
+        // themselves if it's stale. MUST happen before setDisplayBandwidth()
+        // below: setDecimation() internally re-triggers
+        // core::setInputSampleRate() itself, which resets the waterfall
+        // back to the narrow IQ span - doing this after would silently
+        // undo the widening, same failure mode as the old menuSelected()
+        // bug.
         sigpath::iqFrontEnd.setDecimation(1);
+
+        sigpath::iqFrontEnd.setExternalFFTMode(true);
+        core::setDisplayBandwidth(_this->fftSampleRate);
 
         // No tuning-mode forcing needed (see tune() and the poll thread
         // below for why): this now works natively in both "normal" tuning
