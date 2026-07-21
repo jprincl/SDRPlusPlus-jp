@@ -9,6 +9,9 @@
 #include <config.h>
 #include <gui/widgets/stepped_slider.h>
 #include <gui/smgui.h>
+#include <thread>
+#include <atomic>
+#include <chrono>
 
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -124,7 +127,6 @@ private:
         // waiting for external pushes if the source gets swapped away
         // without going through stop() first.
         sigpath::iqFrontEnd.setExternalFFTMode(false);
-        gui::mainWindow.setTuningMode(_this->savedTuningMode);
         gui::mainWindow.playButtonLocked = false;
         flog::info("SpyServerVFOSourceModule '{0}': Menu Deselect!", _this->name);
     }
@@ -194,6 +196,31 @@ private:
         _this->savedTuningMode = gui::mainWindow.getTuningMode();
         gui::mainWindow.setTuningMode(tuner::TUNER_MODE_CENTER);
 
+        // Center tuning normally also forces single-click-only VFO
+        // movement (no continuous drag) to avoid retuning on every single
+        // rendered frame while dragging. We want the drag back - we just
+        // throttle how often it actually hits the network instead (see the
+        // retune thread below and tune()).
+        gui::waterfall.VFOMoveSingleClick = false;
+
+        // Background thread: flushes the latest requested frequency to the
+        // server at a fixed, gentle rate, no matter how often tune() gets
+        // called (up to once per rendered frame while dragging). This is
+        // what makes dragging feel close to free: tune() itself is now
+        // just a cheap variable write, never a direct network call.
+        _this->tuneThreadRunning = true;
+        _this->tuneThread = std::thread([_this]() {
+            using namespace std::chrono_literals;
+            while (_this->tuneThreadRunning) {
+                std::this_thread::sleep_for(80ms);
+                if (_this->tuneDirty.exchange(false) && _this->client) {
+                    double f = _this->pendingTuneFreq;
+                    _this->client->setSetting(SPYSERVER_SETTING_IQ_FREQUENCY, f);
+                    _this->client->setSetting(SPYSERVER_SETTING_FFT_FREQUENCY, f);
+                }
+            }
+        });
+
         _this->running = true;
         flog::info("SpyServerVFOSourceModule '{0}': Start!", _this->name);
     }
@@ -201,6 +228,9 @@ private:
     static void stop(void* ctx) {
         SpyServerVFOSourceModule* _this = (SpyServerVFOSourceModule*)ctx;
         if (!_this->running) { return; }
+
+        _this->tuneThreadRunning = false;
+        if (_this->tuneThread.joinable()) { _this->tuneThread.join(); }
 
         sigpath::iqFrontEnd.setExternalFFTMode(false);
         gui::mainWindow.setTuningMode(_this->savedTuningMode);
@@ -213,12 +243,11 @@ private:
 
     static void tune(double freq, void* ctx) {
         SpyServerVFOSourceModule* _this = (SpyServerVFOSourceModule*)ctx;
-        if (_this->running && _this->client) {
-            _this->client->setSetting(SPYSERVER_SETTING_IQ_FREQUENCY, freq);
-            _this->client->setSetting(SPYSERVER_SETTING_FFT_FREQUENCY, freq);
-        }
         _this->freq = freq;
-        flog::info("SpyServerVFOSourceModule '{0}': Tune: {1}!", _this->name, freq);
+        if (_this->running) {
+            _this->pendingTuneFreq = freq;
+            _this->tuneDirty = true;
+        }
     }
 
     static void menuHandler(void* ctx) {
@@ -324,6 +353,10 @@ private:
             SmGui::Text("Status:");
             SmGui::SameLine();
             SmGui::TextColoredF(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%s)", svfoDeviceTypesStr[_this->client->devInfo.DeviceType]);
+
+            if (gui::mainWindow.getTuningMode() != tuner::TUNER_MODE_CENTER) {
+                SmGui::TextColoredF(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Enable \"Center Tuning\" (toolbar) for correct tuning");
+            }
         }
         else {
             SmGui::Text("Status:");
@@ -424,6 +457,14 @@ private:
     int fftDbRange = 100;
 
     int savedTuningMode = 0; // tuner::TUNER_MODE_NORMAL
+
+    // Throttled retune: tune() just writes here; the background thread
+    // (started in start(), joined in stop()) flushes to the network at a
+    // fixed gentle rate. See start()/stop()/tune() for the full picture.
+    std::atomic<double> pendingTuneFreq{0.0};
+    std::atomic<bool> tuneDirty{false};
+    std::atomic<bool> tuneThreadRunning{false};
+    std::thread tuneThread;
 
     uint32_t gain = 0;
 
