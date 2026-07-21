@@ -12,6 +12,8 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <mutex>
+#include <condition_variable>
 
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -53,6 +55,11 @@ const int svfoIqFormatsBitCount[] = {
 // SDR++'s locally configured FFT size - IQFrontEnd::pushExternalFFT()
 // nearest-neighbour resamples if they differ.
 #define SVFO_FFT_PIXELS 2048
+
+// Max real retunes/sec sent to the server while dragging the VFO. A single
+// click/tap is always sent right away regardless of this - it only caps
+// the rate during a continuous drag (see the retune thread in start()).
+#define SVFO_MAX_RETUNE_RATE 8
 
 ConfigManager svfoConfig;
 
@@ -204,19 +211,39 @@ private:
         gui::waterfall.VFOMoveSingleClick = false;
 
         // Background thread: flushes the latest requested frequency to the
-        // server at a fixed, gentle rate, no matter how often tune() gets
-        // called (up to once per rendered frame while dragging). This is
-        // what makes dragging feel close to free: tune() itself is now
-        // just a cheap variable write, never a direct network call.
+        // server, woken instantly by tune() rather than polling - so a
+        // single click/tune is sent right away. During a drag (many tune()
+        // calls in quick succession) it self-limits to SVFO_MAX_RETUNE_RATE
+        // sends/sec, always using the latest position, never queuing stale
+        // ones. tune() itself stays a cheap variable write either way.
         _this->tuneThreadRunning = true;
         _this->tuneThread = std::thread([_this]() {
             using namespace std::chrono_literals;
+            const auto minInterval = std::chrono::milliseconds(1000 / SVFO_MAX_RETUNE_RATE);
+            auto lastSent = std::chrono::steady_clock::now() - minInterval;
+            std::unique_lock lck(_this->tuneMtx);
             while (_this->tuneThreadRunning) {
-                std::this_thread::sleep_for(80ms);
+                _this->tuneCv.wait(lck, [_this]() { return _this->tuneDirty.load() || !_this->tuneThreadRunning; });
+                if (!_this->tuneThreadRunning) { break; }
+
+                auto now = std::chrono::steady_clock::now();
+                auto wait = minInterval - (now - lastSent);
+                if (wait > std::chrono::milliseconds(0)) {
+                    // Still within the minimum interval since the last send -
+                    // wait out the remainder. tune() may update
+                    // pendingTuneFreq again in the meantime; that's fine,
+                    // we'll just pick up the newest value once we wake.
+                    _this->tuneCv.wait_for(lck, wait);
+                    if (!_this->tuneThreadRunning) { break; }
+                }
+
                 if (_this->tuneDirty.exchange(false) && _this->client) {
                     double f = _this->pendingTuneFreq;
+                    lck.unlock();
                     _this->client->setSetting(SPYSERVER_SETTING_IQ_FREQUENCY, f);
                     _this->client->setSetting(SPYSERVER_SETTING_FFT_FREQUENCY, f);
+                    lck.lock();
+                    lastSent = std::chrono::steady_clock::now();
                 }
             }
         });
@@ -230,6 +257,7 @@ private:
         if (!_this->running) { return; }
 
         _this->tuneThreadRunning = false;
+        _this->tuneCv.notify_all();
         if (_this->tuneThread.joinable()) { _this->tuneThread.join(); }
 
         sigpath::iqFrontEnd.setExternalFFTMode(false);
@@ -247,6 +275,7 @@ private:
         if (_this->running) {
             _this->pendingTuneFreq = freq;
             _this->tuneDirty = true;
+            _this->tuneCv.notify_one();
         }
     }
 
@@ -465,6 +494,8 @@ private:
     std::atomic<bool> tuneDirty{false};
     std::atomic<bool> tuneThreadRunning{false};
     std::thread tuneThread;
+    std::mutex tuneMtx;
+    std::condition_variable tuneCv;
 
     uint32_t gain = 0;
 
