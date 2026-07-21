@@ -14,6 +14,12 @@ public:
 
         void setOffset(double offset);
         double getOffset();
+        // The reference-adjusted offset actually fed to the DSP mixer in
+        // the normal (non-double-shifted) case: equals getOffset() for
+        // REF_CENTER modes (AM, NFM, WFM...), but differs by half the VFO
+        // bandwidth for REF_LOWER/REF_UPPER modes (USB, LSB...), since
+        // their passband isn't centered on the tuned/clicked frequency.
+        double getCenterOffset();
         void setCenterOffset(double offset);
 
         // Sets the DSP mixer's own offset directly, independent of the
@@ -53,6 +59,7 @@ public:
 
     void setOffset(std::string name, double offset);
     double getOffset(std::string name);
+    double getCenterOffset(std::string name);
     void setDspOffset(std::string name, double offset);
     void setCenterOffset(std::string name, double offset);
     void setBandwidth(std::string name, double bandwidth, bool updateWaterfall = true);
