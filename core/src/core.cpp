@@ -371,6 +371,7 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.conf["modules"][modCount++] = "rtl_tcp_source.so";
     core::configManager.conf["modules"][modCount++] = "sdrpp_server_source.so";
     core::configManager.conf["modules"][modCount++] = "spyserver_source.so";
+    core::configManager.conf["modules"][modCount++] = "spyserver_vfo_source.so";
     core::configManager.conf["modules"][modCount++] = "kiwisdr_source.so";
 
     core::configManager.conf["modules"][modCount++] = "network_sink.so";
