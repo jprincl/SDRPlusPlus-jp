@@ -169,25 +169,6 @@ namespace spyservervfo {
             }
             _this->deviceInfoCnd.notify_all();
         }
-        else if (mtype == SPYSERVER_MSG_TYPE_CLIENT_SYNC) {
-            SpyServerClientSync* sync = (SpyServerClientSync*)_this->readBuf;
-            // DIAGNOSTIC: log every field any time the server's reported
-            // state actually changes. This tells us what the server did in
-            // response to our last IQ_FREQUENCY/FFT_FREQUENCY request -
-            // e.g. whether it silently clamped it to
-            // Min/MaximumIQCenterFrequency, or moved DeviceCenterFrequency
-            // (a real hardware retune) instead of just doing a cheap
-            // digital shift. Remove once the non-center tuning bug is
-            // tracked down.
-            bool changed = memcmp(&_this->lastSync, sync, sizeof(SpyServerClientSync)) != 0;
-            _this->lastSync = *sync;
-            if (changed) {
-                flog::info("SYNC: DeviceCenter={0} IQCenter={1} FFTCenter={2} IQRange=[{3}..{4}] FFTRange=[{5}..{6}]",
-                       sync->DeviceCenterFrequency, sync->IQCenterFrequency, sync->FFTCenterFrequency,
-                       sync->MinimumIQCenterFrequency, sync->MaximumIQCenterFrequency,
-                       sync->MinimumFFTCenterFrequency, sync->MaximumFFTCenterFrequency);
-            }
-        }
         else if (mtype == SPYSERVER_MSG_TYPE_UINT8_IQ) {
             int sampCount = _this->receivedHeader.BodySize / (sizeof(uint8_t) * 2);
             float gain = pow(10, (double)mflags / 20.0);
