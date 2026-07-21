@@ -26,6 +26,7 @@
 #include <android_backend.h>
 #endif
 #include <filesystem>
+#include <utils/executable_path.h>
 #include <signal_path/source.h>
 #include <gui/dialogs/loading_screen.h>
 #include <gui/colormaps.h>
@@ -66,10 +67,6 @@ void MainWindow::init() {
     std::string modulesDir = core::getModulesDirectory();
     std::string resourcesDir = core::getResourcesDirectory();
     core::configManager.release();
-
-    // Assert that directories are absolute
-    modulesDir = std::filesystem::absolute(modulesDir).string();
-    resourcesDir = std::filesystem::absolute(resourcesDir).string();
 
     // Load menu elements
     gui::menu.order.clear();
@@ -148,10 +145,14 @@ void MainWindow::init() {
     auto modList = core::configManager.conf["moduleInstances"].items();
     core::configManager.release();
 
-    // Load additional modules specified through config
+    // Load additional modules specified through config. Relative paths are
+    // interpreted relative to the executable's directory, like the module and
+    // resource directories.
     for (auto const& path : modules) {
 #ifndef __ANDROID__
-        std::string apath = std::filesystem::absolute(path).string();
+        std::filesystem::path modPath(path);
+        if (!modPath.is_absolute()) { modPath = core::getExecutableDirectory() / modPath; }
+        std::string apath = modPath.lexically_normal().string();
         flog::info("Loading {0}", apath);
         LoadingScreen::show("Loading " + std::filesystem::path(path).filename().string());
         core::moduleManager.loadModule(apath);

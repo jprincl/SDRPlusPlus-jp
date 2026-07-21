@@ -27,6 +27,8 @@
 #include <Windows.h>
 #endif
 
+#include <utils/executable_path.h>
+
 #ifndef INSTALL_PREFIX
 #ifdef __APPLE__
 #define INSTALL_PREFIX "/usr/local"
@@ -59,13 +61,23 @@ namespace core {
         flog::info("New DSP samplerate: {0} (source samplerate is {1})", effectiveSr, samplerate);
     }
 
+    // Relative paths from the config (e.g. "./modules" on Windows, "../Plugins"
+    // in the MacOS bundle) are interpreted relative to the executable's
+    // directory, not the working directory, so the app behaves the same no
+    // matter where it is launched from.
+    static std::string resolveConfigPath(const std::string& path) {
+        std::filesystem::path p(path);
+        if (!p.is_absolute()) { p = getExecutableDirectory() / p; }
+        return p.lexically_normal().string();
+    }
+
     std::string getModulesDirectory() {
 #if defined(__linux__) && defined(BUILD_APPIMAGE)
         if (const char* appdir = getenv("APPDIR")) {
             return std::string(appdir) + "/usr/lib/sdrpp-iak/plugins";
         }
 #endif
-        return core::configManager.conf["modulesDirectory"];
+        return resolveConfigPath(core::configManager.conf["modulesDirectory"]);
     }
 
     std::string getResourcesDirectory() {
@@ -74,19 +86,19 @@ namespace core {
             return std::string(appdir) + "/usr/share/sdrpp-iak";
         }
 #endif
-        return core::configManager.conf["resourcesDirectory"];
+        return resolveConfigPath(core::configManager.conf["resourcesDirectory"]);
     }
 };
 
 // main
 int sdrpp_main(int argc, char* argv[]) {
-    flog::info("SDR++ iak v" VERSION_STR);
-
-#ifdef IS_MACOS_BUNDLE
-    // If this is a MacOS .app, CD to the correct directory
-    auto execPath = std::filesystem::absolute(argv[0]);
-    chdir(execPath.parent_path().string().c_str());
+#ifdef _WIN32
+    // The UTF-8 activeCodePage manifest makes narrow strings UTF-8 process-wide;
+    // switch the console codepage so log output renders correctly on legacy conhost.
+    SetConsoleOutputCP(CP_UTF8);
 #endif
+
+    flog::info("SDR++ iak v" VERSION_STR);
 
     // Define command line options and parse arguments
     core::args.defineAll();
@@ -432,8 +444,7 @@ int sdrpp_main(int argc, char* argv[]) {
     json bandColors = core::configManager.conf["bandColors"];
     core::configManager.release();
 
-    // Assert that the resource directory is absolute and check existence
-    resDir = std::filesystem::absolute(resDir).string();
+    // Check that the resource directory exists
     if (!std::filesystem::is_directory(resDir)) {
         flog::error("Resource directory doesn't exist! Please make sure that you've configured it correctly in config.json (check readme for details)");
         return 1;

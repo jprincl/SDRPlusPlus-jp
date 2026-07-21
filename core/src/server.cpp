@@ -281,7 +281,6 @@ namespace server {
         auto modList = core::configManager.conf["moduleInstances"].items();
         std::string sourceName = core::configManager.conf["source"];
         core::configManager.release();
-        modulesDir = std::filesystem::absolute(modulesDir).string();
 
         // Initialize SmGui in server mode
         SmGui::init(true);

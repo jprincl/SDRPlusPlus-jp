@@ -317,7 +317,9 @@ if (SDRPP_RUNTIME_OUTPUT_DIRECTORY)
 endif ()
 
 if (MSVC)
-    add_executable(sdrpp "src/main.cpp" "win32/resources.rc")
+    # utf8.manifest opts the process into the UTF-8 ANSI codepage (Win10 1903+);
+    # CMake merges it into the linker-generated manifest via mt.exe.
+    add_executable(sdrpp "src/main.cpp" "win32/resources.rc" "win32/utf8.manifest")
 else ()
     add_executable(sdrpp "src/main.cpp")
 endif ()

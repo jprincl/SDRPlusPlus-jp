@@ -1,9 +1,12 @@
 #include "command_args.h"
 #include <filesystem>
+#include <utils/executable_path.h>
 
 void CommandArgsParser::defineAll() {
 #if defined(_WIN32)
-        std::string root = ".";
+        // Config lives next to the executable (portable install), regardless
+        // of the working directory the app was launched from.
+        std::string root = core::getExecutableDirectory().string();
         define('c', "con", "Show console on Windows");
 #elif defined(IS_MACOS_BUNDLE)
         std::string root = (std::string)getenv("HOME") + "/Library/Application Support/sdrpp-iak";
