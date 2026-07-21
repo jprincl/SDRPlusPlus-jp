@@ -122,6 +122,12 @@ private:
     static void menuSelected(void* ctx) {
         SpyServerVFOSourceModule* _this = (SpyServerVFOSourceModule*)ctx;
         core::setInputSampleRate(_this->iqSampleRate);
+        // setInputSampleRate() always resets the waterfall's displayed
+        // bandwidth to match the IQ rate. If we're already running (wide
+        // FFT actively being pushed), immediately widen it back out -
+        // otherwise re-selecting this source's menu after start() silently
+        // shrinks the tunable/displayed range down to the narrow IQ span.
+        if (_this->running) { core::setDisplayBandwidth(_this->fftSampleRate); }
         gui::mainWindow.playButtonLocked = !(_this->client && _this->client->isOpen());
         flog::info("SpyServerVFOSourceModule '{0}': Menu Select!", _this->name);
     }
