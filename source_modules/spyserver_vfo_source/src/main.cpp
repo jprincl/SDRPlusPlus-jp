@@ -12,8 +12,6 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
-#include <mutex>
-#include <condition_variable>
 
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -193,57 +191,59 @@ private:
         sigpath::iqFrontEnd.setExternalFFTMode(true);
         core::setDisplayBandwidth(_this->fftSampleRate);
 
-        // "Normal" tuning mode assumes that as long as the VFO cursor stays
-        // within the displayed bandwidth, no retune is needed - the demod
-        // chain just re-mixes from IQ that's already there. That's false
-        // here: the displayed (FFT) bandwidth is wider than what's actually
-        // being received as IQ, so we force center-tuning instead, which
-        // always retunes the server (both IQ_FREQUENCY and FFT_FREQUENCY,
-        // see tune() below) on every VFO move and keeps the VFO offset at 0.
-        _this->savedTuningMode = gui::mainWindow.getTuningMode();
-        gui::mainWindow.setTuningMode(tuner::TUNER_MODE_CENTER);
+        // No tuning-mode forcing needed (see tune() and the poll thread
+        // below for why): this now works natively in both "normal" tuning
+        // (FFT stays put, only IQ_FREQUENCY tracks the VFO cursor - SDR#
+        // VFO+FFT behaviour) and "center tuning" (both move together, VFO
+        // offset always 0 - degenerates to the same thing).
+        _this->lastSentIqFreq = _this->freq;
+        _this->lastSentFftFreq = _this->freq;
+        _this->fftDirty = false;
 
-        // Center tuning normally also forces single-click-only VFO
-        // movement (no continuous drag) to avoid retuning on every single
-        // rendered frame while dragging. We want the drag back - we just
-        // throttle how often it actually hits the network instead (see the
-        // retune thread below and tune()).
-        gui::waterfall.VFOMoveSingleClick = false;
-
-        // Background thread: flushes the latest requested frequency to the
-        // server, woken instantly by tune() rather than polling - so a
-        // single click/tune is sent right away. During a drag (many tune()
-        // calls in quick succession) it self-limits to SVFO_MAX_RETUNE_RATE
-        // sends/sec, always using the latest position, never queuing stale
-        // ones. tune() itself stays a cheap variable write either way.
+        // Background thread. Two independent jobs, both rate-limited to
+        // SVFO_MAX_RETUNE_RATE sends/sec each:
+        //  - FFT_FREQUENCY: only when tune() marks it dirty (the "device
+        //    center" genuinely changed - rare, e.g. VFO nearing the edge of
+        //    the current view in normal tuning mode, or every move in
+        //    center tuning mode).
+        //  - IQ_FREQUENCY: polls the VFO's live offset from the FFT center
+        //    (sigpath::vfoManager.getOffset) every cycle and sends whenever
+        //    it has actually moved - this is what makes tuning within the
+        //    displayed FFT work in normal mode, where the GUI never calls
+        //    tune() at all for in-view VFO moves.
+        // The poll itself is cheap (local reads only); only the actual
+        // network sends are rate-limited.
         _this->tuneThreadRunning = true;
         _this->tuneThread = std::thread([_this]() {
             using namespace std::chrono_literals;
-            const auto minInterval = std::chrono::milliseconds(1000 / SVFO_MAX_RETUNE_RATE);
-            auto lastSent = std::chrono::steady_clock::now() - minInterval;
-            std::unique_lock lck(_this->tuneMtx);
+            const auto pollInterval = 40ms;
+            const auto minSendInterval = std::chrono::milliseconds(1000 / SVFO_MAX_RETUNE_RATE);
+            auto lastIqSend = std::chrono::steady_clock::now() - minSendInterval;
+            auto lastFftSend = lastIqSend;
+
             while (_this->tuneThreadRunning) {
-                _this->tuneCv.wait(lck, [_this]() { return _this->tuneDirty.load() || !_this->tuneThreadRunning; });
-                if (!_this->tuneThreadRunning) { break; }
+                std::this_thread::sleep_for(pollInterval);
+                if (!_this->tuneThreadRunning || !_this->client) { continue; }
 
                 auto now = std::chrono::steady_clock::now();
-                auto wait = minInterval - (now - lastSent);
-                if (wait > std::chrono::milliseconds(0)) {
-                    // Still within the minimum interval since the last send -
-                    // wait out the remainder. tune() may update
-                    // pendingTuneFreq again in the meantime; that's fine,
-                    // we'll just pick up the newest value once we wake.
-                    _this->tuneCv.wait_for(lck, wait);
-                    if (!_this->tuneThreadRunning) { break; }
+
+                // IQ_FREQUENCY: track the VFO's live position.
+                double vfoOffset = 0.0;
+                std::string vfoName = gui::waterfall.selectedVFO;
+                if (vfoName != "") { vfoOffset = sigpath::vfoManager.getOffset(vfoName); }
+                double targetIq = gui::waterfall.getCenterFrequency() + vfoOffset;
+                if (targetIq != _this->lastSentIqFreq && (now - lastIqSend) >= minSendInterval) {
+                    _this->client->setSetting(SPYSERVER_SETTING_IQ_FREQUENCY, targetIq);
+                    _this->lastSentIqFreq = targetIq;
+                    lastIqSend = now;
                 }
 
-                if (_this->tuneDirty.exchange(false) && _this->client) {
-                    double f = _this->pendingTuneFreq;
-                    lck.unlock();
-                    _this->client->setSetting(SPYSERVER_SETTING_IQ_FREQUENCY, f);
+                // FFT_FREQUENCY: only on an actual device retune event.
+                if (_this->fftDirty.exchange(false) && (now - lastFftSend) >= minSendInterval) {
+                    double f = _this->pendingFftFreq;
                     _this->client->setSetting(SPYSERVER_SETTING_FFT_FREQUENCY, f);
-                    lck.lock();
-                    lastSent = std::chrono::steady_clock::now();
+                    _this->lastSentFftFreq = f;
+                    lastFftSend = now;
                 }
             }
         });
@@ -257,11 +257,9 @@ private:
         if (!_this->running) { return; }
 
         _this->tuneThreadRunning = false;
-        _this->tuneCv.notify_all();
         if (_this->tuneThread.joinable()) { _this->tuneThread.join(); }
 
         sigpath::iqFrontEnd.setExternalFFTMode(false);
-        gui::mainWindow.setTuningMode(_this->savedTuningMode);
 
         if (_this->client) { _this->client->stopStream(); }
 
@@ -273,9 +271,8 @@ private:
         SpyServerVFOSourceModule* _this = (SpyServerVFOSourceModule*)ctx;
         _this->freq = freq;
         if (_this->running) {
-            _this->pendingTuneFreq = freq;
-            _this->tuneDirty = true;
-            _this->tuneCv.notify_one();
+            _this->pendingFftFreq = freq;
+            _this->fftDirty = true;
         }
     }
 
@@ -382,10 +379,6 @@ private:
             SmGui::Text("Status:");
             SmGui::SameLine();
             SmGui::TextColoredF(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%s)", svfoDeviceTypesStr[_this->client->devInfo.DeviceType]);
-
-            if (gui::mainWindow.getTuningMode() != tuner::TUNER_MODE_CENTER) {
-                SmGui::TextColoredF(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "Enable \"Center Tuning\" (toolbar) for correct tuning");
-            }
         }
         else {
             SmGui::Text("Status:");
@@ -485,17 +478,16 @@ private:
     int fftDbOffset = -10;
     int fftDbRange = 100;
 
-    int savedTuningMode = 0; // tuner::TUNER_MODE_NORMAL
-
-    // Throttled retune: tune() just writes here; the background thread
-    // (started in start(), joined in stop()) flushes to the network at a
-    // fixed gentle rate. See start()/stop()/tune() for the full picture.
-    std::atomic<double> pendingTuneFreq{0.0};
-    std::atomic<bool> tuneDirty{false};
+    // FFT_FREQUENCY: only updated on real device-retune events, set by
+    // tune(). IQ_FREQUENCY: continuously tracked from the VFO's live
+    // offset by the poll thread. Both rate-limited independently. See
+    // start()/stop()/tune() for the full picture.
+    std::atomic<double> pendingFftFreq{0.0};
+    std::atomic<bool> fftDirty{false};
+    double lastSentIqFreq = 0.0;  // poll-thread-only, no lock needed
+    double lastSentFftFreq = 0.0; // poll-thread-only, no lock needed
     std::atomic<bool> tuneThreadRunning{false};
     std::thread tuneThread;
-    std::mutex tuneMtx;
-    std::condition_variable tuneCv;
 
     uint32_t gain = 0;
 
