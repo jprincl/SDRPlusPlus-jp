@@ -206,7 +206,7 @@ class MainActivity : NativeActivity() {
                 AudioDeviceInfo.TYPE_LINE_ANALOG,
                 AudioDeviceInfo.TYPE_LINE_DIGITAL,
                 AudioDeviceInfo.TYPE_DOCK -> 4
-                else -> if (isUsbAudioDevice(device)) 6 else 5
+                else -> if (isUsbAudioDevice(device)) 0 else 5
             }
         }
 
