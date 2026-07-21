@@ -12,7 +12,6 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
-#include <mutex>
 
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
@@ -253,22 +252,10 @@ private:
                 }
                 double targetIq = gui::waterfall.getCenterFrequency() + vfoOffset;
 
-                // DIAGNOSTIC: record every poll's computed values, not just
-                // ones that get sent, so the UI can show what the module
-                // itself thinks is going on even between sends.
-                {
-                    std::lock_guard lck(_this->dbgMtx);
-                    _this->dbgVfoName = vfoName;
-                }
-                _this->dbgVfoOffset = vfoOffset;
-                _this->dbgCenterFreq = gui::waterfall.getCenterFrequency();
-                _this->dbgTargetIq = targetIq;
-
                 if (targetIq != _this->lastSentIqFreq && (now - lastIqSend) >= minSendInterval) {
                     _this->client->setSetting(SPYSERVER_SETTING_IQ_FREQUENCY, targetIq);
                     _this->lastSentIqFreq = targetIq;
                     lastIqSend = now;
-                    _this->dbgIqSendCount++;
                 }
 
                 // FFT_FREQUENCY: only on an actual device retune event.
@@ -277,7 +264,6 @@ private:
                     _this->client->setSetting(SPYSERVER_SETTING_FFT_FREQUENCY, f);
                     _this->lastSentFftFreq = f;
                     lastFftSend = now;
-                    _this->dbgFftSendCount++;
                 }
             }
         });
@@ -414,23 +400,6 @@ private:
             SmGui::SameLine();
             SmGui::TextColoredF(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%s)", svfoDeviceTypesStr[_this->client->devInfo.DeviceType]);
 
-            // DIAGNOSTIC: what the poll thread itself last computed/sent.
-            // Remove once the non-center tuning bug is tracked down.
-            {
-                std::string vfoName;
-                {
-                    std::lock_guard lck(_this->dbgMtx);
-                    vfoName = _this->dbgVfoName;
-                }
-                SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG VFO='%s' offset=%.0f", vfoName.c_str(), _this->dbgVfoOffset.load());
-                SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG center=%.0f targetIQ=%.0f", _this->dbgCenterFreq.load(), _this->dbgTargetIq.load());
-                SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG lastSentIQ=%.0f lastSentFFT=%.0f", _this->lastSentIqFreq, _this->lastSentFftFreq);
-                SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG sendCount IQ=%d FFT=%d", _this->dbgIqSendCount.load(), _this->dbgFftSendCount.load());
-                SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG devInfo: MaxSR=%u MaxBW=%u DecStages=%u MinDec=%u",
-                    _this->client->devInfo.MaximumSampleRate, _this->client->devInfo.MaximumBandwidth,
-                    _this->client->devInfo.DecimationStageCount, _this->client->devInfo.MinimumIQDecimation);
-                SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG fftDecimId=%d fftSampleRate=%.0f", _this->fftDecimId, _this->fftSampleRate);
-            }
         }
         else {
             SmGui::Text("Status:");
@@ -565,16 +534,6 @@ private:
     double lastSentFftFreq = 0.0; // poll-thread-only, no lock needed
     std::atomic<bool> tuneThreadRunning{false};
     std::thread tuneThread;
-
-    // DIAGNOSTIC: what the poll thread itself computes/sends, shown in the
-    // UI. Remove once the non-center tuning bug is tracked down.
-    std::mutex dbgMtx;
-    std::string dbgVfoName;
-    std::atomic<double> dbgVfoOffset{0.0};
-    std::atomic<double> dbgCenterFreq{0.0};
-    std::atomic<double> dbgTargetIq{0.0};
-    std::atomic<int> dbgIqSendCount{0};
-    std::atomic<int> dbgFftSendCount{0};
 
     uint32_t gain = 0;
 
