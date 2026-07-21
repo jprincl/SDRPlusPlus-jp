@@ -39,8 +39,6 @@ namespace spyservervfo {
         int fftDbOffset = -10;
         int fftDbRange = 100;
 
-        SpyServerClientSync lastSync = {}; // diagnostic - see CLIENT_SYNC handling in the .cpp
-
     private:
         void sendCommand(uint32_t command, void* data, int len);
         void sendHandshake(std::string appName);
