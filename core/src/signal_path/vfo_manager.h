@@ -15,6 +15,15 @@ public:
         void setOffset(double offset);
         double getOffset();
         void setCenterOffset(double offset);
+
+        // Sets the DSP mixer's own offset directly, independent of the
+        // visual/waterfall offset (wtfVFO, used for click math and
+        // display). Exists for sources whose delivered IQ is already
+        // centered on the visually-indicated frequency (e.g. a narrowband
+        // stream retuned server-side to follow the VFO) - for those, the
+        // normal setOffset() would double-apply the shift once server-side
+        // and once again here locally. Call this with 0 in that case.
+        void setDspOffset(double offset);
         void setBandwidth(double bandwidth, bool updateWaterfall = true);
         void setSampleRate(double sampleRate, double bandwidth);
         void setReference(int ref);
@@ -44,6 +53,7 @@ public:
 
     void setOffset(std::string name, double offset);
     double getOffset(std::string name);
+    void setDspOffset(std::string name, double offset);
     void setCenterOffset(std::string name, double offset);
     void setBandwidth(std::string name, double bandwidth, bool updateWaterfall = true);
     void setSampleRate(std::string name, double sampleRate, double bandwidth);
