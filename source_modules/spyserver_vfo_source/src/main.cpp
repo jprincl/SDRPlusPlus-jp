@@ -460,20 +460,32 @@ private:
 
             gain = std::clamp<int>(gain, 0, client->devInfo.MaximumGainIndex);
 
-            // Build both decimation-stage lists from the same device info -
-            // the server exposes one shared set of decimation stages, used
-            // independently for the IQ and FFT settings.
+            // Build both decimation-stage lists from the same device info.
+            // IQ uses MaximumSampleRate (the raw decimated rate the server
+            // actually delivers - this is what IQFrontEnd needs to match
+            // for correct demod, and audio has sounded correct throughout
+            // testing, so this one's fine as-is).
+            // FFT uses MaximumBandwidth instead - a separate DeviceInfo
+            // field for the receiver's *usable* bandwidth (typically less
+            // than the raw sample rate due to front-end filter rolloff,
+            // especially undecimated). This is what the display/click-to-
+            // frequency math needs to match, and was the actual bug: at
+            // MaximumSampleRate=768kHz with no decimation, clicks were
+            // landing ~16% off from the real frequency, consistent with
+            // this exact usable-vs-raw-bandwidth distinction.
             iqRates.clear();
             iqRatesTxt.clear();
             fftRates.clear();
             fftRatesTxt.clear();
             for (int i = client->devInfo.MinimumIQDecimation; i <= client->devInfo.DecimationStageCount; i++) {
-                double sr = (double)client->devInfo.MaximumSampleRate / ((double)(1 << i));
-                iqRates.push_back(sr);
-                iqRatesTxt += getBandwdithScaled(sr);
+                double iqSr = (double)client->devInfo.MaximumSampleRate / ((double)(1 << i));
+                iqRates.push_back(iqSr);
+                iqRatesTxt += getBandwdithScaled(iqSr);
                 iqRatesTxt += '\0';
-                fftRates.push_back(sr);
-                fftRatesTxt += getBandwdithScaled(sr);
+
+                double fftSr = (double)client->devInfo.MaximumBandwidth / ((double)(1 << i));
+                fftRates.push_back(fftSr);
+                fftRatesTxt += getBandwdithScaled(fftSr);
                 fftRatesTxt += '\0';
             }
 
