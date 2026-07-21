@@ -240,13 +240,16 @@ private:
                 if (vfoName != "") {
                     vfoOffset = sigpath::vfoManager.getOffset(vfoName);
                     // The IQ we receive is already retuned server-side to
-                    // sit at this exact absolute frequency, so the actual
-                    // demod mixer must NOT also apply this same offset
-                    // again locally - that would shift the audio away from
-                    // the signal by roughly vfoOffset a second time. Only
-                    // the visual/click-math offset (read above) should
-                    // reflect it; the real DSP mixing stays at 0.
-                    sigpath::vfoManager.setDspOffset(vfoName, 0.0);
+                    // sit at this exact absolute frequency, so the local
+                    // DSP mixer must not shift by vfoOffset again - but for
+                    // asymmetric modes (USB/LSB) the filter's actual
+                    // passband center isn't the same point as the tuned/
+                    // clicked frequency (it's offset by half the VFO
+                    // bandwidth). getCenterOffset() - getOffset() is
+                    // exactly that residual: 0 for symmetric modes
+                    // (AM/NFM/WFM), +-bandwidth/2 for USB/LSB.
+                    double residual = sigpath::vfoManager.getCenterOffset(vfoName) - vfoOffset;
+                    sigpath::vfoManager.setDspOffset(vfoName, residual);
                 }
                 double targetIq = gui::waterfall.getCenterFrequency() + vfoOffset;
 
