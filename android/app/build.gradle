@@ -36,12 +36,12 @@ android {
     compileSdk 36
     ndkVersion "29.0.14206865"
     defaultConfig {
-        applicationId "org.ok1iak.sdrpp"
+        applicationId "org.jp.sdrpp"
         minSdk 23
         targetSdk 36
         versionCode appVersion.code
         versionName appVersion.name
-        resValue "string", "app_name", "SDR++ iak"
+        resValue "string", "app_name", "SDR++ jp"
 
         externalNativeBuild {
             cmake {
