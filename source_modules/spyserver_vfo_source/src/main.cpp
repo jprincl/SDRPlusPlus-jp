@@ -79,6 +79,11 @@ public:
         handler.stopHandler = stop;
         handler.tuneHandler = tune;
         handler.stream = &iqStream;
+        // The generic Source-menu "Decimation" control would silently
+        // desync our own sample-rate bookkeeping (see start()) - we manage
+        // our own IQ/FFT bandwidths precisely via the dropdowns below, an
+        // extra local decimation step on top serves no purpose here.
+        handler.supportsPostDecimation = false;
 
         strcpy(hostname, host.c_str());
 
@@ -196,6 +201,11 @@ private:
         core::setInputSampleRate(_this->iqSampleRate);
         sigpath::iqFrontEnd.setExternalFFTMode(true);
         core::setDisplayBandwidth(_this->fftSampleRate);
+
+        // Force off in case it was left non-1 from a previous source - the
+        // control is hidden for us now, so the user has no way to fix this
+        // themselves if it's stale.
+        sigpath::iqFrontEnd.setDecimation(1);
 
         // No tuning-mode forcing needed (see tune() and the poll thread
         // below for why): this now works natively in both "normal" tuning
@@ -331,7 +341,7 @@ private:
         if (connected) {
             if (_this->running) { style::beginDisabled(); }
 
-            SmGui::LeftLabel("IQ (audio) bandwidth");
+            SmGui::LeftLabel("IQ bandwidth");
             SmGui::FillWidth();
             if (SmGui::Combo("##spyserver_vfo_source_iqbw", &_this->iqDecimId, _this->iqRatesTxt.c_str())) {
                 _this->iqSampleRate = _this->iqRates[_this->iqDecimId];
@@ -340,7 +350,7 @@ private:
                 svfoConfig.release(true);
             }
 
-            SmGui::LeftLabel("FFT (waterfall) bandwidth");
+            SmGui::LeftLabel("FFT bandwidth");
             SmGui::FillWidth();
             if (SmGui::Combo("##spyserver_vfo_source_fftbw", &_this->fftDecimId, _this->fftRatesTxt.c_str())) {
                 _this->fftSampleRate = _this->fftRates[_this->fftDecimId];
