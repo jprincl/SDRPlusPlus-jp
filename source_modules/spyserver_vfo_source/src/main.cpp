@@ -237,7 +237,17 @@ private:
                 // IQ_FREQUENCY: track the VFO's live position.
                 double vfoOffset = 0.0;
                 std::string vfoName = gui::waterfall.selectedVFO;
-                if (vfoName != "") { vfoOffset = sigpath::vfoManager.getOffset(vfoName); }
+                if (vfoName != "") {
+                    vfoOffset = sigpath::vfoManager.getOffset(vfoName);
+                    // The IQ we receive is already retuned server-side to
+                    // sit at this exact absolute frequency, so the actual
+                    // demod mixer must NOT also apply this same offset
+                    // again locally - that would shift the audio away from
+                    // the signal by roughly vfoOffset a second time. Only
+                    // the visual/click-math offset (read above) should
+                    // reflect it; the real DSP mixing stays at 0.
+                    sigpath::vfoManager.setDspOffset(vfoName, 0.0);
+                }
                 double targetIq = gui::waterfall.getCenterFrequency() + vfoOffset;
 
                 // DIAGNOSTIC: record every poll's computed values, not just
@@ -413,6 +423,10 @@ private:
                 SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG center=%.0f targetIQ=%.0f", _this->dbgCenterFreq.load(), _this->dbgTargetIq.load());
                 SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG lastSentIQ=%.0f lastSentFFT=%.0f", _this->lastSentIqFreq, _this->lastSentFftFreq);
                 SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG sendCount IQ=%d FFT=%d", _this->dbgIqSendCount.load(), _this->dbgFftSendCount.load());
+                SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG devInfo: MaxSR=%u MaxBW=%u DecStages=%u MinDec=%u",
+                    _this->client->devInfo.MaximumSampleRate, _this->client->devInfo.MaximumBandwidth,
+                    _this->client->devInfo.DecimationStageCount, _this->client->devInfo.MinimumIQDecimation);
+                SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG fftDecimId=%d fftSampleRate=%.0f", _this->fftDecimId, _this->fftSampleRate);
             }
         }
         else {
@@ -483,7 +497,15 @@ private:
                 iqRatesTxt += getBandwdithScaled(iqSr);
                 iqRatesTxt += '\0';
 
-                double fftSr = (double)client->devInfo.MaximumBandwidth / ((double)(1 << i));
+                // MaximumBandwidth is the analog front-end's alias-free
+                // limit, which only binds at full (undecimated) rate. Once
+                // actually decimated, the digital decimation filter (much
+                // sharper than the analog front-end) is the real
+                // constraint, and its Nyquist limit is just
+                // MaximumSampleRate/2^i - NOT that same analog fraction
+                // shrunk again at every stage. Take whichever is smaller.
+                double fftSr = std::min((double)client->devInfo.MaximumBandwidth,
+                                         (double)client->devInfo.MaximumSampleRate / ((double)(1 << i)));
                 fftRates.push_back(fftSr);
                 fftRatesTxt += getBandwdithScaled(fftSr);
                 fftRatesTxt += '\0';
