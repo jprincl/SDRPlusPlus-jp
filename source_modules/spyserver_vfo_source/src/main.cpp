@@ -124,6 +124,7 @@ private:
         // waiting for external pushes if the source gets swapped away
         // without going through stop() first.
         sigpath::iqFrontEnd.setExternalFFTMode(false);
+        gui::mainWindow.setTuningMode(_this->savedTuningMode);
         gui::mainWindow.playButtonLocked = false;
         flog::info("SpyServerVFOSourceModule '{0}': Menu Deselect!", _this->name);
     }
@@ -183,6 +184,16 @@ private:
         sigpath::iqFrontEnd.setExternalFFTMode(true);
         core::setDisplayBandwidth(_this->fftSampleRate);
 
+        // "Normal" tuning mode assumes that as long as the VFO cursor stays
+        // within the displayed bandwidth, no retune is needed - the demod
+        // chain just re-mixes from IQ that's already there. That's false
+        // here: the displayed (FFT) bandwidth is wider than what's actually
+        // being received as IQ, so we force center-tuning instead, which
+        // always retunes the server (both IQ_FREQUENCY and FFT_FREQUENCY,
+        // see tune() below) on every VFO move and keeps the VFO offset at 0.
+        _this->savedTuningMode = gui::mainWindow.getTuningMode();
+        gui::mainWindow.setTuningMode(tuner::TUNER_MODE_CENTER);
+
         _this->running = true;
         flog::info("SpyServerVFOSourceModule '{0}': Start!", _this->name);
     }
@@ -192,6 +203,7 @@ private:
         if (!_this->running) { return; }
 
         sigpath::iqFrontEnd.setExternalFFTMode(false);
+        gui::mainWindow.setTuningMode(_this->savedTuningMode);
 
         if (_this->client) { _this->client->stopStream(); }
 
@@ -262,6 +274,8 @@ private:
                 svfoConfig.release(true);
             }
 
+            if (_this->running) { style::endDisabled(); }
+
             SmGui::LeftLabel("IQ sample bit depth");
             SmGui::FillWidth();
             if (SmGui::Combo("##spyserver_vfo_source_type", &_this->iqType, svfoIqFormatStr)) {
@@ -310,8 +324,6 @@ private:
             SmGui::Text("Status:");
             SmGui::SameLine();
             SmGui::TextColoredF(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%s)", svfoDeviceTypesStr[_this->client->devInfo.DeviceType]);
-
-            if (_this->running) { style::endDisabled(); }
         }
         else {
             SmGui::Text("Status:");
@@ -410,6 +422,8 @@ private:
 
     int fftDbOffset = -10;
     int fftDbRange = 100;
+
+    int savedTuningMode = 0; // tuner::TUNER_MODE_NORMAL
 
     uint32_t gain = 0;
 
