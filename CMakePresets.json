@@ -341,6 +341,7 @@
                 "OPT_BUILD_PLUTOSDR_SOURCE": "ON",
                 "OPT_BUILD_AUDIO_SINK":      "OFF",
                 "OPT_BUILD_PORTAUDIO_SINK":  "ON",
+                "OPT_BUILD_MACOS_COREAUDIO_SINK": "ON",
                 "OPT_BUILD_AUDIO_SOURCE":    "OFF"
             }
         },

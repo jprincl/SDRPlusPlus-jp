@@ -59,6 +59,10 @@ option(OPT_BUILD_USRP_SOURCE "Build USRP Source Module (libuhd)" OFF)
 # Sinks
 option(OPT_BUILD_ANDROID_AUDIO_SINK "Build Android Audio Sink Module (Dependencies: AAudio, only for android)" OFF)
 option(OPT_BUILD_AUDIO_SINK "Build Audio Sink Module (Dependencies: rtaudio)" ON)
+# Native CoreAudio output needs no third-party audio library: default it on
+# where it can build, force it off everywhere else.
+include(CMakeDependentOption)
+cmake_dependent_option(OPT_BUILD_MACOS_COREAUDIO_SINK "Build the native CoreAudio Sink Module (no dependencies required, only for macOS)" ON "APPLE" OFF)
 option(OPT_BUILD_NETWORK_SINK "Build Audio Network Sink Module (no dependencies required)" ON)
 option(OPT_BUILD_NEW_PORTAUDIO_SINK "Build the new PortAudio Sink Module (Dependencies: portaudio)" OFF)
 option(OPT_BUILD_PORTAUDIO_SINK "Build PortAudio Sink Module (Dependencies: portaudio)" OFF)
@@ -271,6 +275,7 @@ sdrpp_add_optional_modules(
 sdrpp_add_optional_modules(
     ANDROID_AUDIO_SINK:sink_modules/android_audio_sink
     AUDIO_SINK:sink_modules/audio_sink
+    MACOS_COREAUDIO_SINK:sink_modules/macos_coreaudio_sink
     PORTAUDIO_SINK:sink_modules/portaudio_sink
     NETWORK_SINK:sink_modules/network_sink
     NEW_PORTAUDIO_SINK:sink_modules/new_portaudio_sink
