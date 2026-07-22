@@ -416,6 +416,16 @@ private:
             SmGui::SameLine();
             SmGui::TextColoredF(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected (%s)", svfoDeviceTypesStr[_this->client->devInfo.DeviceType]);
 
+            // TEMPORARY DIAGNOSTIC - remove once the FFT-bandwidth cap
+            // question is settled. Shows the raw DeviceInfo fields so we
+            // can tell whether MinimumIQDecimation is what's capping the
+            // FFT list (an IQ-only limit being wrongly applied to FFT),
+            // and whether MaximumBandwidth reflects the hardware or just
+            // the server's configured maximum_bandwidth directive.
+            SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG MaxSR=%u MaxBW=%u",
+                _this->client->devInfo.MaximumSampleRate, _this->client->devInfo.MaximumBandwidth);
+            SmGui::TextColoredF(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "DBG DecStages=%u MinIQDec=%u",
+                _this->client->devInfo.DecimationStageCount, _this->client->devInfo.MinimumIQDecimation);
         }
         else {
             SmGui::Text("Status:");
