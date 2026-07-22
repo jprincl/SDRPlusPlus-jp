@@ -1,3 +1,4 @@
+
 # SDR++ jp (fork), is not the original bloat-free SDR software
 
 The fork is to support Spyserver IQ+FFT (VFO+FFT) - new module Spyserver VFO+FFT added to support this mode instead of FULL IQ Spyserver mode. 
@@ -20,3 +21,5 @@ Thanks and due respect to:
 ## Feedback
 
 Found an issue? File an [issue](https://github.com/jprincl/SDRPlusPlus-jp/issues).
+
+<img width="886" height="1499" alt="Screenshot_2026-07-22-09-52-33-260_org jp sdrpp debug" src="https://github.com/user-attachments/assets/21bffd34-60e6-4563-9922-69dab5a0c921" />
