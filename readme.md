@@ -1,9 +1,7 @@
-# SDR++ iak (fork), is not the original bloat-free SDR software
+# SDR++ jp (fork), is not the original bloat-free SDR software
 
-The fork is to support the QRP Labs QMX transceiver.
-Currently remote reception using an [Android server app](https://github.com/bubnikv/qmxserver-android) on Android 7 and newer is supported.
-
-In the future, direct USB connection to QMX transceiver is planned, including the Android build.
+The fork is to support Spyserver IQ+FFT (VFO+FFT) - new module Spyserver VFO+FFT added to support this mode instead of FULL IQ Spyserver mode. 
+Please, keep in mind there are still some bugs in this module!!! 
 
 **Please do not report bugs in this fork to original author.**
 
@@ -21,4 +19,4 @@ Thanks and due respect to:
 
 ## Feedback
 
-Found an issue? File an [issue](https://github.com/bubnikv/SDRPlusPlus-iak/issues).
+Found an issue? File an [issue](https://github.com/jprincl/SDRPlusPlus-jp/issues).
