@@ -189,7 +189,10 @@ private:
         // about instead of a fixed wide view + a moving cursor within it.
         _this->applyFFTSettings();
         _this->client->setSetting(SPYSERVER_SETTING_FFT_FREQUENCY, _this->freq);
-        _this->client->setSetting(SPYSERVER_SETTING_FFT_DECIMATION, _this->fftDecimId + _this->client->devInfo.MinimumIQDecimation);
+        // Note: no MinimumIQDecimation offset here - the FFT stage list is
+        // built from stage 0 upward (see tryConnect), since that minimum is
+        // an IQ-stream limit that does not apply to the FFT stream.
+        _this->client->setSetting(SPYSERVER_SETTING_FFT_DECIMATION, _this->fftDecimId);
 
         _this->client->setSetting(SPYSERVER_SETTING_STREAMING_MODE, SPYSERVER_STREAM_MODE_FFT_IQ);
         _this->client->startStream();
@@ -472,41 +475,42 @@ private:
 
             gain = std::clamp<int>(gain, 0, client->devInfo.MaximumGainIndex);
 
-            // Build both decimation-stage lists from the same device info.
-            // IQ uses MaximumSampleRate (the raw decimated rate the server
-            // actually delivers - this is what IQFrontEnd needs to match
-            // for correct demod, and audio has sounded correct throughout
-            // testing, so this one's fine as-is).
-            // FFT uses MaximumBandwidth instead - a separate DeviceInfo
-            // field for the receiver's *usable* bandwidth (typically less
-            // than the raw sample rate due to front-end filter rolloff,
-            // especially undecimated). This is what the display/click-to-
-            // frequency math needs to match, and was the actual bug: at
-            // MaximumSampleRate=768kHz with no decimation, clicks were
-            // landing ~16% off from the real frequency, consistent with
-            // this exact usable-vs-raw-bandwidth distinction.
+            // Two separate stage ranges, deliberately:
+            //
+            // IQ starts at MinimumIQDecimation. That field is exactly how
+            // the server enforces its configured "maximum_bandwidth"
+            // directive - measured on an Airspy R2 capped at 625kHz:
+            // MaximumSampleRate=10000000, MinimumIQDecimation=4, and
+            // 10000000/2^4 = 625000 exactly. So honouring it here is right.
+            //
+            // FFT starts at stage 0. That same minimum is an IQ-stream
+            // limit (the field name says so) and does not restrict the FFT
+            // stream, which can span the full device rate regardless - the
+            // old shared loop wrongly inherited the IQ cap and clamped the
+            // R2's FFT to 625kHz instead of its true ~10MHz. On a server
+            // with no configured cap (Airspy HF+: MinimumIQDecimation=0)
+            // this changes nothing at all.
+            //
+            // Bandwidth basis is MaximumBandwidth/2^i for the FFT in both
+            // cases: that field turns out to report the receiver's real
+            // alias-free bandwidth, not the configured cap - R2 reports
+            // 8000000 of 10000000 (0.800), HF+ reports 660000 of 768000
+            // (0.859375, matching the HF+'s documented alias-free figure).
+            // The dropdown *label* shows the raw MaximumSampleRate/2^i
+            // though, as that's the recognizable "sample rate" figure and
+            // reads consistently with the IQ dropdown.
             iqRates.clear();
             iqRatesTxt.clear();
-            fftRates.clear();
-            fftRatesTxt.clear();
             for (int i = client->devInfo.MinimumIQDecimation; i <= client->devInfo.DecimationStageCount; i++) {
                 double iqSr = (double)client->devInfo.MaximumSampleRate / ((double)(1 << i));
                 iqRates.push_back(iqSr);
                 iqRatesTxt += getBandwdithScaled(iqSr);
                 iqRatesTxt += '\0';
+            }
 
-                // Empirically confirmed (measured against real stations at
-                // several decimation stages): the analog front-end's
-                // alias-free fraction (MaximumBandwidth/MaximumSampleRate)
-                // applies proportionally at every decimation stage, not
-                // just the undecimated one - my earlier "only at full
-                // rate" theory was wrong. So the value actually used for
-                // display-bandwidth/click-math scaling is the simple
-                // proportional MaximumBandwidth/2^i. The dropdown *label*
-                // still shows the raw MaximumSampleRate/2^i though - that's
-                // the recognizable "sample rate" figure, consistent with
-                // how the IQ dropdown reads, and matches what SDR#/spyserver
-                // documentation refers to (e.g. "768 ksps").
+            fftRates.clear();
+            fftRatesTxt.clear();
+            for (int i = 0; i <= client->devInfo.DecimationStageCount; i++) {
                 double fftSrLabel = (double)client->devInfo.MaximumSampleRate / ((double)(1 << i));
                 double fftSrActual = (double)client->devInfo.MaximumBandwidth / ((double)(1 << i));
                 fftRates.push_back(fftSrActual);
