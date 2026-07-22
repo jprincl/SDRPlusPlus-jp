@@ -135,9 +135,8 @@ jobs:
             ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
         # Compile the universal (all-ABI) package once. assembleUniversal<Type>
-        # yields the fat APK we split per platform below; on release we also build
-        # bundleUniversalRelease (the signed Play Store .aab) — both share the
-        # single native build, so nothing is compiled twice.
+        # yields the fat APK we split per platform below. The Play Store
+        # bundle is no longer built here (see the note further down).
         - name: Build universal ${{ matrix.build_type }} package
           if: matrix.build_type == 'debug' || steps.check_signing.outputs.has_keystore == 'true'
           working-directory: ${{ github.workspace }}/android
@@ -149,9 +148,6 @@ jobs:
             ANDROID_KEYSTORE_FILE: ${{ runner.workspace }}/release.keystore
           run: |
             TASKS="assembleUniversal${BUILD_TYPE_CAPS}"
-            if [ "$BUILD_TYPE_CAPS" = "Release" ]; then
-              TASKS="$TASKS bundleUniversalRelease"
-            fi
             gradle --info -PoptBuildDeps=ON $TASKS
 
         # Split the one universal APK into the two per-arch APKs by deleting the
@@ -219,17 +215,8 @@ jobs:
               name: ${{ steps.names.outputs.x86_artifact }}
               path: ${{ github.workspace }}/android/app/build/outputs/apk/universal/${{ matrix.build_type }}/${{ steps.names.outputs.x86_artifact }}.apk
 
-        # Signed Play Store bundle: renamed to its final published name and
-        # uploaded under an sdrpp-iak-* artifact name, so create_full_archive
-        # publishes it on the GitHub release (nightly + tag) next to the APKs.
-        - name: Rename AAB
-          if: matrix.build_type == 'release' && steps.check_signing.outputs.has_keystore == 'true'
-          working-directory: ${{ github.workspace }}/android/app/build/outputs/bundle/universalRelease
-          run: mv app-universal-release.aab ${{ steps.names.outputs.aab }}
-
-        - name: Save AAB
-          if: matrix.build_type == 'release' && steps.check_signing.outputs.has_keystore == 'true'
-          uses: actions/upload-artifact@v6
-          with:
-              name: ${{ steps.names.outputs.aab_artifact }}
-              path: ${{ github.workspace }}/android/app/build/outputs/bundle/universalRelease/${{ steps.names.outputs.aab }}
+        # NOTE: the Play Store .aab bundle is deliberately not built here.
+        # bundleUniversalRelease / signUniversalReleaseBundle were removed:
+        # the bundle is only useful for publishing on Google Play, which this
+        # fork doesn't do, and its signing task was failing. The signed APKs
+        # below are produced independently of it.
