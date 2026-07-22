@@ -1,0 +1,45 @@
+name: Build Ubuntu Deb
+
+# Standalone, manually-triggered build of just the Ubuntu 24.04 (noble)
+# amd64 .deb package. Exists so a desktop package can be produced without
+# running the full "Build Binaries" workflow, which fans out across ~16
+# Linux variants plus Windows, macOS and Android and hogs the runner queue.
+#
+# This calls the same reusable build_linux.yml that Build Binaries uses, so
+# the resulting package is identical to the one that workflow would produce
+# for this distribution - it just skips everything else.
+
+on:
+    workflow_dispatch:
+
+env:
+    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+    prepare:
+        runs-on: ubuntu-latest
+        outputs:
+            version_full: ${{ steps.read.outputs.version_full }}
+        steps:
+        - uses: actions/checkout@v5
+          with:
+            # Full history: get_version.sh derives the version from git describe.
+            fetch-depth: 0
+
+        - name: Read version
+          id: read
+          run: |
+            eval "$(scripts/get_version.sh "$GITHUB_WORKSPACE")"
+            echo "version_full=$VERSION_FULL" >> $GITHUB_OUTPUT
+
+    build_deb:
+        needs: [prepare]
+        uses: ./.github/workflows/build_linux.yml
+        with:
+            base_image: ubuntu:noble
+            runner: ubuntu-latest
+            artifact: sdrpp-jp-${{ needs.prepare.outputs.version_full }}-ubuntu-noble-amd64
+            volk_package: libvolk-dev
+            extra_apt: ''
+            curl_source: system
+            version_full: ${{ needs.prepare.outputs.version_full }}
