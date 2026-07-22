@@ -43,3 +43,18 @@ jobs:
             extra_apt: ''
             curl_source: system
             version_full: ${{ needs.prepare.outputs.version_full }}
+
+    # Also built here because the .deb cannot be installed alongside an
+    # existing upstream SDR++ package: both install /usr/bin/sdrpp, so dpkg
+    # refuses. Everything else is already namespaced (package sdrpp-iak,
+    # /usr/share/sdrpp-iak, /usr/lib/sdrpp-iak/plugins, sdrpp-iak.desktop),
+    # and AppImage builds even get their own config dir on purpose - so the
+    # AppImage is the side-by-side option.
+    build_appimage:
+        needs: [prepare]
+        uses: ./.github/workflows/build_appimage.yml
+        with:
+            runner: ubuntu-latest
+            arch: x86_64
+            artifact: sdrpp-jp-${{ needs.prepare.outputs.version_full }}-linux-appimage-x86_64
+            version_full: ${{ needs.prepare.outputs.version_full }}
