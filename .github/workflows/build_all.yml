@@ -349,7 +349,7 @@ jobs:
           uses: actions/download-artifact@v7
           with:
             path: sdrpp_all
-            pattern: sdrpp-iak-*
+            pattern: sdrpp-*
             merge-multiple: true
 
         - name: Add source archive
