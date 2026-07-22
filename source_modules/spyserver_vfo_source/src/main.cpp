@@ -223,14 +223,15 @@ private:
         // offset always 0 - degenerates to the same thing).
         _this->lastSentIqFreq = _this->freq;
         _this->lastSentFftFreq = _this->freq;
-        _this->fftDirty = false;
+        _this->pendingFftFreq = _this->freq;
 
         // Background thread. Two independent jobs, both rate-limited to
         // SVFO_MAX_RETUNE_RATE sends/sec each:
-        //  - FFT_FREQUENCY: only when tune() marks it dirty (the "device
-        //    center" genuinely changed - rare, e.g. VFO nearing the edge of
-        //    the current view in normal tuning mode, or every move in
-        //    center tuning mode).
+        //  - FFT_FREQUENCY: whenever the "device center" set by tune()
+        //    differs from what the server was last told - rare, e.g. VFO
+        //    nearing the edge of the current view in normal tuning mode,
+        //    dragging the frequency scale, or every move in center tuning
+        //    mode.
         //  - IQ_FREQUENCY: polls the VFO's live offset from the FFT center
         //    (sigpath::vfoManager.getOffset) every cycle and sends whenever
         //    it has actually moved - this is what makes tuning within the
@@ -277,11 +278,19 @@ private:
                     lastIqSend = now;
                 }
 
-                // FFT_FREQUENCY: only on an actual device retune event.
-                if (_this->fftDirty.exchange(false) && (now - lastFftSend) >= minSendInterval) {
-                    double f = _this->pendingFftFreq;
-                    _this->client->setSetting(SPYSERVER_SETTING_FFT_FREQUENCY, f);
-                    _this->lastSentFftFreq = f;
+                // FFT_FREQUENCY: sent whenever the wanted center differs
+                // from what the server was last told. Deliberately a value
+                // comparison, NOT a one-shot dirty flag: with a flag, a
+                // request arriving while the rate limiter is still closed
+                // got cleared and silently dropped, and if no further
+                // tune() followed (e.g. the user let go of the frequency
+                // scale right then) the server kept the old FFT center
+                // while the UI showed the new one. Comparing values means a
+                // blocked send is simply retried on the next poll.
+                double wantedFft = _this->pendingFftFreq;
+                if (wantedFft != _this->lastSentFftFreq && (now - lastFftSend) >= minSendInterval) {
+                    _this->client->setSetting(SPYSERVER_SETTING_FFT_FREQUENCY, wantedFft);
+                    _this->lastSentFftFreq = wantedFft;
                     lastFftSend = now;
                 }
             }
@@ -310,8 +319,9 @@ private:
         SpyServerVFOSourceModule* _this = (SpyServerVFOSourceModule*)ctx;
         _this->freq = freq;
         if (_this->running) {
+            // Just record the wanted center; the poll thread notices the
+            // difference and sends it, retrying until it actually lands.
             _this->pendingFftFreq = freq;
-            _this->fftDirty = true;
         }
     }
 
@@ -548,7 +558,6 @@ private:
     // offset by the poll thread. Both rate-limited independently. See
     // start()/stop()/tune() for the full picture.
     std::atomic<double> pendingFftFreq{0.0};
-    std::atomic<bool> fftDirty{false};
     double lastSentIqFreq = 0.0;  // poll-thread-only, no lock needed
     double lastSentFftFreq = 0.0; // poll-thread-only, no lock needed
     std::atomic<bool> tuneThreadRunning{false};
