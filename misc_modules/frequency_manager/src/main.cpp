@@ -41,6 +41,7 @@ enum {
 };
 
 const char* bookmarkDisplayModesTxt = "Off\0Top\0Bottom\0";
+const char* exportScopesTxt = "Selected bookmarks\0Current list\0All lists\0";
 const char* bookmarkRowsTxt = "1\0""2\0""3\0""4\0""5\0""6\0""7\0""8\0""9\0""10\0";
 
 class FrequencyManagerModule : public ModuleManager::Instance {
@@ -55,6 +56,10 @@ public:
         bookmarkRectangle = config.conf["bookmarkRectangle"];
         bookmarkCentered = config.conf["bookmarkCentered"];
         bookmarkNoClutter = config.conf["bookmarkNoClutter"];
+        // Older configs predate this key.
+        if (config.conf.contains("exportScope")) {
+            exportScope = std::clamp<int>((int)config.conf["exportScope"], 0, 2);
+        }
 #ifdef __ANDROID__
         // Older configs predate this key, so don't assume it's there.
         if (config.conf.contains("androidIoPath")) {
@@ -633,6 +638,15 @@ private:
             _this->saveByName(_this->selectedListName);
         }
 
+        // Selecting several bookmarks upstream requires holding Shift or
+        // Ctrl while clicking, which a touchscreen has no way to do - so on
+        // Android every tap cleared the previous selection and multi-select
+        // was simply unreachable. This toggle stands in for the modifier
+        // key. Left off by default, so tapping still behaves as before.
+#ifdef __ANDROID__
+        ImGui::Checkbox(("Multi-select##_freq_mgr_multisel_" + _this->name).c_str(), &_this->multiSelect);
+#endif
+
         // Bookmark list
         if (ImGui::BeginTable(("freq_manager_bkm_table" + _this->name).c_str(), 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable, ImVec2(0, 200.0f * style::uiScale))) {
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_DefaultSort, 0.0f, 0);
@@ -673,7 +687,12 @@ private:
 
                 if (ImGui::Selectable((name + "##_freq_mgr_bkm_name_" + _this->name).c_str(), &cbm.selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_SelectOnClick)) {
                     // if shift or control isn't pressed, deselect all others
-                    if (!ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyCtrl) {
+                    // (on Android the Multi-select toggle stands in for them)
+                    bool keepOthers = ImGui::GetIO().KeyShift || ImGui::GetIO().KeyCtrl;
+#ifdef __ANDROID__
+                    keepOthers = keepOthers || _this->multiSelect;
+#endif
+                    if (!keepOthers) {
                         for (auto& [_name, _bm] : _this->bookmarks) {
                             if (name == _name) { continue; }
                             _bm.selected = false;
@@ -706,13 +725,24 @@ private:
         if (selectedNames.size() != 1 && _this->selectedListName != "") { style::endDisabled(); }
 
         //Draw import and export buttons
+        // What Export writes out. Upstream only ever exported the ticked
+        // bookmarks of the current list, which makes backing up everything
+        // tedious - the other two scopes cover that.
+        ImGui::LeftLabel("Export");
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        if (ImGui::Combo(("##_freq_mgr_exp_scope_" + _this->name).c_str(), &_this->exportScope, exportScopesTxt)) {
+            config.acquire();
+            config.conf["exportScope"] = _this->exportScope;
+            config.release(true);
+        }
+
 #ifdef __ANDROID__
         // portable-file-dialogs has no Android backend - it shells out to
         // zenity/kdialog on anything Linux-like, finds neither, and its
         // available() check then makes the buttons silently do nothing.
         // So the path is typed in here instead of picked. Writing outside
         // the app's own directories needs "All files access" granted in
-        // Android settings (see the note under the field).
+        // Android settings.
         ImGui::LeftLabel("File");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
         if (ImGui::InputText(("##freq_manager_android_io_path" + _this->name).c_str(),
@@ -721,55 +751,50 @@ private:
             config.conf["androidIoPath"] = std::string(_this->androidIoPath);
             config.release(true);
         }
+#endif
+
+        // Only the "selected bookmarks" scope depends on something being
+        // ticked; the other two always have something to write.
+        bool exportBlocked = (_this->exportScope == 0 && selectedNames.size() == 0 && _this->selectedListName != "");
 
         ImGui::BeginTable(("freq_manager_bottom_btn_table" + _this->name).c_str(), 2, 0, ImVec2(ImGui::BeginActionRow(), 0));
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
+#ifdef __ANDROID__
         if (ImGui::Button(("Import##_freq_mgr_imp_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
             if (_this->listNames.size() > 0) {
                 _this->importBookmarks(_this->androidIoPath);
             }
         }
-
-        ImGui::TableSetColumnIndex(1);
-        if (selectedNames.size() == 0 && _this->selectedListName != "") { style::beginDisabled(); }
-        if (ImGui::Button(("Export##_freq_mgr_exp_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
-            _this->exportedBookmarks = json::object();
-            config.acquire();
-            for (auto& _name : selectedNames) {
-                _this->exportedBookmarks["bookmarks"][_name] = config.conf["lists"][_this->selectedListName]["bookmarks"][_name];
-            }
-            config.release();
-            _this->exportBookmarks(_this->androidIoPath);
-        }
-        if (selectedNames.size() == 0 && _this->selectedListName != "") { style::endDisabled(); }
-        ImGui::EndTable();
 #else
-        ImGui::BeginTable(("freq_manager_bottom_btn_table" + _this->name).c_str(), 2, 0, ImVec2(ImGui::BeginActionRow(), 0));
-        ImGui::TableNextRow();
-
-        ImGui::TableSetColumnIndex(0);
         if (ImGui::Button(("Import##_freq_mgr_imp_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0)) && !_this->importOpen) {
             _this->importOpen = true;
             _this->importDialog = new pfd::open_file("Import bookmarks", "", { "JSON Files (*.json)", "*.json", "All Files", "*" }, pfd::opt::multiselect);
         }
+#endif
 
         ImGui::TableSetColumnIndex(1);
-        if (selectedNames.size() == 0 && _this->selectedListName != "") { style::beginDisabled(); }
+        if (exportBlocked) { style::beginDisabled(); }
+#ifdef __ANDROID__
+        if (ImGui::Button(("Export##_freq_mgr_exp_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            _this->exportedBookmarks = _this->buildExportJson(selectedNames);
+            _this->exportBookmarks(_this->androidIoPath);
+        }
+#else
         if (ImGui::Button(("Export##_freq_mgr_exp_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0)) && !_this->exportOpen) {
-            _this->exportedBookmarks = json::object();
-            config.acquire();
-            for (auto& _name : selectedNames) {
-                _this->exportedBookmarks["bookmarks"][_name] = config.conf["lists"][_this->selectedListName]["bookmarks"][_name];
-            }
-            config.release();
+            _this->exportedBookmarks = _this->buildExportJson(selectedNames);
             _this->exportOpen = true;
             _this->exportDialog = new pfd::save_file("Export bookmarks", "", { "JSON Files (*.json)", "*.json", "All Files", "*" });
         }
-        if (selectedNames.size() == 0 && _this->selectedListName != "") { style::endDisabled(); }
-        ImGui::EndTable();
 #endif
+        if (exportBlocked) { style::endDisabled(); }
+        ImGui::EndTable();
+
+        if (!_this->ioStatus.empty()) {
+            ImVec4 col = _this->ioStatusError ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 1.0f, 0.4f, 1.0f);
+            ImGui::TextColored(col, "%s", _this->ioStatus.c_str());
+        }
 
         if (ImGui::ActionButton(("Select displayed lists##_freq_mgr_exp_" + _this->name).c_str())) {
             _this->selectDialog.request();
@@ -1056,6 +1081,17 @@ private:
     json exportedBookmarks;
     bool importOpen = false;
     bool exportOpen = false;
+
+    // 0 = selected bookmarks, 1 = whole current list, 2 = all lists.
+    int exportScope = 0;
+#ifdef __ANDROID__
+    bool multiSelect = false;
+#endif
+    // Result of the last import/export, shown under the buttons. Without
+    // this the operation gives no visible sign it happened at all - the log
+    // it used to write is not reachable on Android.
+    std::string ioStatus;
+    bool ioStatusError = false;
 #ifdef __ANDROID__
     // Typed-in import/export target, since there's no file picker on
     // Android. Defaults to the Downloads folder because that one is
@@ -1069,19 +1105,73 @@ private:
         json importedBookmarks;
         try {
             std::ifstream fs(path);
+            if (!fs.is_open()) {
+                ioStatus = "Import failed: cannot read " + path;
+                ioStatusError = true;
+                flog::error("Could not open '{0}' for reading", path);
+                return;
+            }
             fs >> importedBookmarks;
         }
         catch (const std::exception& e) {
+            ioStatus = std::string("Import failed: ") + e.what();
+            ioStatusError = true;
             flog::error("Could not parse bookmark file: {0}", e.what());
             return;
         }
 
+        // Multi-list file (written by Export with scope "All lists"):
+        // restore each list under its own name, creating any that are
+        // missing, instead of flattening everything into the current one.
+        if (importedBookmarks.contains("lists") && importedBookmarks["lists"].is_object()) {
+            int importedCount = 0;
+            int listCount = 0;
+            config.acquire();
+            for (auto const& [listName, listObj] : importedBookmarks["lists"].items()) {
+                if (!listObj.contains("bookmarks") || !listObj["bookmarks"].is_object()) { continue; }
+                if (!config.conf["lists"].contains(listName)) {
+                    config.conf["lists"][listName]["showOnWaterfall"] = true;
+                    config.conf["lists"][listName]["bookmarks"] = json::object();
+                    listCount++;
+                }
+                for (auto const& [_name, bm] : listObj["bookmarks"].items()) {
+                    if (config.conf["lists"][listName]["bookmarks"].contains(_name)) {
+                        flog::warn("Bookmark '{0}' already exists in list '{1}', skipping", _name, listName);
+                        continue;
+                    }
+                    try {
+                        // Round-trip through the parser so a malformed entry
+                        // is rejected here rather than written to the config.
+                        config.conf["lists"][listName]["bookmarks"][_name] = bookmarkToJson(bookmarkFromJson(bm));
+                        importedCount++;
+                    }
+                    catch (const std::exception& e) {
+                        flog::warn("Could not import bookmark '{0}': {1}", _name, e.what());
+                    }
+                }
+            }
+            config.release(true);
+
+            refreshLists();
+            loadByName(selectedListName);
+            refreshWaterfallBookmarks();
+
+            ioStatus = "Imported " + std::to_string(importedCount) + " bookmark(s), " + std::to_string(listCount) + " new list(s)";
+            ioStatusError = false;
+            flog::info("Imported {0} bookmarks into {1} new lists", importedCount, listCount);
+            return;
+        }
+
         if (!importedBookmarks.contains("bookmarks")) {
+            ioStatus = "Import failed: no bookmarks in file";
+            ioStatusError = true;
             flog::error("File does not contain any bookmarks");
             return;
         }
 
         if (!importedBookmarks["bookmarks"].is_object()) {
+            ioStatus = "Import failed: malformed bookmark data";
+            ioStatusError = true;
             flog::error("Bookmark attribute is invalid");
             return;
         }
@@ -1103,13 +1193,82 @@ private:
         }
         saveByName(selectedListName);
 
+        ioStatus = "Imported " + std::to_string(importedCount) + " bookmark(s)";
+        ioStatusError = false;
         flog::info("Imported {0} bookmarks", importedCount);
+    }
+
+    // Builds what Export writes out, according to exportScope:
+    //   0 - only the ticked bookmarks of the current list (upstream
+    //       behaviour, kept so existing habits and files still work)
+    //   1 - the whole current list
+    //   2 - every list
+    // Scopes 0 and 1 produce the flat {"bookmarks": {...}} shape that every
+    // SDR++ fork can already read. Scope 2 needs the list names too, so it
+    // writes {"lists": {name: {"bookmarks": {...}}}} - importBookmarks below
+    // accepts both.
+    json buildExportJson(const std::vector<std::string>& selectedNames) {
+        json out = json::object();
+        config.acquire();
+        if (exportScope == 2) {
+            out["lists"] = json::object();
+            // Also emit every bookmark flattened under the plain
+            // "bookmarks" key. Other SDR++ builds only understand that
+            // shape and would otherwise reject the file outright; this way
+            // they import everything into their current list, while the
+            // "lists" key above lets this build restore the real structure.
+            // Duplicate names across lists collapse in the flat view -
+            // first one wins, same as any other import collision.
+            out["bookmarks"] = json::object();
+            for (auto const& [listName, listObj] : config.conf["lists"].items()) {
+                out["lists"][listName]["bookmarks"] = listObj["bookmarks"];
+                for (auto const& [bmName, bm] : listObj["bookmarks"].items()) {
+                    if (!out["bookmarks"].contains(bmName)) { out["bookmarks"][bmName] = bm; }
+                }
+            }
+        }
+        else if (selectedListName == "" || !config.conf["lists"].contains(selectedListName)) {
+            // Nothing sensible to export from. Indexing a missing list here
+            // would insert a null entry into the config, so bail out.
+            out["bookmarks"] = json::object();
+        }
+        else if (exportScope == 1) {
+            out["bookmarks"] = config.conf["lists"][selectedListName]["bookmarks"];
+        }
+        else {
+            out["bookmarks"] = json::object();
+            for (auto& _name : selectedNames) {
+                out["bookmarks"][_name] = config.conf["lists"][selectedListName]["bookmarks"][_name];
+            }
+        }
+        config.release();
+        return out;
     }
 
     void exportBookmarks(std::string path) {
         std::ofstream fs(path);
+        if (!fs.is_open()) {
+            ioStatus = "Export failed: cannot write " + path;
+            ioStatusError = true;
+            flog::error("Could not open '{0}' for writing", path);
+            return;
+        }
         fs << exportedBookmarks;
         fs.close();
+
+        // Count what actually went out, so the message means something.
+        int count = 0;
+        if (exportedBookmarks.contains("lists")) {
+            for (auto const& [_l, obj] : exportedBookmarks["lists"].items()) {
+                count += (int)obj["bookmarks"].size();
+            }
+        }
+        else if (exportedBookmarks.contains("bookmarks")) {
+            count = (int)exportedBookmarks["bookmarks"].size();
+        }
+        ioStatus = "Exported " + std::to_string(count) + " bookmark(s)";
+        ioStatusError = false;
+        flog::info("Exported {0} bookmarks to {1}", count, path);
     }
 
     std::string name;
@@ -1167,6 +1326,7 @@ MOD_EXPORT void _INIT_() {
     // Android only (see the import/export UI): there is no working native
     // file picker there, so the path is typed in instead of chosen.
     def["androidIoPath"] = "/storage/emulated/0/Download/sdrpp_bookmarks.json";
+    def["exportScope"] = 0;
     def["lists"]["General"]["showOnWaterfall"] = true;
     def["lists"]["General"]["bookmarks"] = json::object();
 
