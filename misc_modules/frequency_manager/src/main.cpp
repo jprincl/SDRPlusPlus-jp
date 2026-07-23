@@ -42,6 +42,22 @@ enum {
 
 const char* bookmarkDisplayModesTxt = "Off\0Top\0Bottom\0";
 const char* exportScopesTxt = "Selected bookmarks\0Current list\0All lists\0";
+
+// How far off a bookmark may sit and still count as "the one we're tuned
+// to". WFM gets a wider window because broadcast channels are wide and
+// sitting a few kHz off is normal; everything else is narrow enough that a
+// kilohertz is plenty. Looked up by name rather than by a hardcoded index,
+// so reordering demodModeList cannot quietly change the meaning.
+static double tunedTolerance(int mode) {
+    // demodModeList is a plain array with no terminator, and mode comes
+    // straight out of the bookmark JSON without being range-checked, so
+    // bound it here rather than reading past the end.
+    const int modeCount = demodModeCount;
+    if (mode >= 0 && mode < modeCount && strcmp(demodModeList[mode], "WFM") == 0) {
+        return 10000.0;
+    }
+    return 1000.0;
+}
 const char* bookmarkRowsTxt = "1\0""2\0""3\0""4\0""5\0""6\0""7\0""8\0""9\0""10\0";
 
 class FrequencyManagerModule : public ModuleManager::Instance {
@@ -56,6 +72,10 @@ public:
         bookmarkRectangle = config.conf["bookmarkRectangle"];
         bookmarkCentered = config.conf["bookmarkCentered"];
         bookmarkNoClutter = config.conf["bookmarkNoClutter"];
+        // Older configs predate this key.
+        if (config.conf.contains("bookmarkTunedOnly")) {
+            bookmarkTunedOnly = config.conf["bookmarkTunedOnly"];
+        }
         // Older configs predate this key.
         if (config.conf.contains("exportScope")) {
             exportScope = std::clamp<int>((int)config.conf["exportScope"], 0, 2);
@@ -834,6 +854,17 @@ private:
             config.release(true);
         }
 
+        if (ImGui::Checkbox(("Only the tuned one##_freq_mgr_tunedOnly_" + _this->name).c_str(), &_this->bookmarkTunedOnly)) {
+            config.acquire();
+            config.conf["bookmarkTunedOnly"] = _this->bookmarkTunedOnly;
+            config.release(true);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Label only the bookmark the VFO is sitting on,\n"
+                              "instead of every one in view. Useful where bands\n"
+                              "are packed and the labels bury the spectrum.");
+        }
+
         if (_this->selectedListName == "") { style::endDisabled(); }
 
         if (_this->bookmarkDialogMode != BookmarkDialogMode::None) {
@@ -881,6 +912,20 @@ private:
         int weekDay = getWeekDay();
         bool top = (_this->bookmarkDisplayMode == BOOKMARK_DISP_MODE_TOP);
 
+        // "Only the tuned one": label just the bookmark the VFO is sitting
+        // on. The match has to be loose enough to survive not landing on the
+        // exact listed frequency - a kilohertz for the narrow modes, ten for
+        // WFM where broadcast stations are wide and being slightly off is
+        // normal. Lists switched off for the waterfall are already absent
+        // from waterfallBookmarks, so they stay hidden either way.
+        bool tunedOnly = _this->bookmarkTunedOnly;
+        double tunedFreq = 0;
+        if (tunedOnly) {
+            tunedFreq = (gui::waterfall.selectedVFO == "")
+                            ? gui::waterfall.getCenterFrequency()
+                            : gui::waterfall.getCenterFrequency() + sigpath::vfoManager.getOffset(gui::waterfall.selectedVFO);
+        }
+
         auto overlapsRow = [](const std::vector<BookmarkRectangle>& row, double minX, double maxX) {
             for (const auto& r : row) {
                 if (minX <= r.max && maxX >= r.min) { return true; }
@@ -894,6 +939,8 @@ private:
             bm.clampedRectMax = ImVec2(-1, -1);
 
             if (bm.bookmark.frequency < args.lowFreq || bm.bookmark.frequency > args.highFreq) { continue; }
+
+            if (tunedOnly && std::fabs(bm.bookmark.frequency - tunedFreq) > tunedTolerance(bm.bookmark.mode)) { continue; }
 
             double centerXpos = args.min.x + std::round((bm.bookmark.frequency - args.lowFreq) * args.freqToPixelRatio);
             ImVec2 nameSize = ImGui::CalcTextSize(bm.bookmarkName.c_str());
@@ -1313,6 +1360,7 @@ private:
     bool bookmarkRectangle = true;
     bool bookmarkCentered = true;
     bool bookmarkNoClutter = false;
+    bool bookmarkTunedOnly = false;
 };
 
 MOD_EXPORT void _INIT_() {
@@ -1323,6 +1371,7 @@ MOD_EXPORT void _INIT_() {
     def["bookmarkRectangle"] = true;
     def["bookmarkCentered"] = true;
     def["bookmarkNoClutter"] = false;
+    def["bookmarkTunedOnly"] = false;
     // Android only (see the import/export UI): there is no working native
     // file picker there, so the path is typed in instead of chosen.
     def["androidIoPath"] = "/storage/emulated/0/Download/sdrpp_bookmarks.json";
