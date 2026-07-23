@@ -3,6 +3,7 @@
 
 The fork is to support Spyserver IQ+FFT (VFO+FFT) - new module Spyserver VFO+FFT added to support this mode instead of FULL IQ Spyserver mode. 
 Please, keep in mind there are still some bugs in this module!!! 
+Frequency manager module: support export / import frequencies and groups on Android. It is necessary to allow Manage all files permission in Android settings for this application. Exported json (imported json) path: /storage/emulated/0/Download
 
 **Please do not report bugs in this fork to original author.**
 
