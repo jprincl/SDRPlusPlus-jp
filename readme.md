@@ -1,4 +1,3 @@
-
 # SDR++ jp (fork), is not the original bloat-free SDR software
 
 **Spyserver IQ+FFT module:** 
@@ -6,11 +5,13 @@
 The fork is to support Spyserver IQ+FFT (VFO+FFT) - new module Spyserver VFO+FFT added to support this mode instead of FULL IQ Spyserver mode. 
 Please, keep in mind there are still some bugs in this module!!! 
 
-<img width="886" height="1499" alt="Screenshot_2026-07-22-09-52-33-260_org jp sdrpp debug" src="https://github.com/user-attachments/assets/21bffd34-60e6-4563-9922-69dab5a0c921" />
+<img width="443" height="750" alt="Screenshot_2026-07-22-09-52-33-260_org jp sdrpp debug" src="https://github.com/user-attachments/assets/21bffd34-60e6-4563-9922-69dab5a0c921" />
 
 ----------------------------------------------------------------------------------
 
 **Frequency manager module and bookmark converter (SDR++ &harr; SDR#)** 
+
+<img width="446" height="800" alt="1000435057" src="https://github.com/user-attachments/assets/631af0fd-ceef-4b75-88a1-72922437e8d4" />
 
 Support export / import frequencies and groups on Android. It is necessary to allow Manage all files permission in Android settings for this application. Exported json (imported json) path: /storage/emulated/0/Download
 
