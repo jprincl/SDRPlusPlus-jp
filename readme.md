@@ -14,6 +14,7 @@ Please, keep in mind there are still some bugs in this module!!!
 <img width="446" height="800" alt="1000435057" src="https://github.com/user-attachments/assets/631af0fd-ceef-4b75-88a1-72922437e8d4" />
 
 Support export / import frequencies and groups on Android. It is necessary to allow Manage all files permission in Android settings for this application. Exported json (imported json) path: /storage/emulated/0/Download
+You can export all lists (groups), current list or selected bookmarks only (there is the multiselect option for select more items on Android)
 
 Script located at `scripts/freqconv.py` converts frequency bookmarks between this fork's
 frequency manager (JSON) and SDR#'s frequency manager (`frequencies.xml`),
