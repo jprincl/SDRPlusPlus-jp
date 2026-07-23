@@ -16,6 +16,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include "bookmark.h"
 #include "schedule.h"
 
@@ -54,6 +55,14 @@ public:
         bookmarkRectangle = config.conf["bookmarkRectangle"];
         bookmarkCentered = config.conf["bookmarkCentered"];
         bookmarkNoClutter = config.conf["bookmarkNoClutter"];
+#ifdef __ANDROID__
+        // Older configs predate this key, so don't assume it's there.
+        if (config.conf.contains("androidIoPath")) {
+            std::string p = config.conf["androidIoPath"];
+            strncpy(androidIoPath, p.c_str(), sizeof(androidIoPath) - 1);
+            androidIoPath[sizeof(androidIoPath) - 1] = '\0';
+        }
+#endif
         config.release();
 
         refreshLists();
@@ -697,6 +706,46 @@ private:
         if (selectedNames.size() != 1 && _this->selectedListName != "") { style::endDisabled(); }
 
         //Draw import and export buttons
+#ifdef __ANDROID__
+        // portable-file-dialogs has no Android backend - it shells out to
+        // zenity/kdialog on anything Linux-like, finds neither, and its
+        // available() check then makes the buttons silently do nothing.
+        // So the path is typed in here instead of picked. Writing outside
+        // the app's own directories needs "All files access" granted in
+        // Android settings (see the note under the field).
+        ImGui::LeftLabel("File");
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        if (ImGui::InputText(("##freq_manager_android_io_path" + _this->name).c_str(),
+                             _this->androidIoPath, sizeof(_this->androidIoPath) - 1)) {
+            config.acquire();
+            config.conf["androidIoPath"] = std::string(_this->androidIoPath);
+            config.release(true);
+        }
+
+        ImGui::BeginTable(("freq_manager_bottom_btn_table" + _this->name).c_str(), 2, 0, ImVec2(ImGui::BeginActionRow(), 0));
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        if (ImGui::Button(("Import##_freq_mgr_imp_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            if (_this->listNames.size() > 0) {
+                _this->importBookmarks(_this->androidIoPath);
+            }
+        }
+
+        ImGui::TableSetColumnIndex(1);
+        if (selectedNames.size() == 0 && _this->selectedListName != "") { style::beginDisabled(); }
+        if (ImGui::Button(("Export##_freq_mgr_exp_" + _this->name).c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 0))) {
+            _this->exportedBookmarks = json::object();
+            config.acquire();
+            for (auto& _name : selectedNames) {
+                _this->exportedBookmarks["bookmarks"][_name] = config.conf["lists"][_this->selectedListName]["bookmarks"][_name];
+            }
+            config.release();
+            _this->exportBookmarks(_this->androidIoPath);
+        }
+        if (selectedNames.size() == 0 && _this->selectedListName != "") { style::endDisabled(); }
+        ImGui::EndTable();
+#else
         ImGui::BeginTable(("freq_manager_bottom_btn_table" + _this->name).c_str(), 2, 0, ImVec2(ImGui::BeginActionRow(), 0));
         ImGui::TableNextRow();
 
@@ -720,6 +769,7 @@ private:
         }
         if (selectedNames.size() == 0 && _this->selectedListName != "") { style::endDisabled(); }
         ImGui::EndTable();
+#endif
 
         if (ImGui::ActionButton(("Select displayed lists##_freq_mgr_exp_" + _this->name).c_str())) {
             _this->selectDialog.request();
@@ -1006,6 +1056,12 @@ private:
     json exportedBookmarks;
     bool importOpen = false;
     bool exportOpen = false;
+#ifdef __ANDROID__
+    // Typed-in import/export target, since there's no file picker on
+    // Android. Defaults to the Downloads folder because that one is
+    // visible in every file manager and over USB.
+    char androidIoPath[1024] = "/storage/emulated/0/Download/sdrpp_bookmarks.json";
+#endif
     pfd::open_file* importDialog;
     pfd::save_file* exportDialog;
 
@@ -1108,6 +1164,9 @@ MOD_EXPORT void _INIT_() {
     def["bookmarkRectangle"] = true;
     def["bookmarkCentered"] = true;
     def["bookmarkNoClutter"] = false;
+    // Android only (see the import/export UI): there is no working native
+    // file picker there, so the path is typed in instead of chosen.
+    def["androidIoPath"] = "/storage/emulated/0/Download/sdrpp_bookmarks.json";
     def["lists"]["General"]["showOnWaterfall"] = true;
     def["lists"]["General"]["bookmarks"] = json::object();
 
