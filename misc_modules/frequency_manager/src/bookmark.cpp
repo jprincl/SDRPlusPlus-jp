@@ -15,6 +15,10 @@ const char* demodModeList[] = {
 
 const char* demodModeListTxt = "NFM\0WFM\0AM\0DSB\0USB\0CW\0LSB\0RAW\0";
 
+// demodModeList has no terminator and callers see it as an incomplete
+// array type, so they cannot size it themselves.
+const int demodModeCount = (int)(sizeof(demodModeList) / sizeof(demodModeList[0]));
+
 FrequencyBookmark bookmarkFromJson(const json& j) {
     FrequencyBookmark bm;
     bm.frequency = j["frequency"];
