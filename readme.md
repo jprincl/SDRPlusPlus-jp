@@ -9,14 +9,11 @@ Please, keep in mind there are still some bugs in this module!!!
 
 ----------------------------------------------------------------------------------
 
-**Frequency manager module:** 
+**Frequency manager module and bookmark converter (SDR++ &harr; SDR#)** 
+
 Support export / import frequencies and groups on Android. It is necessary to allow Manage all files permission in Android settings for this application. Exported json (imported json) path: /storage/emulated/0/Download
 
-----------------------------------------------------------------------------------
-
-**Bookmark converter (SDR++ &harr; SDR#)**
-
-`scripts/freqconv.py` converts frequency bookmarks between this fork's
+Script located at `scripts/freqconv.py` converts frequency bookmarks between this fork's
 frequency manager (JSON) and SDR#'s frequency manager (`frequencies.xml`),
 in both directions. Handy if you have years of frequencies collected in
 SDR# and want them on the tablet — or the other way round.
