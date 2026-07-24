@@ -59,6 +59,9 @@ const int svfoIqFormatsBitCount[] = {
 // the rate during a continuous drag (see the retune thread in start()).
 #define SVFO_MAX_RETUNE_RATE 8
 
+// How many previously used servers to keep in the dropdown.
+#define SVFO_MAX_RECENT 5
+
 ConfigManager svfoConfig;
 
 class SpyServerVFOSourceModule : public ModuleManager::Instance {
@@ -86,6 +89,7 @@ public:
         handler.supportsPostDecimation = false;
 
         strcpy(hostname, host.c_str());
+        loadRecentServers();
 
         sigpath::sourceManager.registerSource("SpyServer VFO+FFT", &handler);
     }
@@ -344,6 +348,27 @@ private:
             svfoConfig.conf["port"] = _this->port;
             svfoConfig.release(true);
         }
+
+        // Previously used servers. Hidden until there is at least one, so a
+        // fresh install doesn't show an empty dropdown. Picking an entry
+        // fills in both fields - the port belongs to the address, so having
+        // to retype it would defeat the point.
+        if (!_this->recentServers.empty()) {
+            SmGui::LeftLabel("Recent");
+            SmGui::FillWidth();
+            if (SmGui::Combo(CONCAT("##_spyserver_vfo_srv_recent_", _this->name), &_this->recentServerId, _this->recentServersTxt.c_str())) {
+                if (_this->recentServerId >= 0 && _this->recentServerId < (int)_this->recentServers.size()) {
+                    auto& rs = _this->recentServers[_this->recentServerId];
+                    strncpy(_this->hostname, rs.hostname.c_str(), sizeof(_this->hostname) - 1);
+                    _this->hostname[sizeof(_this->hostname) - 1] = '\0';
+                    _this->port = rs.port;
+                    svfoConfig.acquire();
+                    svfoConfig.conf["hostname"] = _this->hostname;
+                    svfoConfig.conf["port"] = _this->port;
+                    svfoConfig.release(true);
+                }
+            }
+        }
         if (connected) { SmGui::EndDisabled(); }
 
         if (_this->running) { SmGui::BeginDisabled(); }
@@ -436,6 +461,71 @@ private:
         }
     }
 
+    // Rebuilds the zero-separated string the combo displays. Kept in sync
+    // with recentServers rather than regenerated per frame.
+    void rebuildRecentServersTxt() {
+        recentServersTxt.clear();
+        for (auto& rs : recentServers) {
+            recentServersTxt += rs.hostname + ":" + std::to_string(rs.port);
+            recentServersTxt += '\0';
+        }
+    }
+
+    void loadRecentServers() {
+        recentServers.clear();
+        svfoConfig.acquire();
+        if (svfoConfig.conf.contains("recentServers") && svfoConfig.conf["recentServers"].is_array()) {
+            for (auto& entry : svfoConfig.conf["recentServers"]) {
+                if (!entry.contains("hostname") || !entry.contains("port")) { continue; }
+                RecentServer rs;
+                rs.hostname = entry["hostname"];
+                rs.port = entry["port"];
+                if (rs.hostname.empty()) { continue; }
+                recentServers.push_back(rs);
+                if ((int)recentServers.size() >= SVFO_MAX_RECENT) { break; }
+            }
+        }
+        svfoConfig.release();
+        rebuildRecentServersTxt();
+    }
+
+    // Called once a connection actually succeeded - a server that refused us
+    // is not worth remembering.
+    void rememberServer(const std::string& host, int prt) {
+        if (host.empty()) { return; }
+
+        // Drop any existing entry for the same host:port, so reconnecting to
+        // a known server promotes it instead of duplicating it.
+        for (size_t i = 0; i < recentServers.size();) {
+            if (recentServers[i].hostname == host && recentServers[i].port == prt) {
+                recentServers.erase(recentServers.begin() + i);
+            }
+            else {
+                i++;
+            }
+        }
+
+        RecentServer rs;
+        rs.hostname = host;
+        rs.port = prt;
+        recentServers.insert(recentServers.begin(), rs);
+        while ((int)recentServers.size() > SVFO_MAX_RECENT) { recentServers.pop_back(); }
+
+        recentServerId = 0;
+        rebuildRecentServersTxt();
+
+        json arr = json::array();
+        for (auto& e : recentServers) {
+            json o = json::object();
+            o["hostname"] = e.hostname;
+            o["port"] = e.port;
+            arr.push_back(o);
+        }
+        svfoConfig.acquire();
+        svfoConfig.conf["recentServers"] = arr;
+        svfoConfig.release(true);
+    }
+
     void tryConnect() {
         try {
             if (client) { client.reset(); }
@@ -523,6 +613,7 @@ private:
             iqSampleRate = iqRates[iqDecimId];
             fftSampleRate = fftRates[fftDecimId];
             core::setInputSampleRate(iqSampleRate);
+            rememberServer(hostname, port);
             flog::info("Connected to server (VFO+FFT mode)");
         }
         catch (const std::exception& e) {
@@ -540,6 +631,17 @@ private:
 
     char hostname[1024];
     int port = 5555;
+
+    // Most-recently-used server list. Kept newest-first, capped at
+    // SVFO_MAX_RECENT; connecting to a server already in the list moves it
+    // back to the top rather than adding a duplicate.
+    struct RecentServer {
+        std::string hostname;
+        int port;
+    };
+    std::vector<RecentServer> recentServers;
+    std::string recentServersTxt; // "host:port\0host:port\0..." for the combo
+    int recentServerId = 0;
     int iqType = 1;
 
     int iqDecimId = 0;
@@ -577,6 +679,7 @@ MOD_EXPORT void _INIT_() {
     json def = json({});
     def["hostname"] = "localhost";
     def["port"] = 5555;
+    def["recentServers"] = json::array();
     def["devices"] = json::object();
     svfoConfig.setPath(core::args["root"].s() + "/spyserver_vfo_source_config.json");
     svfoConfig.load(def);
