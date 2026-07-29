@@ -1,10 +1,10 @@
 # Complete changelog
 
-The detailed per-release history of the SDR++ iak fork, including alpha and beta pre-releases. For a brief summary of the major releases only, see [changelog.md](changelog.md).
+The detailed per-release history of the SDR++ jp fork, including alpha and beta pre-releases. For a brief summary of the major releases only, see [changelog.md](changelog.md).
 
 ## v1.4.0-alpha - 2026-07-19
 
-A large UI-focused release. The headline is a touch-friendly interface overhaul that makes SDR++ iak usable with a finger on Android (and previewable on desktop): an Android-metrics style overlay, a Material 3 dark theme, single-finger drag-scroll with fling, pill-handle window splitters, and an IC-705-style direct frequency-entry keypad with an integrated band picker. A new shared `PopupDialog` widget brings consistent keyboard and back-gesture handling to every modal in the app. Alongside these, a batch of desktop input fixes, radio/DSP touches, and crash fixes ported from and reported against upstream SDR++.
+A large UI-focused release. The headline is a touch-friendly interface overhaul that makes SDR++ jp usable with a finger on Android (and previewable on desktop): an Android-metrics style overlay, a Material 3 dark theme, single-finger drag-scroll with fling, pill-handle window splitters, and an IC-705-style direct frequency-entry keypad with an integrated band picker. A new shared `PopupDialog` widget brings consistent keyboard and back-gesture handling to every modal in the app. Alongside these, a batch of desktop input fixes, radio/DSP touches, and crash fixes ported from and reported against upstream SDR++.
 
 The band stacking feature inspired by ICOM radios is work in progress, not working correctly yet.
 
@@ -51,7 +51,7 @@ The waterfall autoscale is work in progress: Both the algorithm and user interfa
 - RDS PS Name, RadioText and PTY Name now decode the RDS/EBU G0 character repertoire to UTF-8 at read time (raw storage unchanged), and the repertoire glyphs Roboto-Medium provides are baked into the ImGui atlas so non-ASCII station text renders correctly. Based on the approach in AlexandreRouma/SDRPlusPlus#1164, reworked to translate at read time rather than switching storage to `std::wstring`. Thanks to @attah.
 - Debug menu (and the ImGui demo window) now compile only into development builds — any build with commits past the last `vX.Y.Z` release tag, or a Debug configuration, or a CI nightly (any GitHub Actions build that isn't a release-tag build). Release-tag artifacts ship without the menu; `IMGUI_DISABLE_DEMO_WINDOWS` reduces `imgui_demo.cpp` to stubs while keeping exported symbols.
 - Module-com contract headers (`radio_interface.h`, `meteor_demodulator_interface.h`, `recorder_interface.h`) moved into `core/src`. These interface-only enum headers were reached via cross-module include paths by seven modules — a layering violation once core itself became a consumer (the band picker) — and all 11 cross-module `target_include_directories` entries are now gone: modules depend only on core at compile time.
-- Android: the app now uses the IAK launcher icon; the inert `proguardFiles` line was removed from the release build (R8/ProGuard never ran, so the app ships unobfuscated, as expected for an open-source project).
+- Android: the app now uses the JP launcher icon; the inert `proguardFiles` line was removed from the release build (R8/ProGuard never ran, so the app ships unobfuscated, as expected for an open-source project).
 - CW filter defaults adjusted; the two `showHzPresetInput` int/float overloads were merged into a single `if constexpr` template; the Spots "Spot Lifetime" label now states its units (minutes).
 - Internal: `SmGui` `DrawListElem` scalar payloads folded into an anonymous union (one scalar is live per element), shrinking each element with no wire-format or field-access change.
 
@@ -87,7 +87,7 @@ First public release of the fork. Cumulatively summarized in [changelog.md](chan
 
 - SNR readout reworked: SNR is now reported as the held peak in-band level over the out-of-VFO noise floor averaged over the same peak-hold window, so the value stays steady on keyed CW instead of sagging between dits and dashes. The separate "SNR Smoothing" display option was removed — smoothing of the readout is now intrinsic.
 - Level meter layout: on narrow windows the meter now switches to sparse (every-other) tick labels and hides the numeric readout instead of overlapping labels, and it can grow wider on large windows.
-- Application icons updated with the fork-specific (iak) branding, including the macOS and Windows icon variants.
+- Application icons updated with the fork-specific (jp) branding, including the macOS and Windows icon variants.
 
 ### Fixed
 
@@ -102,7 +102,7 @@ First public release of the fork. Cumulatively summarized in [changelog.md](chan
 ## v1.2.2-beta2 - 2026-07-11
 
 ### Breaking change
-- Due to the change in network protocol (authentization, source tuning range synchronization) the SDR++-iak network protocol is no more compatible with the upstream SDR++. SDR++-iak therefore rejects connection to non-iak SDR++ forks.
+- Due to the change in network protocol (authentization, source tuning range synchronization) the SDR++-jp network protocol is no more compatible with the upstream SDR++. SDR++-jp therefore rejects connection to non-jp SDR++ forks.
 
 ### Added
 
@@ -181,7 +181,7 @@ First public release of the fork. Cumulatively summarized in [changelog.md](chan
 - New CMake-based dependency build system, ported from PrusaSlicer's (written by Tamas Meszaros, @tamasmeszaros): all third-party libraries are now built from source instead of pulling prebuilt binary blobs. This enables native Windows on ARM64 builds and removes the need for the custom Android SDR-kit Docker image.
 - Native Windows on ARM64 builds.
 - Linux AppImage builds, with isolated config root.
-- Radiosonde decoder plugin, merged directly into the `iak` fork from `sdrpp_radiosonde` by @dbdexter-dev (Davide Belloli), built on his `sondedump` decoding library.
+- Radiosonde decoder plugin, merged directly into the `jp` fork from `sdrpp_radiosonde` by @dbdexter-dev (Davide Belloli), built on his `sondedump` decoding library.
 - Spots module, merged from [`sdrpp-spots`](https://github.com/gerner/sdrpp-spots) by @gerner.
 - WebSDR view module, based on the KiwiSDR map and waterfall code from SDRPlusPlusBrown by @sannysanoff.
 - libcurl integration for HTTPS and secure WebSockets, statically bundled and exported through `sdrpp_core`.
@@ -207,7 +207,7 @@ First public release of the fork. Cumulatively summarized in [changelog.md](chan
 
 ### Changed
 
-- Further steps to fork from upstream with `iak` branding so that the `iak` fork could live side by side with upstream SDR++ on the same system. Fixed Linux Debian packages broken by previous `iak`ization.
+- Further steps to fork from upstream with `jp` branding so that the `jp` fork could live side by side with upstream SDR++ on the same system. Fixed Linux Debian packages broken by previous `jp`ization.
 - Fix of default audio sink on Linux with ALSA audio API selected: Don't let the ALSA audio queue dry up if radio is stopped. The ALSA sink would not restart if the radio was paused and restarted.
 
 ## v1.2.2-alpha2 - 2026-04-19
@@ -230,7 +230,7 @@ First public release of the fork. Cumulatively summarized in [changelog.md](chan
 ### Changed
 
 - Updated CI artifact naming to include version information, commit distance, and commit hash from `git describe`.
-- Added the `-iak` infix to release artifact names and to Linux Debian package naming to keep this fork isolated from upstream SDR++ packages.
+- Added the `-jp` infix to release artifact names and to Linux Debian package naming to keep this fork isolated from upstream SDR++ packages.
 - Reworked CI release handling to read version information from `version.h`.
 
 ### Fixed

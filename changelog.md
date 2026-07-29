@@ -2,9 +2,9 @@
 
 Major releases only. For the detailed per-release history including alpha and beta pre-releases, see [changelog-full.md](changelog-full.md).
 
-## v1.2.2 - 2026-07-14 — first public release of SDR++ iak
+## v1.2.2 - 2026-07-14 — first public release of SDR++ jp
 
-The first public release of the **SDR++ iak** fork, maintained by Vojtech Bubnik (OK1IAK) since March 2026. It builds on [SDR++](https://github.com/AlexandreRouma/SDRPlusPlus) by Alexandre Rouma (@AlexandreRouma) and stays merged with the current upstream master. The fork installs side by side with upstream SDR++ (own package names, config directory and Android app ID). This entry summarizes everything since the fork.
+The first public release of the **SDR++ jp** fork, maintained by Vojtech Bubnik (OK1IAK) since March 2026. It builds on [SDR++](https://github.com/AlexandreRouma/SDRPlusPlus) by Alexandre Rouma (@AlexandreRouma) and stays merged with the current upstream master. The fork installs side by side with upstream SDR++ (own package names, config directory and Android app ID). This entry summarizes everything since the fork.
 
 ### QRP Labs QMX transceiver support — the reason this fork exists
 

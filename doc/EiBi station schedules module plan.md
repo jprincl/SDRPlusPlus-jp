@@ -29,7 +29,7 @@ seasonally, and never user-edited.
   style, naming). That module was just modernized and is the reference for module structure.
 - New module CMakeLists must follow the fork convention: `include(${SDRPP_MODULE_CMAKE})`
   (see `misc_modules/frequency_manager/CMakeLists.txt` as the template). This fork installs
-  plugins to `lib/sdrpp-iak/plugins` via that shared cmake file — do not hardcode install paths.
+  plugins to `lib/sdrpp-jp/plugins` via that shared cmake file — do not hardcode install paths.
 - License is GPL-3.0 like the rest of the repo. Credit the concept in a header comment:
   "Concept inspired by shortwave-station-list-sdrpp by Otto Pattemore (GPL-3.0). Schedule data
   from EiBi (http://www.eibispace.de) by Eike Bierwirth."
