@@ -29,6 +29,7 @@ namespace demod {
                 agcMode = carrierAgc ? dsp::demod::AM<dsp::stereo_t>::AGCMode::CARRIER : dsp::demod::AM<dsp::stereo_t>::AGCMode::AUDIO;
             }
             loadConf(cfg, "agcGain", agcGain);
+            loadConf(cfg, "agcMaxGain", agcMaxGain);
             loadConf(cfg, "agcAttack", agcAttack);
             loadConf(cfg, "agcDecay", agcDecay);
             config->release();
@@ -36,6 +37,7 @@ namespace demod {
             // Define structure
             demod.init(input, (dsp::demod::AM<dsp::stereo_t>::AGCMode)agcMode, bandwidth, agcAttack / getIFSampleRate(), agcDecay / getIFSampleRate(), 100.0 / getIFSampleRate(), getIFSampleRate());
             demod.setAGCGain(powf(10.0f, agcGain / 20.0f));
+            demod.setAGCMaxGain(powf(10.0f, agcMaxGain / 20.0f));
         }
 
         void start() { demod.start(); }
@@ -67,7 +69,14 @@ namespace demod {
                 saveConf("agcGain", agcGain);
             }
             if (agcEnabled) { ImGui::EndDisabled(); }
-            else { ImGui::BeginDisabled(); }
+
+            if (!agcEnabled) { ImGui::BeginDisabled(); }
+            ImGui::LeftLabel("AGC Max Gain");
+            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+            if (ImGui::SliderFloat(("##_radio_am_max_gain_" + name).c_str(), &agcMaxGain, 0.0f, 90.0f, "%.0f dB")) {
+                demod.setAGCMaxGain(powf(10.0f, agcMaxGain / 20.0f));
+                saveConf("agcMaxGain", agcMaxGain);
+            }
             ImGui::LeftLabel("AGC Attack");
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
             if (ImGui::SliderFloat(("##_radio_am_agc_attack_" + name).c_str(), &agcAttack, 1.0f, 200.0f)) {
@@ -114,6 +123,7 @@ namespace demod {
 
         int agcMode = dsp::demod::AM<dsp::stereo_t>::AGCMode::AUDIO;
         float agcGain = 0.0f;
+        float agcMaxGain = 40.0f;
         float agcAttack = 50.0f;
         float agcDecay = 5.0f;
     };

@@ -78,6 +78,13 @@ namespace dsp::demod {
             return (_agcMode == AGCMode::CARRIER) ? carrierAgc.getGain() : audioAgc.getGain();
         }
 
+        void setAGCMaxGain(double maxGain) {
+            assert(base_type::_block_init);
+            std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
+            carrierAgc.setMaxGain(maxGain);
+            audioAgc.setMaxGain(maxGain);
+        }
+
         void setBandwidth(double bandwidth) {
             assert(base_type::_block_init);
             std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);

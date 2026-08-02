@@ -194,12 +194,14 @@ namespace demod {
     struct AGCControls {
         bool enabled = true;
         float gain = 0.0f;   // dB
+        float maxGain = 40.0f; // dB
         float attack = 50.0f;
         float decay = 5.0f;
 
         void load(const nlohmann::json& j) {
             Demodulator::loadConf(j, "agcEnabled", enabled);
             Demodulator::loadConf(j, "agcGain", gain);
+            Demodulator::loadConf(j, "agcMaxGain", maxGain);
             Demodulator::loadConf(j, "agcAttack", attack);
             Demodulator::loadConf(j, "agcDecay", decay);
         }
@@ -210,6 +212,7 @@ namespace demod {
         void apply(TDemod& demod) {
             demod.setAGCEnabled(enabled);
             demod.setAGCGain(powf(10.0f, gain / 20.0f));
+            demod.setAGCMaxGain(powf(10.0f, maxGain / 20.0f));
         }
 
         template <class TDemod>
@@ -234,7 +237,14 @@ namespace demod {
                 owner->saveConf("agcGain", gain);
             }
             if (enabled) { ImGui::EndDisabled(); }
-            else { ImGui::BeginDisabled(); }
+
+            if (!enabled) { ImGui::BeginDisabled(); }
+            ImGui::LeftLabel("AGC Max Gain");
+            ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+            if (ImGui::SliderFloat((id + "_max_gain_" + owner->name).c_str(), &maxGain, 0.0f, 90.0f, "%.0f dB")) {
+                demod.setAGCMaxGain(powf(10.0f, maxGain / 20.0f));
+                owner->saveConf("agcMaxGain", maxGain);
+            }
             ImGui::LeftLabel("AGC Attack");
             ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
             if (ImGui::SliderFloat((id + "_agc_attack_" + owner->name).c_str(), &attack, 1.0f, 200.0f)) {

@@ -79,6 +79,12 @@ namespace dsp::demod {
             return agc.getGain();
         }
 
+        void setAGCMaxGain(double maxGain) {
+            assert(base_type::_block_init);
+            std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
+            agc.setMaxGain(maxGain);
+        }
+
         void setAGCAttack(double attack) {
             assert(base_type::_block_init);
             std::lock_guard<std::recursive_mutex> lck(base_type::ctrlMtx);
