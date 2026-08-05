@@ -152,7 +152,10 @@ public:
         audioCenter = (demodList.value(demodId) == DemodMode::NFM)
                         ? audioCenterNFM : audioCenterSSB;
 
-        if (savePath.empty()) {
+       if (savePath.empty()) {
+        #ifdef __ANDROID__
+            savePath = core::args["root"].s() + "/wefax_images";
+        #else
             const char* home =
             #ifdef _WIN32
                 std::getenv("USERPROFILE");
@@ -161,6 +164,7 @@ public:
             #endif
             if (home) savePath = std::string(home) + "/wefax_images";
             else      savePath = "./wefax_images";
+           #endif
         }
         folderSelect.setPath(savePath);
 
