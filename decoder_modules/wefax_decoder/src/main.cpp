@@ -150,10 +150,10 @@ public:
         audioCenter = (demodList.value(demodId) == DemodMode::NFM)
                         ? audioCenterNFM : audioCenterSSB;
 
-       if (savePath.empty()) {
-        #ifdef __ANDROID__
+        if (savePath.empty()) {
+            #ifdef __ANDROID__
             savePath = core::args["root"].s() + "/wefax_images";
-        #else
+            #else
             const char* home =
             #ifdef _WIN32
                 std::getenv("USERPROFILE");
@@ -162,7 +162,7 @@ public:
             #endif
             if (home) savePath = std::string(home) + "/wefax_images";
             else      savePath = "./wefax_images";
-           #endif
+            #endif
         }
         folderSelect.setPath(savePath);
 
@@ -335,9 +335,18 @@ private:
         if (w <= 0) return;
 
         std::lock_guard<std::mutex> tlck(textureMutex);
-        if (texture == 0 || texWidth != w) {
-            if (texture != 0) glDeleteTextures(1, &texture);
-            glGenTextures(1, &texture);
+        if (texture == 0 || texWidth != w || texNeedsRealloc) {
+            // Allocate the texture NAME only once (cold start). On a width change
+            // or after a GL-context recreation we keep the SAME name and just
+            // re-define its storage below. Crucially we never glGenTextures again:
+            // core widgets like the waterfall re-bind their own cached names by
+            // hand after a context loss (glBindTexture + glTexImage2D) instead of
+            // regenerating, so a fresh glGenTextures here can hand us THEIR name and
+            // we'd then sample/clobber their texture — that is the "waterfall shows
+            // up in the WEFAX panel" bug. Re-binding our own distinct name
+            // auto-recreates the object in the new context, exactly like the
+            // waterfall heals itself.
+            if (texture == 0) glGenTextures(1, &texture);
             glBindTexture(GL_TEXTURE_2D, texture);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -346,6 +355,7 @@ private:
                          GL_RGB, GL_UNSIGNED_BYTE, nullptr);
             texWidth = w;
             texHeight = wefax::WEFAX_MAX_LINES;
+            texNeedsRealloc = false;
         }
         {
             std::lock_guard<std::mutex> ilck(decoder.getImageMutex());
@@ -608,7 +618,26 @@ private:
         // ---- Image display ----
         ImGui::Separator();
         bool dirty;
-        { std::lock_guard<std::mutex> lck(_this->textureMutex); dirty = _this->textureDirty; }
+        {
+            std::lock_guard<std::mutex> lck(_this->textureMutex);
+            // Detect a GL-context recreation without touching the backend. On
+            // Android, background->foreground runs backend::end() then
+            // doPartialInit(), which rebuilds the ImGui AND GL context together. A
+            // fresh ImGui context resets its frame counter, so if GetFrameCount()
+            // drops below what we last saw, the context was recreated and our
+            // texture's storage is gone. Force a realloc+reupload on the SAME
+            // texture name (uploadTexture keeps the id) — do NOT reset it to 0,
+            // which would glGenTextures a possibly-colliding name. Frame count is a
+            // value that resets, not a reused handle, so unlike glIsTexture this
+            // can't be fooled by ID reuse.
+            int frameCount = ImGui::GetFrameCount();
+            if (frameCount < _this->lastFrameCount) {
+                _this->texNeedsRealloc = true;
+                _this->textureDirty = true;
+            }
+            _this->lastFrameCount = frameCount;
+            dirty = _this->textureDirty;
+        }
         if (dirty) _this->uploadTexture();
         int lines = _this->decoder.getLinesReceived();
         if (_this->texture != 0 && _this->texWidth > 0 && lines > 0) {
@@ -834,6 +863,8 @@ private:
     double  lastSavedLearnedPpm = 0.0;
 
     GLuint      texture = 0;
+    bool        texNeedsRealloc = false; // set on GL-context recreation: re-define storage on the SAME texture name
+    int         lastFrameCount = 0;      // ImGui frame count at last draw; a drop means the context was recreated
     int         texWidth = 0;
     int         texHeight = 0;
     std::mutex  textureMutex;
