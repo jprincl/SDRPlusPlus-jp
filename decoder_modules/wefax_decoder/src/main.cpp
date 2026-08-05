@@ -351,6 +351,7 @@ private:
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, wefax::WEFAX_MAX_LINES, 0,
                          GL_RGB, GL_UNSIGNED_BYTE, nullptr);
             texWidth = w;
@@ -363,6 +364,8 @@ private:
             int rows = std::min(h, wefax::WEFAX_MAX_LINES);
             if (data && rows > 0) {
                 glBindTexture(GL_TEXTURE_2D, texture);
+                glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
                 glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, rows,
                                 GL_RGB, GL_UNSIGNED_BYTE, data);
             }
