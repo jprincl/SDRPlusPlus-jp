@@ -31,12 +31,10 @@
 #include <sstream>
 #include <vector>
 
-#ifdef _WIN32
-#include <windows.h>
-#include <GL/gl.h>
-#else
-#include <GL/gl.h>
-#endif
+// OpenGL headers for the live-image texture. Use the core's central include
+// switch (Win32/GL, macOS, Android/GLES3, Linux/GL) instead of a hardcoded
+// <GL/gl.h>, which has no equivalent in the Android NDK.
+#include <utils/opengl_include_code.h>
 
 #include "wefax_decoder.h"
 
