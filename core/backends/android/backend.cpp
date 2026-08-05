@@ -32,6 +32,7 @@ namespace backend {
     EGLDisplay _EglDisplay = EGL_NO_DISPLAY;
     EGLSurface _EglSurface = EGL_NO_SURFACE;
     EGLContext _EglContext = EGL_NO_CONTEXT;
+    EGLConfig  _EglConfig  = nullptr; // kept so resumeSurface() can rebuild the surface for the kept context
     char _LogTag[] = "SDR++ jp";
     bool initialized = false;
     bool pauseRendering = false;
@@ -55,6 +56,8 @@ namespace backend {
     int ShowSoftKeyboardInput();
     int PollUnicodeChars();
     float getContentScale();
+    void suspendSurface(); // background: drop only the EGLSurface, keep the GL context alive
+    void resumeSurface();  // foreground: recreate the surface and rebind the kept context
     static UsbDeviceHandle getUsbDeviceHandle(const std::vector<DevVIDPID>& allowedVidPids);
     static bool releaseUsbDeviceHandle(const UsbDeviceHandle& handle);
     static bool callActivityVoidMethod(const char* name);
@@ -183,7 +186,7 @@ namespace backend {
         case APP_CMD_INIT_WINDOW:
             flog::warn("APP_CMD_INIT_WINDOW");
             if (pauseRendering && !exited) {
-                doPartialInit();
+                backend::resumeSurface(); // was doPartialInit(); rebind the surviving GL context
                 pauseRendering = false;
             }
             exited = false;
@@ -193,7 +196,7 @@ namespace backend {
             flog::warn("APP_CMD_TERM_WINDOW");
             suspendSleepTimer();
             pauseRendering = true;
-            backend::end();
+            backend::suspendSurface(); // was backend::end(); keep the GL context + textures alive
             break;
         case APP_CMD_GAINED_FOCUS:
             flog::warn("APP_CMD_GAINED_FOCUS");
@@ -704,6 +707,7 @@ namespace backend {
             // Get the first matching config
             EGLConfig egl_config;
             eglChooseConfig(_EglDisplay, egl_attributes, &egl_config, 1, &num_configs);
+            _EglConfig = egl_config; // remember it for resumeSurface()
             EGLint egl_format;
             eglGetConfigAttrib(_EglDisplay, egl_config, EGL_NATIVE_VISUAL_ID, &egl_format);
             ANativeWindow_setBuffersGeometry(app->window, 0, 0, egl_format);
@@ -734,6 +738,56 @@ namespace backend {
 
         common::initScaleState(scaleState, resDir, getContentScale(), userScaleFactor);
         return 0;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Background / foreground WITHOUT destroying the GL context.
+    //
+    // The window (and therefore the EGLSurface) belongs to the visible activity
+    // and must be released when the app is backgrounded. The EGLContext, however,
+    // together with every GL object living in it — textures owned by the waterfall
+    // and by decoder modules, ImGui's font atlas, shaders — can be kept alive
+    // across the background trip. Keeping it means those textures survive, so
+    // image-backed decoders (WEFAX, SSTV / weather-sat) do not lose
+    // their picture and need zero per-module recovery code.
+    //
+    // Only the light APP_CMD_TERM_WINDOW / APP_CMD_INIT_WINDOW cycle uses these.
+    // Genuine app exit still runs the full end() (called from core.cpp after the
+    // render loop returns), which tears the context down properly.
+    // ---------------------------------------------------------------------------
+    void suspendSurface() {
+        if (_EglDisplay != EGL_NO_DISPLAY) {
+            // Unbind the context from the (about-to-be-invalid) surface, then
+            // destroy only the surface. Context, display and ImGui stay alive.
+            eglMakeCurrent(_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+            if (_EglSurface != EGL_NO_SURFACE) {
+                eglDestroySurface(_EglDisplay, _EglSurface);
+                _EglSurface = EGL_NO_SURFACE;
+            }
+        }
+        // Balance the ANativeWindow_acquire() done in aquireWindow().
+        if (app->window) { ANativeWindow_release(app->window); }
+    }
+
+    void resumeSurface() {
+        // Acquire the freshly-created window and build a new surface bound to the
+        // SAME context, so every existing GL object stays valid.
+        if (aquireWindow() != 0) { return; }
+
+        EGLint egl_format = 0;
+        eglGetConfigAttrib(_EglDisplay, _EglConfig, EGL_NATIVE_VISUAL_ID, &egl_format);
+        ANativeWindow_setBuffersGeometry(app->window, 0, 0, egl_format);
+
+        _EglSurface = eglCreateWindowSurface(_EglDisplay, _EglConfig, app->window, NULL);
+        eglMakeCurrent(_EglDisplay, _EglSurface, _EglSurface, _EglContext);
+
+        // The ImGui Android input backend caches the window pointer (it reads
+        // DisplaySize from it each frame); repoint it at the new window. This
+        // touches no GL state and asserts nothing, so re-calling Init is safe.
+        ImGui_ImplAndroid_Init(app->window);
+
+        // Match the old resume path: let the menu recompute its layout.
+        gui::mainWindow.setFirstMenuRender();
     }
 
     void beginFrame() {
