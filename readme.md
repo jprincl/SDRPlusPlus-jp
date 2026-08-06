@@ -1,6 +1,6 @@
 # SDR++ jp (fork), is not the original bloat-free SDR software
 
-**Spyserver VFO+FFT module:** 
+## Spyserver VFO+FFT module:
 
 The fork is to support Spyserver VFO+FFT - new module Spyserver VFO+FFT added to support this mode instead of FULL IQ Spyserver mode. Only portion of IQ around tuned frequency is streamed to save the internet bandwidth. You can set various values of IQ bandwidth.
 Please, keep in mind there are still some bugs in this module!!! 
@@ -25,7 +25,7 @@ Values measured for FFT bandwith 912 kHz.
 
 ----------------------------------------------------------------------------------
 
-**Frequency manager module and bookmark converter (SDR++ &harr; SDR#)** 
+## Frequency manager module and bookmark converter (SDR++ &harr; SDR#)
 
 <img width="446" height="800" alt="1000435057" src="https://github.com/user-attachments/assets/631af0fd-ceef-4b75-88a1-72922437e8d4" />
 
@@ -112,7 +112,7 @@ than being quietly lost.
 
 --------------------------------------------------------------------------
 
-**Radiosonde decoder module:**
+## Radiosonde decoder module
 
 Fixed crashing SDR++ when radiosonde decoding starts on Android.
 
@@ -120,7 +120,7 @@ Fixed crashing SDR++ when radiosonde decoding starts on Android.
 
 --------------------------------------------------------------------------
 
-**FT8/FT4/WSPR decoder module**
+## FT8/FT4/WSPR decoder module
 
 <img width="700" height="570" alt="e27061ef-1ded-495a-82d5-f83c2e5f6ead" src="https://github.com/user-attachments/assets/1783208d-a163-47de-88d6-2330a481f9f9" />
 
