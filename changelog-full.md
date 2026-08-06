@@ -2,6 +2,14 @@
 
 The detailed per-release history of the SDR++ iak fork, including alpha and beta pre-releases. For a brief summary of the major releases only, see [changelog.md](changelog.md).
 
+## v1.4.0-beta - 2026-08-06
+
+Wefax decoder module from SwissKnifeEdition implemented and fixed to work in Android. Fixed slant problem in preview pictures in the original version. FT8/FT4 decoder module minor fix, RR73 is not recognized as a WW locator anymore.
+
+## v1.3.2-beta - 2026-08-03
+
+Minor change in AGC sliders, range increased up to 120 dB
+
 ## v1.3.1-beta - 2026-08-02
 
 Renamed the “Threshold” label to “AGC Threshold” so it matches the others
