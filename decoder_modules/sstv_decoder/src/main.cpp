@@ -492,22 +492,30 @@ private:
         if (w <= 0 || h <= 0) return;
 
         std::lock_guard<std::mutex> tlck(textureMutex);
-        if (texture == 0 || texWidth != w || texHeight != h) {
-            if (texture != 0) glDeleteTextures(1, &texture);
-            glGenTextures(1, &texture);
+        if (texture == 0 || texWidth != w || texHeight != h || texNeedsRealloc) {
+            // Allocate the texture NAME only once (cold start). On a size change
+            // or after a GL-context recreation we keep the SAME name and just
+            // re-define its storage below — never glGenTextures again (see WEFAX
+            // fix: a fresh name after context loss can collide with a name the
+            // waterfall re-binds by hand, causing it to show up in our panel).
+            if (texture == 0) glGenTextures(1, &texture);
             glBindTexture(GL_TEXTURE_2D, texture);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
             texWidth = w;
             texHeight = h;
+            texNeedsRealloc = false;
         }
         {
             std::lock_guard<std::mutex> ilck(decoder.getImageMutex());
             const uint8_t* data = decoder.getImageRGB();
             if (data) {
                 glBindTexture(GL_TEXTURE_2D, texture);
+                glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
                 glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, data);
             }
         }
@@ -703,6 +711,18 @@ private:
         bool textureDirty;
         {
             std::lock_guard<std::mutex> lck(_this->textureMutex);
+            // On Android, background->foreground destroys and recreates the
+            // EGL context (and with it, ImGui's own context); a fresh ImGui
+            // context resets GetFrameCount() to 0. If the count just dropped,
+            // our cached GLuint no longer names valid storage in the new
+            // context, so force a realloc+reupload on the SAME id (see
+            // uploadTexture() — it never glGenTextures again after cold start).
+            int frameCount = ImGui::GetFrameCount();
+            if (frameCount < _this->lastFrameCount) {
+                _this->texNeedsRealloc = true;
+                _this->textureDirty = true;
+            }
+            _this->lastFrameCount = frameCount;
             textureDirty = _this->textureDirty;
         }
         if (textureDirty) _this->uploadTexture();
@@ -855,6 +875,8 @@ private:
     GLuint                      texture = 0;
     int                         texWidth = 0;
     int                         texHeight = 0;
+    bool                        texNeedsRealloc = false; // set on GL-context recreation: re-define storage on the SAME texture name
+    int                         lastFrameCount = 0;      // ImGui frame count at last draw; a drop means the context was recreated
     std::mutex                  textureMutex;
     bool                        textureDirty = false;
 
