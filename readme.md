@@ -131,6 +131,8 @@ Implemented FT8/FT4/WSPR decoder module from SwissKnifeEdition SDR++ (from F4JTV
 ## Weather Fax decoder module
 Implemented Wefax decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some changes were made to the code to work the module without issues in Android OS (the preview image does not disappear when SDR++ goes to the background and then returns to the foreground), and an issue was fixed where the preview image appeared to be slanted, but the saved image was not (the GL_UNPACK_ALIGNMENT variable was set to 1). 
 
+<img width="1280" height="800" src="https://github.com/jprincl/SDRPlusPlus-jp/blob/ffe0d6a77078bc76084f21914b344a244e3aeba0/doc/pictures/wefax_module.jpg" />
+
 ---------------------------------------------------------------------------
 
 **Please do not report bugs in this fork to original author.**
