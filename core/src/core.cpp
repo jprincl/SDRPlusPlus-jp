@@ -383,6 +383,7 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.conf["modules"][modCount++] = "radiosonde_decoder.so";
     core::configManager.conf["modules"][modCount++] = "ft8_decoder.so";
     core::configManager.conf["modules"][modCount++] = "wefax_decoder.so";
+    core::configManager.conf["modules"][modCount++] = "sstv_decoder.so"
 
     core::configManager.conf["modules"][modCount++] = "frequency_manager.so";
     core::configManager.conf["modules"][modCount++] = "noise_reduction_logmmse.so";
