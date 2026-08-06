@@ -147,6 +147,11 @@ static std::string extractFTxLocator(const std::string& msg) {
     for (int i = (int)tokens.size() - 1; i >= std::max(0, (int)tokens.size() - 2); --i) {
         std::string t = tokens[i];
         if (t.size() == 4) {
+            // "RR73" is a fixed FT8/FT4 sign-off code, not locator — but with the same
+            // pattern like the grid (2 letters A-R + 2 numbers) so it has to be excluded manually
+            if ((t[0] == 'R' || t[0] == 'r') && (t[1] == 'R' || t[1] == 'r') && t[2] == '7' && t[3] == '3') {
+                continue;
+            }
             double dummyLat, dummyLon;
             if (locatorToLatLon(t, dummyLat, dummyLon)) {
                 return t;
