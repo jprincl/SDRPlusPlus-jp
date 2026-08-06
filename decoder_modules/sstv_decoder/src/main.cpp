@@ -170,6 +170,9 @@ public:
 
         // Default save path: ~/sstv_images
         if (savePath.empty()) {
+            #ifdef __ANDROID__
+            savePath = core::args["root"].s() + "/sstv_images";
+            #else
             const char* home =
             #ifdef _WIN32
                 std::getenv("USERPROFILE");
@@ -178,6 +181,7 @@ public:
             #endif
             if (home) savePath = std::string(home) + "/sstv_images";
             else      savePath = "./sstv_images";
+            #endif
         }
         folderSelect.setPath(savePath);
 
