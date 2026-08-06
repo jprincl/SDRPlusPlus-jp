@@ -126,6 +126,11 @@ Fixed crashing SDR++ when radiosonde decoding starts on Android.
 
 Implemented FT8/FT4/WSPR decoder module from SwissKnifeEdition SDR++ (from F4JTV), added some improvements, when you provide your QTH square, it calculates and shows distance between squares for received messages.
 
+--------------------------------------------------------------------------
+
+## Weather Fax decoder module
+Implemented Wefax decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some changes were made to the code to work the module without issues in Android OS (the preview image does not disappear when SDR++ goes to the background and then returns to the foreground), and an issue was fixed where the preview image appeared to be slanted, but the saved image was not (the GL_UNPACK_ALIGNMENT variable was set to 1). 
+
 ---------------------------------------------------------------------------
 
 **Please do not report bugs in this fork to original author.**
