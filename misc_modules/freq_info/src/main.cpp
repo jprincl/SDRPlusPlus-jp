@@ -10,6 +10,7 @@
 #include <utils/freq_formatting.h>
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include "entry.h"
@@ -120,11 +121,28 @@ private:
         std::vector<float> lanePositions; // right edge of the last label placed in each lane
         const int laneLimit = 6;
         const float laneHeight = ImGui::GetTextLineHeight() + 4;
-        const ImU32 bgColor = IM_COL32(0xCF, 0xFD, 0xBC, 255);
-        const ImU32 textColor = IM_COL32(0, 0, 0, 255);
+        const ImU32 tunedBg = IM_COL32(0xCF, 0xFD, 0xBC, 255);
+        const ImU32 tunedText = IM_COL32(0, 0, 0, 255);
+        const ImU32 dimBg = IM_COL32(140, 140, 140, 90);
+        const ImU32 dimText = IM_COL32(210, 210, 210, 190);
 
-        for (const ListenInfoEntry* ePtr : _this->viewEntries) {
+        // Entries within tolerance of the tuned frequency go first, so they
+        // claim lanes before anything else — the tuned station should never
+        // be the one that gets dropped when a frequency is crowded.
+        std::vector<const ListenInfoEntry*> drawOrder = _this->viewEntries;
+        std::stable_partition(drawOrder.begin(), drawOrder.end(),
+            [_this](const ListenInfoEntry* e) {
+                return std::abs(e->frequency - _this->lastTunedFreq) <= _this->toleranceHz;
+            });
+
+        int hiddenForSpace = 0;
+
+        for (const ListenInfoEntry* ePtr : drawOrder) {
             const ListenInfoEntry& e = *ePtr;
+            bool isTuned = std::abs(e.frequency - _this->lastTunedFreq) <= _this->toleranceHz;
+            ImU32 bgColor = isTuned ? tunedBg : dimBg;
+            ImU32 textColor = isTuned ? tunedText : dimText;
+
             double centerXpos = args.min.x + std::round((e.frequency - args.lowFreq) * args.freqToPixelRatio);
 
             ImVec2 nameSize = ImGui::CalcTextSize(e.name.c_str());
@@ -141,7 +159,7 @@ private:
                 }
             }
             if (targetY < 0) {
-                if (lane >= laneLimit) { continue; } // no room this frame; still in viewEntries/panel
+                if (lane >= laneLimit) { hiddenForSpace++; continue; } // no room this frame; still in viewEntries/panel
                 targetY = args.min.y + lane * laneHeight;
                 lanePositions.push_back(rightEdge);
             }
@@ -161,6 +179,18 @@ private:
             args.window->DrawList->AddText(ImVec2((float)centerXpos - nameSize.x / 2, targetY), textColor, e.name.c_str());
 
             _this->waterfallLabels.push_back({e, bgColor, rectMin, rectMax});
+        }
+
+        // Nothing should vanish silently — if lanes ran out, say so instead
+        // of just dropping entries with no on-screen trace. Full list is
+        // always in the panel regardless.
+        if (hiddenForSpace > 0) {
+            char hint[64];
+            snprintf(hint, sizeof(hint), "+%d more (see panel)", hiddenForSpace);
+            ImVec2 hintSize = ImGui::CalcTextSize(hint);
+            ImVec2 hintPos(args.max.x - hintSize.x - 6, args.min.y + 2);
+            args.window->DrawList->AddRectFilled(hintPos, ImVec2(hintPos.x + hintSize.x + 4, hintPos.y + hintSize.y + 2), IM_COL32(0, 0, 0, 160));
+            args.window->DrawList->AddText(ImVec2(hintPos.x + 2, hintPos.y + 1), IM_COL32(255, 255, 255, 255), hint);
         }
     }
 
