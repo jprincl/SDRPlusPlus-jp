@@ -210,7 +210,7 @@ private:
             _this->decoder->setAFCEnabled(_this->afcEnabled);
             config.acquire(); config.conf[_this->name]["afcEnabled"] = _this->afcEnabled; config.release(true);
         }
-        if (_this->afcEnabled) {
+        if (_this->afcEnabled && _this->decoder) {
             ImGui::SameLine();
             ImGui::TextDisabled("(auto: %.0f Hz)", _this->decoder->getTrackedAFFreq());
         }
