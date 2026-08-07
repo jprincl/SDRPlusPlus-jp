@@ -2,7 +2,7 @@
 #include "eibi_parser.h"
 #include <ctime>
 #include <cctype>
-#include <flog.h>
+#include <utils/flog.h>
 
 void ListenInfoDatabase::loadEibi(const std::string& path) {
     entries = parseEibiCsv(path);
