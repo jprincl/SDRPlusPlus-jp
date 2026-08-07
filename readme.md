@@ -142,6 +142,11 @@ Implemented RTTY decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some 
 
 ---------------------------------------------------------------------------
 
+## SSTV decoder module
+Implemented SSTV decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some changes were made to the code to work the module without issues in Android OS (the preview image does not disappear when SDR++ goes to the background and then returns to the foreground), and an issue was fixed where the preview image appeared to be slanted, but the saved image was not (the GL_UNPACK_ALIGNMENT variable was set to 1). Reset button now clears the preview of the previous transmission.
+
+---------------------------------------------------------------------------
+
 **Please do not report bugs in this fork to original author.**
 
 **Report bugs in this fork on this page, in ISSUES.** 
