@@ -726,7 +726,8 @@ private:
             textureDirty = _this->textureDirty;
         }
         if (textureDirty) _this->uploadTexture();
-        if (_this->texture != 0 && _this->texWidth > 0 && _this->texHeight > 0) {
+        if (_this->texture != 0 && _this->texWidth > 0 && _this->texHeight > 0 &&
+            _this->decoder.getLinesReceived() > 0) {
             float aspect = (float)_this->texHeight / (float)_this->texWidth;
             float w = menuWidth;
             float h = w * aspect;
