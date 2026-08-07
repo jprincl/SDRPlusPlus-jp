@@ -135,6 +135,13 @@ Implemented Wefax decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some
 
 ---------------------------------------------------------------------------
 
+## RTTY decoder module
+Implemented RTTY decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some changes were made to the code to work the module without issues in Android OS. Fixed crash SDR++ during disabling decoder with AFC turned on.
+
+<img width="1280" height="800" src="https://github.com/jprincl/SDRPlusPlus-jp/blob/186a3436de65eb45c111f63e75f9cee5beaf8f4c/doc/pictures/rtty_decoder.jpg">
+
+---------------------------------------------------------------------------
+
 **Please do not report bugs in this fork to original author.**
 
 **Report bugs in this fork on this page, in ISSUES.** 
@@ -148,6 +155,8 @@ Thanks and due respect to:
 * Original author, Alexandre Rouma, for his great [work](https://github.com/AlexandreRouma/SDRPlusPlus). Due credits go to all contributors in the upstream project. 
 * Hans Summers G0UPL [QRP Labs QMX Transceiver](https://qrp-labs.com/qmx).
 * Lee Salzman for the [enet](https://github.com/lsalzman/enet) UDP networking library used for QMX streaming.
+* Vojtech Bubnik (https://github.com/bubnikv/SDRPlusPlus-iak) for improvements original SDR++ (better UI for Android, frequency and band selector and many more)
+* F4JTV (https://github.com/F4JTV/SDRPlusPlus_SwissKnifeEdition) for FT8, WEFAX, SSTV and RTTY decoder modules 
 
 ## Feedback
 
