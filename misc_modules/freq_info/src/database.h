@@ -22,10 +22,18 @@ public:
 
     // Time-filtered, frequency-ascending, for everything currently in
     // [lowFreq, highFreq]. Used both for waterfall markers and for the
-    // panel's "entries in view" table — same result feeds both.
+    // panel's "entries in view" table — same result feeds both. Frequency
+    // stays the primary order; when two entries share (or nearly share)
+    // a frequency, the same distance/target-area ranking used by
+    // queryFrequency() below breaks the tie, so a table row or waterfall
+    // lane order for a shared channel matches what "Now tuned" already
+    // shows for that same channel.
     std::vector<const ListenInfoEntry*> queryRange(
         double lowFreq, double highFreq,
-        std::chrono::system_clock::time_point now) const;
+        std::chrono::system_clock::time_point now,
+        const std::string& preferredTargetArea = "",
+        double listenerLat = std::numeric_limits<double>::quiet_NaN(),
+        double listenerLon = std::numeric_limits<double>::quiet_NaN()) const;
 
     // Narrow window around one frequency (+/- toleranceHz), time-filtered,
     // ranked in three tiers: (1) entries with known coordinates AND a known
