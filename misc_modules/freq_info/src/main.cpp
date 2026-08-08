@@ -374,20 +374,10 @@ private:
         }
 
         ImGui::LeftLabel("Top offset (px)");
-        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX() - 100);
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
         {
             float off = _this->topOffsetPx;
-            bool changed = ImGui::SliderFloat(("##_li_topoff_" + _this->name).c_str(), &off, 0.0f, 100.0f, "%.0f");
-            ImGui::SameLine();
-            // Same formula core uses for the Band Plan strip height
-            // (waterfall.cpp: drawBandPlan()) — click this after moving
-            // Band Plan to the top of the spectrum, to avoid overlapping it
-            // without having to guess a pixel value by eye.
-            if (ImGui::Button(("Match Band Plan##_li_bpmatch_" + _this->name).c_str())) {
-                off = ImGui::CalcTextSize("0").y * 2.5f + 2.0f;
-                changed = true;
-            }
-            if (changed) {
+            if (ImGui::SliderFloat(("##_li_topoff_" + _this->name).c_str(), &off, 0.0f, 100.0f, "%.0f")) {
                 _this->topOffsetPx = off;
                 config.acquire();
                 config.conf[_this->name]["topOffsetPx"] = _this->topOffsetPx;
@@ -440,23 +430,40 @@ private:
     // so both always show the exact same rows in the exact same format.
     // tunedFreq/toleranceHz identify which row (if any) is "currently
     // tuned" — that row gets the same highlight color used on the
-    // waterfall, and scrollToTuned (true only on the frame the tuned
-    // frequency changed — see the two lastScrolledFreq* trackers at the
-    // call sites) brings it into view without fighting manual scrolling.
+    // waterfall (with black text pushed on top so it stays readable
+    // against the light background), and scrollToTuned (true only on the
+    // frame the tuned frequency changed — see the two lastScrolledFreq*
+    // trackers at the call sites) brings it into view without fighting
+    // manual scrolling.
     static void drawEntriesTable(const std::vector<const ListenInfoEntry*>& entries, const std::string& idSuffix, float height,
                                    double tunedFreq, double toleranceHz, bool scrollToTuned) {
         const ImU32 tunedRowBg = IM_COL32(0xCF, 0xFD, 0xBC, 255); // same style as the waterfall's tuned label
+        const ImU32 tunedRowText = IM_COL32(0, 0, 0, 255);
+
+        // Widths sized from actual content via CalcTextSize (which already
+        // accounts for the current font/UI scale) instead of guessed fixed
+        // pixel values — those didn't reliably fit real text at every scale.
+        // Freq and Time are our own format strings so their worst case is
+        // known in advance; Target is free text from the database, so it's
+        // measured against what's actually being shown this call.
+        float freqColW = ImGui::CalcTextSize("99.999 MHz").x + 20.0f;
+        float timeColW = ImGui::CalcTextSize("0000-0000").x + 20.0f;
+        float targetColW = ImGui::CalcTextSize("Target").x + 20.0f;
+        for (const ListenInfoEntry* ePtr : entries) {
+            float w = ImGui::CalcTextSize(ePtr->targetArea.c_str()).x + 20.0f;
+            if (w > targetColW) { targetColW = w; }
+        }
+
         if (ImGui::BeginTable(("##_li_table_" + idSuffix).c_str(), 4,
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
                 ImVec2(0, height))) {
             ImGui::TableSetupScrollFreeze(0, 1); // 0 columns, 1 row (the header) frozen
             // Name is the only column that should grow/shrink with the
-            // table; the rest are short, fixed-format values that don't
-            // need more room even in a wide window.
-            ImGui::TableSetupColumn("Freq", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            // table; the rest are sized to fit their actual content exactly.
+            ImGui::TableSetupColumn("Freq", ImGuiTableColumnFlags_WidthFixed, freqColW);
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthFixed, 55.0f);
-            ImGui::TableSetupColumn("Time (UTC)", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthFixed, targetColW);
+            ImGui::TableSetupColumn("Time (UTC)", ImGuiTableColumnFlags_WidthFixed, timeColW);
             ImGui::TableHeadersRow();
             for (const ListenInfoEntry* ePtr : entries) {
                 const ListenInfoEntry& e = *ePtr;
@@ -464,20 +471,37 @@ private:
 
                 ImGui::TableNextRow();
                 if (isTuned) {
-                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, tunedRowBg);
+                    ImGui::PushStyleColor(ImGuiCol_Text, tunedRowText);
                     if (scrollToTuned) { ImGui::SetScrollHereY(0.5f); }
                 }
 
                 ImGui::TableNextColumn();
                 ImGui::TextUnformatted(formatFreqFixed(e.frequency).c_str());
                 ImGui::TableNextColumn();
-                if (ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+                // Use ImGui's own selected-row rendering (Selectable's
+                // `selected` flag -> ImGuiCol_Header/-Hovered/-Active)
+                // instead of a manually painted TableSetBgColor. The two
+                // were fighting: Selectable draws its own transient
+                // hover/click background on top of whatever the row
+                // background already was, which is what produced the
+                // reported flicker/gray/revert — using Selectable's own
+                // selected state avoids that conflict entirely, since it's
+                // the single mechanism now, not two competing ones.
+                if (isTuned) {
+                    ImGui::PushStyleColor(ImGuiCol_Header, tunedRowBg);
+                    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tunedRowBg);
+                    ImGui::PushStyleColor(ImGuiCol_HeaderActive, tunedRowBg);
+                }
+                if (ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), isTuned, ImGuiSelectableFlags_SpanAllColumns)) {
                     tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, e.frequency);
                 }
+                if (isTuned) { ImGui::PopStyleColor(3); }
                 ImGui::TableNextColumn();
                 ImGui::TextUnformatted(e.targetArea.c_str());
                 ImGui::TableNextColumn();
                 ImGui::Text("%04d-%04d", e.startTime, e.endTime);
+
+                if (isTuned) { ImGui::PopStyleColor(); }
             }
             ImGui::EndTable();
         }
