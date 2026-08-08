@@ -246,8 +246,15 @@ private:
     }
 
     // --- hover tooltip + click-to-tune, mirrors the hit-testing pattern used elsewhere in this codebase ---
+    static constexpr double kHoverDelaySeconds = 1.0;
     bool mouseAlreadyDown = false;
     bool mouseClickedInLabel = false;
+    std::string wfHoverKey;
+    double wfHoverStart = 0.0;
+    std::string panelHoverKey;
+    double panelHoverStart = 0.0;
+    std::string winHoverKey;
+    double winHoverStart = 0.0;
 
     static void fftInput(ImGui::WaterFall::InputHandlerArgs args, void* ctx) {
         ListenInfoModule* _this = (ListenInfoModule*)ctx;
@@ -284,7 +291,10 @@ private:
             _this->mouseClickedInLabel = false;
         }
 
-        if (_this->mouseAlreadyDown || !inALabel) { return; }
+        if (_this->mouseAlreadyDown || !inALabel) {
+            _this->wfHoverKey.clear(); // nothing (relevant) hovered — reset so a later hover starts a fresh timer
+            return;
+        }
 
         gui::waterfall.inputHandled = true;
 
@@ -293,7 +303,19 @@ private:
             tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, hovered.entry.frequency);
         }
 
-        drawTooltip(hovered.entry);
+        // Tuning happens immediately above; the detail popup waits for a
+        // sustained hover/hold (ImGui 1.87 predates the built-in
+        // ImGuiHoveredFlags_Delay* flags, so this is a manual GetTime()
+        // timer) — a tap that's just passing through to tune shouldn't also
+        // pop up a detail window every time.
+        std::string key = hovered.entry.name + "@" + std::to_string(hovered.entry.frequency);
+        if (_this->wfHoverKey != key) {
+            _this->wfHoverKey = key;
+            _this->wfHoverStart = ImGui::GetTime();
+        }
+        if (ImGui::GetTime() - _this->wfHoverStart >= kHoverDelaySeconds) {
+            drawTooltip(hovered.entry);
+        }
     }
 
     static void drawTooltip(const ListenInfoEntry& e) {
@@ -410,7 +432,8 @@ private:
             float rowH = ImGui::GetTextLineHeightWithSpacing();
             bool doScroll = !almostEqual(_this->lastTunedFreq, _this->lastScrolledFreqPanel);
             drawEntriesTable(_this->viewEntries, "panel_" + _this->name, rowH * 8.0f, // header + ~7 rows
-                              _this->lastTunedFreq, _this->toleranceHz, doScroll, true);
+                              _this->lastTunedFreq, _this->toleranceHz, doScroll, true,
+                              _this->panelHoverKey, _this->panelHoverStart);
             if (doScroll) { _this->lastScrolledFreqPanel = _this->lastTunedFreq; }
         }
 
@@ -439,7 +462,8 @@ private:
     // a row shows the same detail popup as clicking a waterfall marker —
     // same drawTooltip() function, same content, same behavior either way.
     static void drawEntriesTable(const std::vector<const ListenInfoEntry*>& entries, const std::string& idSuffix, float height,
-                                   double tunedFreq, double toleranceHz, bool scrollToTuned, bool compact) {
+                                   double tunedFreq, double toleranceHz, bool scrollToTuned, bool compact,
+                                   std::string& hoverKey, double& hoverStart) {
         const ImU32 tunedRowBg = IM_COL32(0xCF, 0xFD, 0xBC, 255); // same style as the waterfall's tuned label
         const ImU32 tunedRowText = IM_COL32(0, 0, 0, 255);
         const int colCount = compact ? 2 : 4;
@@ -463,6 +487,18 @@ private:
                 if (w > targetColW) { targetColW = w; }
             }
         }
+
+        // Captured during the row loop, but the actual drawTooltip() call
+        // happens only after EndTable() below — opening a nested tooltip
+        // window (its own Begin/End pair) in the middle of a table's
+        // row/column sequence is a known ImGui footgun: it can disturb the
+        // table's internal per-row bookkeeping for whatever comes after,
+        // which best explains both the "gray-on-gray" popup and the
+        // "wrong row highlighted" reports — neither is a plausibility bug
+        // in isTuned itself, both point at the table's state getting
+        // stepped on mid-iteration.
+        const ListenInfoEntry* tooltipEntry = nullptr;
+        bool anyHoveredThisFrame = false;
 
         if (ImGui::BeginTable(("##_li_table_" + idSuffix).c_str(), colCount,
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
@@ -504,13 +540,11 @@ private:
                     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tunedRowBg);
                     ImGui::PushStyleColor(ImGuiCol_HeaderActive, tunedRowBg);
                 }
-                if (ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), isTuned, ImGuiSelectableFlags_SpanAllColumns)) {
+                bool clicked = ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), isTuned, ImGuiSelectableFlags_SpanAllColumns);
+                bool rowHovered = ImGui::IsItemHovered(); // must be read right after the item — captured, not acted on yet
+                if (clicked) {
                     tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, e.frequency);
                 }
-                // Same detail popup as clicking a waterfall marker — reusing
-                // drawTooltip() means the content can never drift out of
-                // sync between the two entry points.
-                if (ImGui::IsItemHovered()) { drawTooltip(e); }
                 if (isTuned) { ImGui::PopStyleColor(3); }
                 if (!compact) {
                     ImGui::TableNextColumn();
@@ -518,11 +552,29 @@ private:
                     ImGui::TableNextColumn();
                     ImGui::Text("%04d-%04d", e.startTime, e.endTime);
                 }
-
                 if (isTuned) { ImGui::PopStyleColor(); }
+
+                // Tuning (above) is instant; the detail popup waits for a
+                // sustained hover/hold, same kHoverDelaySeconds timer as
+                // the waterfall — a tap that's just passing through
+                // shouldn't also pop up a detail window every time.
+                if (rowHovered) {
+                    anyHoveredThisFrame = true;
+                    std::string key = idSuffix + "_" + std::to_string(e.frequency);
+                    if (hoverKey != key) {
+                        hoverKey = key;
+                        hoverStart = ImGui::GetTime();
+                    }
+                    if (ImGui::GetTime() - hoverStart >= kHoverDelaySeconds) {
+                        tooltipEntry = &e;
+                    }
+                }
             }
             ImGui::EndTable();
         }
+
+        if (!anyHoveredThisFrame) { hoverKey.clear(); }
+        if (tooltipEntry) { drawTooltip(*tooltipEntry); }
     }
 
     // Detached, non-modal browse window — same pattern as ft8_decoder's
@@ -559,7 +611,8 @@ private:
             ImGui::Text("%zu entries", viewEntries.size());
             bool doScroll = !almostEqual(lastTunedFreq, lastScrolledFreqWindow);
             drawEntriesTable(viewEntries, "browsewin_" + name, ImGui::GetContentRegionAvail().y,
-                              lastTunedFreq, toleranceHz, doScroll, false);
+                              lastTunedFreq, toleranceHz, doScroll, false,
+                              winHoverKey, winHoverStart);
             if (doScroll) { lastScrolledFreqWindow = lastTunedFreq; }
         }
 
