@@ -64,25 +64,8 @@ bool ListenInfoDatabase::isActiveNow(const ListenInfoEntry& e, std::chrono::syst
     }
 }
 
-std::vector<const ListenInfoEntry*> ListenInfoDatabase::queryRange(
-    double lowFreq, double highFreq,
-    std::chrono::system_clock::time_point now) const {
-
-    std::vector<const ListenInfoEntry*> out;
-    if (combined.empty() || lowFreq > highFreq) { return out; }
-
-    auto lo = std::lower_bound(combined.begin(), combined.end(), lowFreq,
-        [](const ListenInfoEntry& e, double f) { return e.frequency < f; });
-    auto hi = std::upper_bound(combined.begin(), combined.end(), highFreq,
-        [](double f, const ListenInfoEntry& e) { return f < e.frequency; });
-
-    for (auto it = lo; it != hi; ++it) {
-        if (isActiveNow(*it, now)) { out.push_back(&(*it)); }
-    }
-    return out;
-}
-
 namespace {
+
 // Great-circle distance in km. Standard haversine formula — accurate
 // enough for "which of these transmitters is closer" ranking; no need for
 // anything more precise (e.g. ellipsoidal) at this scale.
@@ -97,7 +80,110 @@ double haversineKm(double lat1, double lon1, double lat2, double lon2) {
     double c = 2 * std::atan2(std::sqrt(a), std::sqrt(1 - a));
     return R * c;
 }
+
+// Above this frequency, real shortwave-skip propagation dominates and raw
+// distance stops being a meaningful predictor of audibility — a station
+// 15,000 km away can be stronger than one 2,000 km away depending on how
+// that specific path is currently skipping, so ranking "closest first"
+// there would be actively misleading, not just weaker. Below it (LW/MW/
+// tropical bands), propagation is mostly ground-wave or simple single-hop
+// skywave, where distance genuinely does predict audibility well — this
+// is exactly the range where the distance tier was built for and tested.
+constexpr double DISTANCE_RANKING_MAX_HZ = 5000000.0; // 5 MHz
+
+// Shared by queryRange() (as a same-frequency tiebreaker) and
+// queryFrequency() (as the entire ranking, since it's already narrowed to
+// one cluster) — having one function means a co-channel cluster ranks
+// identically everywhere it's shown (table, waterfall lanes, "Now tuned"),
+// instead of each place re-implementing its own version that could drift.
+// Three tiers: (1) known distance, only below DISTANCE_RANKING_MAX_HZ — an
+// actual measurement, so it beats (2) a coarse target-area match (the only
+// signal left above that threshold, or when coordinates aren't known —
+// most EiBi entries), which beats (3) no preference either way (stable_sort
+// leaves those in whatever order they arrived in).
+struct Ranker {
+    bool haveListenerLoc;
+    double listenerLat, listenerLon;
+    bool havePref;
+    std::string prefLower;
+
+    bool hasCoords(const ListenInfoEntry* e) const {
+        return haveListenerLoc && !std::isnan(e->lat) && !std::isnan(e->lon)
+            && e->frequency < DISTANCE_RANKING_MAX_HZ;
+    }
+    bool targetMatches(const ListenInfoEntry* e) const {
+        std::string ta = e->targetArea;
+        for (auto& c : ta) c = (char)std::tolower((unsigned char)c);
+        return ta.find(prefLower) != std::string::npos;
+    }
+    // True if 'a' should rank ahead of 'b' by source/target/distance alone
+    // (no frequency component).
+    bool before(const ListenInfoEntry* a, const ListenInfoEntry* b) const {
+        bool aCoord = hasCoords(a), bCoord = hasCoords(b);
+        if (aCoord != bCoord) { return aCoord; }
+        if (aCoord && bCoord) {
+            double da = haversineKm(listenerLat, listenerLon, a->lat, a->lon);
+            double db = haversineKm(listenerLat, listenerLon, b->lat, b->lon);
+            return da < db;
+        }
+        if (havePref) {
+            bool ma = targetMatches(a), mb = targetMatches(b);
+            if (ma != mb) { return ma; }
+        }
+        return false;
+    }
+    bool active() const { return haveListenerLoc || havePref; }
+};
+
+Ranker makeRanker(const std::string& preferredTargetArea, double listenerLat, double listenerLon) {
+    Ranker r;
+    r.haveListenerLoc = !std::isnan(listenerLat) && !std::isnan(listenerLon);
+    r.listenerLat = listenerLat;
+    r.listenerLon = listenerLon;
+    r.prefLower = preferredTargetArea;
+    for (auto& c : r.prefLower) c = (char)std::tolower((unsigned char)c);
+    r.havePref = !r.prefLower.empty();
+    return r;
+}
+
 } // namespace
+
+std::vector<const ListenInfoEntry*> ListenInfoDatabase::queryRange(
+    double lowFreq, double highFreq,
+    std::chrono::system_clock::time_point now,
+    const std::string& preferredTargetArea,
+    double listenerLat, double listenerLon) const {
+
+    std::vector<const ListenInfoEntry*> out;
+    if (combined.empty() || lowFreq > highFreq) { return out; }
+
+    auto lo = std::lower_bound(combined.begin(), combined.end(), lowFreq,
+        [](const ListenInfoEntry& e, double f) { return e.frequency < f; });
+    auto hi = std::upper_bound(combined.begin(), combined.end(), highFreq,
+        [](double f, const ListenInfoEntry& e) { return f < e.frequency; });
+
+    for (auto it = lo; it != hi; ++it) {
+        if (isActiveNow(*it, now)) { out.push_back(&(*it)); }
+    }
+
+    Ranker ranker = makeRanker(preferredTargetArea, listenerLat, listenerLon);
+    if (ranker.active()) {
+        // Frequency stays the primary order (that's how a table/waterfall
+        // should read overall) — the ranker only breaks ties between
+        // entries close enough in frequency to be effectively the same
+        // channel (within 1 Hz; real co-channel entries share the exact
+        // nominal frequency, this isn't about nearby-but-distinct channels).
+        std::stable_sort(out.begin(), out.end(),
+            [&](const ListenInfoEntry* a, const ListenInfoEntry* b) {
+                if (std::abs(a->frequency - b->frequency) > 1.0) {
+                    return a->frequency < b->frequency;
+                }
+                return ranker.before(a, b);
+            });
+    }
+
+    return out;
+}
 
 std::vector<const ListenInfoEntry*> ListenInfoDatabase::queryFrequency(
     double freq, double toleranceHz,
@@ -107,41 +193,16 @@ std::vector<const ListenInfoEntry*> ListenInfoDatabase::queryFrequency(
 
     auto out = queryRange(freq - toleranceHz, freq + toleranceHz, now);
 
-    bool haveListenerLoc = !std::isnan(listenerLat) && !std::isnan(listenerLon);
-    std::string pref = preferredTargetArea;
-    for (auto& c : pref) c = (char)std::tolower((unsigned char)c);
-    bool havePref = !pref.empty();
-
-    if (!haveListenerLoc && !havePref) { return out; } // nothing to rank by — frequency order as-is
-
-    auto targetMatches = [&pref](const ListenInfoEntry* e) {
-        std::string ta = e->targetArea;
-        for (auto& c : ta) c = (char)std::tolower((unsigned char)c);
-        return ta.find(pref) != std::string::npos;
-    };
-    auto hasCoords = [&](const ListenInfoEntry* e) {
-        return haveListenerLoc && !std::isnan(e->lat) && !std::isnan(e->lon);
-    };
-
-    // Three tiers: (1) known distance — the strongest signal, an actual
-    // measurement rather than a coarse zone code; sorted closest-first.
-    // (2) no usable coordinates but a target-area match. (3) everything
-    // else, left in frequency order (stable_sort preserves it within a tier).
-    std::stable_sort(out.begin(), out.end(),
-        [&](const ListenInfoEntry* a, const ListenInfoEntry* b) {
-            bool aCoord = hasCoords(a), bCoord = hasCoords(b);
-            if (aCoord != bCoord) { return aCoord; }
-            if (aCoord && bCoord) {
-                double da = haversineKm(listenerLat, listenerLon, a->lat, a->lon);
-                double db = haversineKm(listenerLat, listenerLon, b->lat, b->lon);
-                return da < db;
-            }
-            if (havePref) {
-                bool ma = targetMatches(a), mb = targetMatches(b);
-                if (ma != mb) { return ma; }
-            }
-            return false;
-        });
+    Ranker ranker = makeRanker(preferredTargetArea, listenerLat, listenerLon);
+    if (ranker.active()) {
+        // Whole window is one cluster here (already narrowed to +/-
+        // toleranceHz around a single point), so no frequency component —
+        // rank purely by source/target/distance.
+        std::stable_sort(out.begin(), out.end(),
+            [&](const ListenInfoEntry* a, const ListenInfoEntry* b) {
+                return ranker.before(a, b);
+            });
+    }
 
     return out;
 }
