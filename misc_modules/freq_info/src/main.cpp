@@ -37,6 +37,17 @@ static std::string formatFreqFixed(double freqHz) {
     return std::string(buf);
 }
 
+// Source-differentiated color, used ONLY for the tuned (waterfall) / selected
+// (table) highlight state — everything else (non-tuned labels, non-selected
+// rows) stays exactly as before, no per-source coloring. EiBi keeps the
+// original green; Aoki gets a distinct light blue at the same brightness/
+// style so the two read as "the same kind of highlight, different source"
+// rather than competing for attention.
+static ImU32 tunedColorForSource(const std::string& source) {
+    if (source == "aoki") { return IM_COL32(0xBC, 0xE0, 0xFD, 255); }
+    return IM_COL32(0xCF, 0xFD, 0xBC, 255); // eibi (and unknown/default)
+}
+
 SDRPP_MOD_INFO{
     /* Name:            */ "freq_info",
     /* Description:     */ "Station identification from imported schedule databases (EiBi, ...)",
@@ -55,6 +66,7 @@ public:
         config.acquire();
         if (!config.conf.contains(name)) {
             config.conf[name]["eibiPath"] = "";
+            config.conf[name]["aokiPath"] = "";
             config.conf[name]["showMarkers"] = true;
             config.conf[name]["onlyTunedMarkers"] = false;
             config.conf[name]["entriesWindowOpen"] = false;
@@ -65,6 +77,7 @@ public:
         }
         auto& instanceConf = config.conf[name];
         eibiPath = instanceConf.value("eibiPath", std::string(""));
+        aokiPath = instanceConf.value("aokiPath", std::string(""));
         showMarkers = instanceConf.value("showMarkers", true);
         onlyTunedMarkers = instanceConf.value("onlyTunedMarkers", false);
         entriesWindowOpen = instanceConf.value("entriesWindowOpen", false);
@@ -73,6 +86,7 @@ public:
         maxRows = instanceConf.value("maxRows", 6);
         topOffsetPx = instanceConf.value("topOffsetPx", 0.0f);
         instanceConf["eibiPath"] = eibiPath;
+        instanceConf["aokiPath"] = aokiPath;
         instanceConf["showMarkers"] = showMarkers;
         instanceConf["onlyTunedMarkers"] = onlyTunedMarkers;
         instanceConf["entriesWindowOpen"] = entriesWindowOpen;
@@ -84,11 +98,14 @@ public:
 
         strncpy(eibiPathBuf, eibiPath.c_str(), sizeof(eibiPathBuf) - 1);
         eibiPathBuf[sizeof(eibiPathBuf) - 1] = 0;
+        strncpy(aokiPathBuf, aokiPath.c_str(), sizeof(aokiPathBuf) - 1);
+        aokiPathBuf[sizeof(aokiPathBuf) - 1] = 0;
         strncpy(targetAreaBuf, targetArea.c_str(), sizeof(targetAreaBuf) - 1);
         targetAreaBuf[sizeof(targetAreaBuf) - 1] = 0;
         toleranceHzF = (float)toleranceHz;
 
-        if (!eibiPath.empty()) { reload(); }
+        if (!eibiPath.empty()) { reloadSource(false); }
+        if (!aokiPath.empty()) { reloadSource(true); }
 
         fftRedrawHandler.ctx = this;
         fftRedrawHandler.handler = fftRedraw;
@@ -112,13 +129,20 @@ public:
     bool isEnabled() { return enabled; }
 
 private:
-    void reload() {
+    // isAoki selects which of the two independently-loaded sources to
+    // (re)import — each has its own file path and its own error surface,
+    // since a failed Aoki load shouldn't be masked by EiBi already having
+    // succeeded earlier (checking db.size()==0 would miss that).
+    void reloadSource(bool isAoki) {
         std::lock_guard<std::mutex> lk(dataMutex);
-        db.loadEibi(eibiPath);
+        if (isAoki) {
+            db.loadAoki(aokiPath);
+            lastLoadError = (db.aokiCount() == 0) ? "Aoki: no entries loaded — check the file path" : "";
+        } else {
+            db.loadEibi(eibiPath);
+            lastLoadError = (db.eibiCount() == 0) ? "EiBi: no entries loaded — check the file path" : "";
+        }
         lastTunedFreq = -1; // force the "now tuned" block to refresh next redraw
-        // flog output isn't visible without logcat/adb access, so surface
-        // a failed/empty load on screen instead of only in the log.
-        lastLoadError = (db.size() == 0) ? "No entries loaded — check the file path" : "";
     }
 
     static bool almostEqual(double a, double b, double eps = 1.0) {
@@ -163,8 +187,7 @@ private:
         const float baseY = args.min.y + _this->topOffsetPx; // dodge the Band Plan strip if configured
         const float laneHeight = ImGui::GetTextLineHeight() + 4;
         const int laneLimit = _this->maxRows;
-        const ImU32 tunedBg = IM_COL32(0xCF, 0xFD, 0xBC, 255);
-        const ImU32 tunedText = IM_COL32(0, 0, 0, 255);
+        const ImU32 tunedText = IM_COL32(0, 0, 0, 255); // black reads fine on both eibi-green and aoki-blue
         const ImU32 dimBg = IM_COL32(100, 100, 100, 50);
         const ImU32 dimText = IM_COL32(150, 150, 150, 130);
 
@@ -198,10 +221,12 @@ private:
         // top (0, 1, 2...) — they all sit at ~the same X position anyway
         // (same tuned frequency +/- tolerance), so no horizontal packing
         // needed, and their lane never depends on what else is in view.
+        // Color varies by source (EiBi/Aoki) here ONLY — non-tuned entries
+        // below stay the plain gray dim style regardless of source.
         int reservedLanes = 0;
         for (const ListenInfoEntry* ePtr : tunedHere) {
             if (reservedLanes >= laneLimit) { break; }
-            drawLabel(*ePtr, baseY + reservedLanes * laneHeight, tunedBg, tunedText);
+            drawLabel(*ePtr, baseY + reservedLanes * laneHeight, tunedColorForSource(ePtr->source), tunedText);
             reservedLanes++;
         }
 
@@ -335,6 +360,16 @@ private:
         ImGui::Text("Target: %s   Country: %s", e.targetArea.c_str(), e.ituCountry.c_str());
         ImGui::Text("Language: %s", e.language.c_str());
         ImGui::Text("Time: %04d-%04d UTC", e.startTime, e.endTime);
+        // Location/Power aren't always known (EiBi rarely gives power; Aoki
+        // gives both) — shown only when present rather than printing an
+        // empty/placeholder line for whichever source doesn't have them.
+        if (!e.transmitterSite.empty()) {
+            ImGui::Text("Location: %s", e.transmitterSite.c_str());
+        }
+        if (e.powerKw >= 0) {
+            ImGui::Text("Power: %.0f kW", e.powerKw);
+        }
+        ImGui::Text("Source: %s", e.source == "aoki" ? "Aoki" : "EiBi");
         if (!e.daysKnown) {
             ImGui::Text("Schedule: %s (irregular, shown daily)", e.scheduleRaw.c_str());
         }
@@ -346,16 +381,37 @@ private:
         ListenInfoModule* _this = (ListenInfoModule*)ctx;
         float menuWidth = ImGui::GetContentRegionAvail().x;
 
-        ImGui::LeftLabel("EiBi file path");
+        ImGui::LeftLabel("Import source");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        ImGui::InputText(("##_li_eibipath_" + _this->name).c_str(), _this->eibiPathBuf, sizeof(_this->eibiPathBuf));
+        {
+            const char* items[] = { "EiBi", "Aoki" };
+            ImGui::Combo(("##_li_srcsel_" + _this->name).c_str(), &_this->importSourceSel, items, 2);
+        }
+
+        // Import happens one source at a time — pick the source above, set
+        // its path, Load; switch the dropdown and repeat for the other.
+        // Each buffer keeps its own text independently regardless of which
+        // one is currently shown, so switching the dropdown never loses
+        // what was typed into the other.
+        bool isAoki = (_this->importSourceSel == 1);
+        char* pathBuf = isAoki ? _this->aokiPathBuf : _this->eibiPathBuf;
+        size_t pathBufSize = isAoki ? sizeof(_this->aokiPathBuf) : sizeof(_this->eibiPathBuf);
+
+        ImGui::LeftLabel("File path");
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        ImGui::InputText(("##_li_path_" + _this->name).c_str(), pathBuf, pathBufSize);
 
         if (ImGui::Button(("Load / Reimport##_li_load_" + _this->name).c_str(), ImVec2(menuWidth, 0))) {
-            _this->eibiPath = _this->eibiPathBuf;
             config.acquire();
-            config.conf[_this->name]["eibiPath"] = _this->eibiPath;
+            if (isAoki) {
+                _this->aokiPath = _this->aokiPathBuf;
+                config.conf[_this->name]["aokiPath"] = _this->aokiPath;
+            } else {
+                _this->eibiPath = _this->eibiPathBuf;
+                config.conf[_this->name]["eibiPath"] = _this->eibiPath;
+            }
             config.release(true);
-            _this->reload();
+            _this->reloadSource(isAoki);
         }
 
         if (ImGui::Checkbox(("Show markers on waterfall##_li_show_" + _this->name).c_str(), &_this->showMarkers)) {
@@ -416,7 +472,7 @@ private:
             }
         }
 
-        ImGui::Text("Database: %zu entries", _this->db.size());
+        ImGui::Text("Database: %zu entries (EiBi %zu, Aoki %zu)", _this->db.size(), _this->db.eibiCount(), _this->db.aokiCount());
         if (!_this->lastLoadError.empty()) {
             ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", _this->lastLoadError.c_str());
         }
@@ -475,7 +531,6 @@ private:
                                    double tunedFreq, double toleranceHz, bool scrollToTuned, bool compact,
                                    std::string& hoverKey, double& hoverStart,
                                    std::string& selectedEntryKey, double& selectedEntryFreq) {
-        const ImU32 tunedRowBg = IM_COL32(0xCF, 0xFD, 0xBC, 255); // same style as the waterfall's tuned label
         const ImU32 tunedRowText = IM_COL32(0, 0, 0, 255);
         const int colCount = compact ? 2 : 4;
 
@@ -554,6 +609,7 @@ private:
                 // selected state avoids that conflict entirely, since it's
                 // the single mechanism now, not two competing ones.
                 if (isSelected) {
+                    ImU32 tunedRowBg = tunedColorForSource(e.source);
                     ImGui::PushStyleColor(ImGuiCol_Header, tunedRowBg);
                     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tunedRowBg);
                     ImGui::PushStyleColor(ImGuiCol_HeaderActive, tunedRowBg);
@@ -659,6 +715,9 @@ private:
     ListenInfoDatabase db;
     std::string eibiPath;
     char eibiPathBuf[1024] = {0};
+    std::string aokiPath;
+    char aokiPathBuf[1024] = {0};
+    int importSourceSel = 0; // 0 = EiBi, 1 = Aoki
     std::string lastLoadError;
     bool showMarkers = true;
     bool onlyTunedMarkers = false;
