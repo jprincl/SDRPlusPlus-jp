@@ -7,12 +7,17 @@
 
 class ListenInfoDatabase {
 public:
-    // Full reload, not incremental — matches the "re-import = re-read the
-    // whole file" decision (EiBi/Aoki files are the source of truth, we
-    // don't merge/dedup across imports).
+    // Each source keeps its own slot and is reloaded independently — the
+    // UI imports EiBi and Aoki one at a time (separate file, separate
+    // button press), so loading one must not disturb data already loaded
+    // from the other. Full reload per source, not incremental (each file
+    // is the source of truth for that source; no merge/dedup within it).
     void loadEibi(const std::string& path);
+    void loadAoki(const std::string& path);
 
-    size_t size() const { return entries.size(); }
+    size_t size() const { return combined.size(); }
+    size_t eibiCount() const { return eibiEntries.size(); }
+    size_t aokiCount() const { return aokiEntries.size(); }
 
     // Time-filtered, frequency-ascending, for everything currently in
     // [lowFreq, highFreq]. Used both for waterfall markers and for the
@@ -32,7 +37,11 @@ public:
         const std::string& preferredTargetArea = "") const;
 
 private:
-    std::vector<ListenInfoEntry> entries; // kept sorted by frequency ascending
+    std::vector<ListenInfoEntry> eibiEntries;
+    std::vector<ListenInfoEntry> aokiEntries;
+    std::vector<ListenInfoEntry> combined; // eibiEntries + aokiEntries, kept sorted by frequency ascending
+
+    void rebuildCombined();
 
     // Weekday + HHMM check against an entry's schedule, including
     // overnight (startTime > endTime) wraparound. system_clock::time_point
