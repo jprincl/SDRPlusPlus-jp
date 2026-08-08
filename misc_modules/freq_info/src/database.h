@@ -3,6 +3,7 @@
 #include <string>
 #include <chrono>
 #include <algorithm>
+#include <limits>
 #include "entry.h"
 
 class ListenInfoDatabase {
@@ -27,14 +28,20 @@ public:
         std::chrono::system_clock::time_point now) const;
 
     // Narrow window around one frequency (+/- toleranceHz), time-filtered,
-    // with entries matching `preferredTargetArea` sorted first (case-
-    // insensitive substring match against the entry's targetArea field).
-    // Pass an empty preferredTargetArea to skip that ranking and get
-    // frequency order only.
+    // ranked in three tiers: (1) entries with known coordinates AND a known
+    // listener location, sorted by ascending distance — the strongest
+    // signal, since it's an actual measurement rather than a coarse zone
+    // code; (2) entries without usable coordinates but matching
+    // preferredTargetArea (case-insensitive substring against the entry's
+    // targetArea field); (3) everything else, in frequency order. Pass an
+    // empty preferredTargetArea and/or NAN coordinates to skip the
+    // corresponding tier.
     std::vector<const ListenInfoEntry*> queryFrequency(
         double freq, double toleranceHz,
         std::chrono::system_clock::time_point now,
-        const std::string& preferredTargetArea = "") const;
+        const std::string& preferredTargetArea = "",
+        double listenerLat = std::numeric_limits<double>::quiet_NaN(),
+        double listenerLon = std::numeric_limits<double>::quiet_NaN()) const;
 
 private:
     std::vector<ListenInfoEntry> eibiEntries;
