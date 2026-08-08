@@ -3,6 +3,7 @@
 #include "aoki_parser.h"
 #include <ctime>
 #include <cctype>
+#include <cmath>
 #include <utils/flog.h>
 
 void ListenInfoDatabase::loadEibi(const std::string& path) {
@@ -81,29 +82,66 @@ std::vector<const ListenInfoEntry*> ListenInfoDatabase::queryRange(
     return out;
 }
 
+namespace {
+// Great-circle distance in km. Standard haversine formula — accurate
+// enough for "which of these transmitters is closer" ranking; no need for
+// anything more precise (e.g. ellipsoidal) at this scale.
+double haversineKm(double lat1, double lon1, double lat2, double lon2) {
+    constexpr double R = 6371.0; // mean Earth radius, km
+    constexpr double DEG2RAD = 3.14159265358979323846 / 180.0;
+    double dLat = (lat2 - lat1) * DEG2RAD;
+    double dLon = (lon2 - lon1) * DEG2RAD;
+    double a = std::sin(dLat / 2) * std::sin(dLat / 2)
+             + std::cos(lat1 * DEG2RAD) * std::cos(lat2 * DEG2RAD)
+             * std::sin(dLon / 2) * std::sin(dLon / 2);
+    double c = 2 * std::atan2(std::sqrt(a), std::sqrt(1 - a));
+    return R * c;
+}
+} // namespace
+
 std::vector<const ListenInfoEntry*> ListenInfoDatabase::queryFrequency(
     double freq, double toleranceHz,
     std::chrono::system_clock::time_point now,
-    const std::string& preferredTargetArea) const {
+    const std::string& preferredTargetArea,
+    double listenerLat, double listenerLon) const {
 
     auto out = queryRange(freq - toleranceHz, freq + toleranceHz, now);
 
-    if (!preferredTargetArea.empty()) {
-        std::string pref = preferredTargetArea;
-        for (auto& c : pref) c = (char)std::tolower((unsigned char)c);
+    bool haveListenerLoc = !std::isnan(listenerLat) && !std::isnan(listenerLon);
+    std::string pref = preferredTargetArea;
+    for (auto& c : pref) c = (char)std::tolower((unsigned char)c);
+    bool havePref = !pref.empty();
 
-        std::stable_sort(out.begin(), out.end(),
-            [&pref](const ListenInfoEntry* a, const ListenInfoEntry* b) {
-                auto matches = [&pref](const ListenInfoEntry* e) {
-                    std::string ta = e->targetArea;
-                    for (auto& c : ta) c = (char)std::tolower((unsigned char)c);
-                    return ta.find(pref) != std::string::npos;
-                };
-                bool ma = matches(a), mb = matches(b);
-                if (ma != mb) { return ma; } // matching entries first
-                return false; // stable_sort keeps frequency order within each group
-            });
-    }
+    if (!haveListenerLoc && !havePref) { return out; } // nothing to rank by — frequency order as-is
+
+    auto targetMatches = [&pref](const ListenInfoEntry* e) {
+        std::string ta = e->targetArea;
+        for (auto& c : ta) c = (char)std::tolower((unsigned char)c);
+        return ta.find(pref) != std::string::npos;
+    };
+    auto hasCoords = [&](const ListenInfoEntry* e) {
+        return haveListenerLoc && !std::isnan(e->lat) && !std::isnan(e->lon);
+    };
+
+    // Three tiers: (1) known distance — the strongest signal, an actual
+    // measurement rather than a coarse zone code; sorted closest-first.
+    // (2) no usable coordinates but a target-area match. (3) everything
+    // else, left in frequency order (stable_sort preserves it within a tier).
+    std::stable_sort(out.begin(), out.end(),
+        [&](const ListenInfoEntry* a, const ListenInfoEntry* b) {
+            bool aCoord = hasCoords(a), bCoord = hasCoords(b);
+            if (aCoord != bCoord) { return aCoord; }
+            if (aCoord && bCoord) {
+                double da = haversineKm(listenerLat, listenerLon, a->lat, a->lon);
+                double db = haversineKm(listenerLat, listenerLon, b->lat, b->lon);
+                return da < db;
+            }
+            if (havePref) {
+                bool ma = targetMatches(a), mb = targetMatches(b);
+                if (ma != mb) { return ma; }
+            }
+            return false;
+        });
 
     return out;
 }
