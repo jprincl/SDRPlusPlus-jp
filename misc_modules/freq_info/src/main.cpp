@@ -578,6 +578,7 @@ private:
 
         if (ImGui::Button(("Browse entries...##_li_browse_" + _this->name).c_str(), ImVec2(menuWidth, 0))) {
             _this->entriesWindowOpen = true;
+            _this->showAllInWindow = false; // off by default every time the window opens, not persisted
             config.acquire();
             config.conf[_this->name]["entriesWindowOpen"] = true;
             config.release(true);
@@ -764,9 +765,68 @@ private:
 
         {
             std::lock_guard<std::mutex> lk(dataMutex);
-            ImGui::Text("%zu entries", viewEntries.size());
+
+            // "All records" queries the whole database fresh each frame —
+            // at ~15k rows total this is a sub-millisecond linear scan, no
+            // caching needed. "Visible" reuses viewEntries, already
+            // computed (and ranked/filtered) once per waterfall redraw.
+            std::vector<const ListenInfoEntry*> base;
+            if (showAllInWindow) {
+                auto now = std::chrono::system_clock::now();
+                double listenerLat = (myLat == 0.0 && myLon == 0.0) ? std::numeric_limits<double>::quiet_NaN() : myLat;
+                double listenerLon = (myLat == 0.0 && myLon == 0.0) ? std::numeric_limits<double>::quiet_NaN() : myLon;
+                base = db.queryRange(0.0, 1e12, now, targetArea, listenerLat, listenerLon);
+                filterBySource(base, showEibiSource, showAokiSource);
+            } else {
+                base = viewEntries;
+            }
+
+            std::string query = searchBuf;
+            for (auto& c : query) c = (char)std::tolower((unsigned char)c);
+            std::vector<const ListenInfoEntry*> shown;
+            if (query.empty()) {
+                shown = base;
+            } else {
+                for (const ListenInfoEntry* e : base) {
+                    std::string nameLower = e->name;
+                    for (auto& c : nameLower) c = (char)std::tolower((unsigned char)c);
+                    if (nameLower.find(query) != std::string::npos) { shown.push_back(e); }
+                }
+            }
+
+            // One row: [magnifying-glass icon][search box][Show all][N entries].
+            // No icon font is set up anywhere in this codebase (just
+            // Roboto-Medium, confirmed in core/src/gui/style.cpp) so the
+            // "small magnifying glass image" is drawn by hand — a circle
+            // plus a diagonal handle — the same low-level draw-list approach
+            // already used for the waterfall markers, not a font glyph.
+            float lineH = ImGui::GetTextLineHeight();
+            float iconSize = lineH * 0.75f;
+            ImVec2 iconPos = ImGui::GetCursorScreenPos();
+            ImU32 iconColor = IM_COL32(160, 160, 160, 255);
+            float glassR = iconSize * 0.32f;
+            ImVec2 glassCenter(iconPos.x + glassR + 1.0f, iconPos.y + glassR + 1.0f);
+            ImGui::GetWindowDrawList()->AddCircle(glassCenter, glassR, iconColor, 12, 1.6f);
+            ImVec2 handleFrom(glassCenter.x + glassR * 0.75f, glassCenter.y + glassR * 0.75f);
+            ImVec2 handleTo(iconPos.x + iconSize, iconPos.y + iconSize);
+            ImGui::GetWindowDrawList()->AddLine(handleFrom, handleTo, iconColor, 1.6f);
+            ImGui::Dummy(ImVec2(iconSize + 4.0f, lineH));
+            ImGui::SameLine();
+
+            float checkboxW = ImGui::CalcTextSize("Show all").x + 28.0f;
+            float countW = ImGui::CalcTextSize("999999 entries").x + 8.0f;
+            float reserveRight = checkboxW + countW + ImGui::GetStyle().ItemSpacing.x * 2;
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - reserveRight - ImGui::GetStyle().ItemSpacing.x);
+            ImGui::InputTextWithHint(("##_li_search_" + name).c_str(), "Search by station name...", searchBuf, sizeof(searchBuf));
+
+            ImGui::SameLine();
+            ImGui::Checkbox(("Show all##_li_showall_" + name).c_str(), &showAllInWindow); // deliberately not persisted — off every time the window opens
+
+            ImGui::SameLine();
+            ImGui::Text("%zu entries", shown.size());
+
             bool doScroll = !almostEqual(lastTunedFreq, lastScrolledFreqWindow);
-            drawEntriesTable(viewEntries, "browsewin_" + name, ImGui::GetContentRegionAvail().y,
+            drawEntriesTable(shown, "browsewin_" + name, ImGui::GetContentRegionAvail().y,
                               lastTunedFreq, toleranceHz, doScroll, false,
                               winHoverKey, winHoverStart,
                               selectedEntryKey, selectedEntryFreq);
@@ -795,6 +855,8 @@ private:
     bool showMarkers = true;
     bool onlyTunedMarkers = false;
     bool entriesWindowOpen = false;
+    bool showAllInWindow = false;
+    char searchBuf[128] = {0}; // not persisted -- transient like the file-path edit buffers before Load
     double toleranceHz = 1000.0;
     bool showEibiSource = true;
     bool showAokiSource = true;
