@@ -48,6 +48,17 @@ static ImU32 tunedColorForSource(const std::string& source) {
     return IM_COL32(0xCF, 0xFD, 0xBC, 255); // eibi (and unknown/default)
 }
 
+// In-place filter by source visibility toggle. Applied to both viewEntries
+// and tunedEntries right where they're computed, so the waterfall, both
+// tables, and the "Now tuned" list all stay consistent with the checkboxes
+// from one single filtering point rather than each re-checking the flags.
+static void filterBySource(std::vector<const ListenInfoEntry*>& v, bool showEibi, bool showAoki) {
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const ListenInfoEntry* e) {
+        bool isAoki = (e->source == "aoki");
+        return isAoki ? !showAoki : !showEibi;
+    }), v.end());
+}
+
 SDRPP_MOD_INFO{
     /* Name:            */ "freq_info",
     /* Description:     */ "Station identification from imported schedule databases (EiBi, ...)",
@@ -71,6 +82,8 @@ public:
             config.conf[name]["onlyTunedMarkers"] = false;
             config.conf[name]["entriesWindowOpen"] = false;
             config.conf[name]["toleranceHz"] = 1000.0;
+            config.conf[name]["showEibiSource"] = true;
+            config.conf[name]["showAokiSource"] = true;
             config.conf[name]["targetArea"] = "";
             config.conf[name]["maxRows"] = 6;
             config.conf[name]["topOffsetPx"] = 0.0f;
@@ -82,6 +95,8 @@ public:
         onlyTunedMarkers = instanceConf.value("onlyTunedMarkers", false);
         entriesWindowOpen = instanceConf.value("entriesWindowOpen", false);
         toleranceHz = instanceConf.value("toleranceHz", 1000.0);
+        showEibiSource = instanceConf.value("showEibiSource", true);
+        showAokiSource = instanceConf.value("showAokiSource", true);
         targetArea = instanceConf.value("targetArea", std::string(""));
         maxRows = instanceConf.value("maxRows", 6);
         topOffsetPx = instanceConf.value("topOffsetPx", 0.0f);
@@ -91,6 +106,8 @@ public:
         instanceConf["onlyTunedMarkers"] = onlyTunedMarkers;
         instanceConf["entriesWindowOpen"] = entriesWindowOpen;
         instanceConf["toleranceHz"] = toleranceHz;
+        instanceConf["showEibiSource"] = showEibiSource;
+        instanceConf["showAokiSource"] = showAokiSource;
         instanceConf["targetArea"] = targetArea;
         instanceConf["maxRows"] = maxRows;
         instanceConf["topOffsetPx"] = topOffsetPx;
@@ -163,12 +180,14 @@ private:
         // Always kept current — this is what backs the "entries in view"
         // panel table whether or not markers are drawn.
         _this->viewEntries = _this->db.queryRange(args.lowFreq, args.highFreq, now);
+        filterBySource(_this->viewEntries, _this->showEibiSource, _this->showAokiSource);
 
         // Only requery the tuned-frequency block when the frequency actually
         // moved, not on every redraw.
         if (!almostEqual(curFreq, _this->lastTunedFreq)) {
             _this->lastTunedFreq = curFreq;
             _this->tunedEntries = _this->db.queryFrequency(curFreq, _this->toleranceHz, now, _this->targetArea);
+            filterBySource(_this->tunedEntries, _this->showEibiSource, _this->showAokiSource);
 
             // A specific table pick (see drawEntriesTable) only stays
             // meaningful while still near the frequency it was made at —
@@ -492,6 +511,20 @@ private:
 
         ImGui::Separator();
         ImGui::TextUnformatted("Entries in view:");
+        ImGui::SameLine();
+        if (ImGui::Checkbox(("EiBi##_li_showeibi_" + _this->name).c_str(), &_this->showEibiSource)) {
+            config.acquire();
+            config.conf[_this->name]["showEibiSource"] = _this->showEibiSource;
+            config.release(true);
+            _this->lastTunedFreq = -1; // force "Now tuned" to re-filter even without a frequency change
+        }
+        ImGui::SameLine();
+        if (ImGui::Checkbox(("Aoki##_li_showaoki_" + _this->name).c_str(), &_this->showAokiSource)) {
+            config.acquire();
+            config.conf[_this->name]["showAokiSource"] = _this->showAokiSource;
+            config.release(true);
+            _this->lastTunedFreq = -1;
+        }
         {
             std::lock_guard<std::mutex> lk(_this->dataMutex);
             float rowH = ImGui::GetTextLineHeightWithSpacing();
@@ -723,6 +756,8 @@ private:
     bool onlyTunedMarkers = false;
     bool entriesWindowOpen = false;
     double toleranceHz = 1000.0;
+    bool showEibiSource = true;
+    bool showAokiSource = true;
     float toleranceHzF = 1000.0f;
     int maxRows = 6;
     float topOffsetPx = 0.0f;
