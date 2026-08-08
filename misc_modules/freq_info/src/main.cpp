@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <limits>
 #include "entry.h"
 #include "database.h"
 
@@ -85,6 +86,8 @@ public:
             config.conf[name]["showEibiSource"] = true;
             config.conf[name]["showAokiSource"] = true;
             config.conf[name]["targetArea"] = "";
+            config.conf[name]["myLat"] = 0.0;
+            config.conf[name]["myLon"] = 0.0;
             config.conf[name]["maxRows"] = 6;
             config.conf[name]["topOffsetPx"] = 0.0f;
         }
@@ -98,6 +101,8 @@ public:
         showEibiSource = instanceConf.value("showEibiSource", true);
         showAokiSource = instanceConf.value("showAokiSource", true);
         targetArea = instanceConf.value("targetArea", std::string(""));
+        myLat = instanceConf.value("myLat", 0.0);
+        myLon = instanceConf.value("myLon", 0.0);
         maxRows = instanceConf.value("maxRows", 6);
         topOffsetPx = instanceConf.value("topOffsetPx", 0.0f);
         instanceConf["eibiPath"] = eibiPath;
@@ -109,6 +114,8 @@ public:
         instanceConf["showEibiSource"] = showEibiSource;
         instanceConf["showAokiSource"] = showAokiSource;
         instanceConf["targetArea"] = targetArea;
+        instanceConf["myLat"] = myLat;
+        instanceConf["myLon"] = myLon;
         instanceConf["maxRows"] = maxRows;
         instanceConf["topOffsetPx"] = topOffsetPx;
         config.release(true);
@@ -120,6 +127,8 @@ public:
         strncpy(targetAreaBuf, targetArea.c_str(), sizeof(targetAreaBuf) - 1);
         targetAreaBuf[sizeof(targetAreaBuf) - 1] = 0;
         toleranceHzF = (float)toleranceHz;
+        myLatF = (float)myLat;
+        myLonF = (float)myLon;
 
         if (!eibiPath.empty()) { reloadSource(false); }
         if (!aokiPath.empty()) { reloadSource(true); }
@@ -186,7 +195,9 @@ private:
         // moved, not on every redraw.
         if (!almostEqual(curFreq, _this->lastTunedFreq)) {
             _this->lastTunedFreq = curFreq;
-            _this->tunedEntries = _this->db.queryFrequency(curFreq, _this->toleranceHz, now, _this->targetArea);
+            double listenerLat = (_this->myLat == 0.0 && _this->myLon == 0.0) ? std::numeric_limits<double>::quiet_NaN() : _this->myLat;
+            double listenerLon = (_this->myLat == 0.0 && _this->myLon == 0.0) ? std::numeric_limits<double>::quiet_NaN() : _this->myLon;
+            _this->tunedEntries = _this->db.queryFrequency(curFreq, _this->toleranceHz, now, _this->targetArea, listenerLat, listenerLon);
             filterBySource(_this->tunedEntries, _this->showEibiSource, _this->showAokiSource);
 
             // A specific table pick (see drawEntriesTable) only stays
@@ -479,6 +490,28 @@ private:
             config.release(true);
         }
 
+        // Feeds the distance-based ranking tier in queryFrequency() — most
+        // useful for Aoki entries, which carry real coordinates (EiBi
+        // mostly doesn't, so those fall back to the target-area match
+        // above). Leaving both at 0,0 disables distance ranking entirely
+        // rather than ranking by distance from the middle of the Gulf of
+        // Guinea, which nobody wants.
+        ImGui::LeftLabel("My location (lat, lon)");
+        ImGui::SetNextItemWidth((menuWidth - ImGui::GetCursorPosX()) / 2 - 4);
+        bool locChanged = false;
+        locChanged |= ImGui::InputFloat(("##_li_mylat_" + _this->name).c_str(), &_this->myLatF, 0.0f, 0.0f, "%.4f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth((menuWidth - ImGui::GetCursorPosX()));
+        locChanged |= ImGui::InputFloat(("##_li_mylon_" + _this->name).c_str(), &_this->myLonF, 0.0f, 0.0f, "%.4f");
+        if (locChanged) {
+            _this->myLat = _this->myLatF;
+            _this->myLon = _this->myLonF;
+            config.acquire();
+            config.conf[_this->name]["myLat"] = _this->myLat;
+            config.conf[_this->name]["myLon"] = _this->myLon;
+            config.release(true);
+        }
+
         ImGui::LeftLabel("Top offset (px)");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
         {
@@ -762,6 +795,8 @@ private:
     int maxRows = 6;
     float topOffsetPx = 0.0f;
     std::string targetArea;
+    double myLat = 0.0, myLon = 0.0;
+    float myLatF = 0.0f, myLonF = 0.0f;
     char targetAreaBuf[16] = {0};
 
     double lastTunedFreq = -1;
