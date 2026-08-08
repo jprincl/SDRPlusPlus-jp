@@ -186,17 +186,22 @@ private:
 
         std::lock_guard<std::mutex> lk(_this->dataMutex);
 
+        double listenerLat = (_this->myLat == 0.0 && _this->myLon == 0.0) ? std::numeric_limits<double>::quiet_NaN() : _this->myLat;
+        double listenerLon = (_this->myLat == 0.0 && _this->myLon == 0.0) ? std::numeric_limits<double>::quiet_NaN() : _this->myLon;
+
         // Always kept current — this is what backs the "entries in view"
-        // panel table whether or not markers are drawn.
-        _this->viewEntries = _this->db.queryRange(args.lowFreq, args.highFreq, now);
+        // panel table whether or not markers are drawn. Ranking params
+        // passed through so a shared-frequency cluster here (table rows,
+        // waterfall lane order) ranks the same way "Now tuned" below does —
+        // queryRange only uses them as a same-frequency tiebreaker, not to
+        // reorder the whole visible range (see database.cpp).
+        _this->viewEntries = _this->db.queryRange(args.lowFreq, args.highFreq, now, _this->targetArea, listenerLat, listenerLon);
         filterBySource(_this->viewEntries, _this->showEibiSource, _this->showAokiSource);
 
         // Only requery the tuned-frequency block when the frequency actually
         // moved, not on every redraw.
         if (!almostEqual(curFreq, _this->lastTunedFreq)) {
             _this->lastTunedFreq = curFreq;
-            double listenerLat = (_this->myLat == 0.0 && _this->myLon == 0.0) ? std::numeric_limits<double>::quiet_NaN() : _this->myLat;
-            double listenerLon = (_this->myLat == 0.0 && _this->myLon == 0.0) ? std::numeric_limits<double>::quiet_NaN() : _this->myLon;
             _this->tunedEntries = _this->db.queryFrequency(curFreq, _this->toleranceHz, now, _this->targetArea, listenerLat, listenerLon);
             filterBySource(_this->tunedEntries, _this->showEibiSource, _this->showAokiSource);
 
@@ -488,6 +493,7 @@ private:
             config.acquire();
             config.conf[_this->name]["targetArea"] = _this->targetArea;
             config.release(true);
+            _this->lastTunedFreq = -1; // force "Now tuned" to re-rank against the new preference immediately
         }
 
         // Feeds the distance-based ranking tier in queryFrequency() — most
@@ -510,6 +516,7 @@ private:
             config.conf[_this->name]["myLat"] = _this->myLat;
             config.conf[_this->name]["myLon"] = _this->myLon;
             config.release(true);
+            _this->lastTunedFreq = -1; // force "Now tuned" to re-rank against the new location immediately
         }
 
         ImGui::LeftLabel("Top offset (px)");
