@@ -145,6 +145,15 @@ private:
         if (!almostEqual(curFreq, _this->lastTunedFreq)) {
             _this->lastTunedFreq = curFreq;
             _this->tunedEntries = _this->db.queryFrequency(curFreq, _this->toleranceHz, now, _this->targetArea);
+
+            // A specific table pick (see drawEntriesTable) only stays
+            // meaningful while still near the frequency it was made at —
+            // once you retune away from it (VFO knob, waterfall click,
+            // etc.), the table should fall back to highlighting whatever
+            // now matches the tuned frequency again.
+            if (!_this->selectedEntryKey.empty() && std::abs(curFreq - _this->selectedEntryFreq) > _this->toleranceHz) {
+                _this->selectedEntryKey.clear();
+            }
         }
 
         // showMarkers only gates the drawing below — querying above always runs.
@@ -433,7 +442,8 @@ private:
             bool doScroll = !almostEqual(_this->lastTunedFreq, _this->lastScrolledFreqPanel);
             drawEntriesTable(_this->viewEntries, "panel_" + _this->name, rowH * 8.0f, // header + ~7 rows
                               _this->lastTunedFreq, _this->toleranceHz, doScroll, true,
-                              _this->panelHoverKey, _this->panelHoverStart);
+                              _this->panelHoverKey, _this->panelHoverStart,
+                              _this->selectedEntryKey, _this->selectedEntryFreq);
             if (doScroll) { _this->lastScrolledFreqPanel = _this->lastTunedFreq; }
         }
 
@@ -463,7 +473,8 @@ private:
     // same drawTooltip() function, same content, same behavior either way.
     static void drawEntriesTable(const std::vector<const ListenInfoEntry*>& entries, const std::string& idSuffix, float height,
                                    double tunedFreq, double toleranceHz, bool scrollToTuned, bool compact,
-                                   std::string& hoverKey, double& hoverStart) {
+                                   std::string& hoverKey, double& hoverStart,
+                                   std::string& selectedEntryKey, double& selectedEntryFreq) {
         const ImU32 tunedRowBg = IM_COL32(0xCF, 0xFD, 0xBC, 255); // same style as the waterfall's tuned label
         const ImU32 tunedRowText = IM_COL32(0, 0, 0, 255);
         const int colCount = compact ? 2 : 4;
@@ -515,10 +526,18 @@ private:
             ImGui::TableHeadersRow();
             for (const ListenInfoEntry* ePtr : entries) {
                 const ListenInfoEntry& e = *ePtr;
-                bool isTuned = std::abs(e.frequency - tunedFreq) <= toleranceHz;
+                bool freqMatches = std::abs(e.frequency - tunedFreq) <= toleranceHz;
+                // Until a specific row has been clicked, fall back to the
+                // old frequency-match behavior (highlight every co-channel
+                // candidate) — matches what the waterfall still does, and
+                // is a reasonable default right after tuning in from
+                // elsewhere. Once a row IS explicitly clicked, only that
+                // exact entry counts as selected, by identity, not just by
+                // sharing the same frequency as several other stations.
+                bool isSelected = selectedEntryKey.empty() ? freqMatches : (entryKey(e) == selectedEntryKey);
 
                 ImGui::TableNextRow();
-                if (isTuned) {
+                if (isSelected) {
                     ImGui::PushStyleColor(ImGuiCol_Text, tunedRowText);
                 }
 
@@ -534,31 +553,33 @@ private:
                 // reported flicker/gray/revert — using Selectable's own
                 // selected state avoids that conflict entirely, since it's
                 // the single mechanism now, not two competing ones.
-                if (isTuned) {
+                if (isSelected) {
                     ImGui::PushStyleColor(ImGuiCol_Header, tunedRowBg);
                     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tunedRowBg);
                     ImGui::PushStyleColor(ImGuiCol_HeaderActive, tunedRowBg);
                 }
-                bool clicked = ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), isTuned, ImGuiSelectableFlags_SpanAllColumns);
+                bool clicked = ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns);
                 bool rowHovered = ImGui::IsItemHovered(); // must be read right after the item — captured, not acted on yet
                 // Only scroll if the row genuinely isn't visible yet — a row
                 // that's already one of the ~7 on screen shouldn't get
                 // recentered to the middle every time it becomes the tuned
                 // one, which is what made every other row visibly jump.
-                if (isTuned && scrollToTuned && !ImGui::IsItemVisible()) {
+                if (isSelected && scrollToTuned && !ImGui::IsItemVisible()) {
                     ImGui::SetScrollHereY(0.5f);
                 }
                 if (clicked) {
                     tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, e.frequency);
+                    selectedEntryKey = entryKey(e);
+                    selectedEntryFreq = e.frequency;
                 }
-                if (isTuned) { ImGui::PopStyleColor(3); }
+                if (isSelected) { ImGui::PopStyleColor(3); }
                 if (!compact) {
                     ImGui::TableNextColumn();
                     ImGui::TextUnformatted(e.targetArea.c_str());
                     ImGui::TableNextColumn();
                     ImGui::Text("%04d-%04d", e.startTime, e.endTime);
                 }
-                if (isTuned) { ImGui::PopStyleColor(); }
+                if (isSelected) { ImGui::PopStyleColor(); }
 
                 // Tuning (above) is instant; the detail popup waits for a
                 // sustained hover/hold, same kHoverDelaySeconds timer as
@@ -618,7 +639,8 @@ private:
             bool doScroll = !almostEqual(lastTunedFreq, lastScrolledFreqWindow);
             drawEntriesTable(viewEntries, "browsewin_" + name, ImGui::GetContentRegionAvail().y,
                               lastTunedFreq, toleranceHz, doScroll, false,
-                              winHoverKey, winHoverStart);
+                              winHoverKey, winHoverStart,
+                              selectedEntryKey, selectedEntryFreq);
             if (doScroll) { lastScrolledFreqWindow = lastTunedFreq; }
         }
 
@@ -651,6 +673,17 @@ private:
     double lastTunedFreq = -1;
     double lastScrolledFreqPanel = -1;
     double lastScrolledFreqWindow = -1;
+    // The specific entry explicitly clicked in EITHER table (shared, not
+    // per-table) — distinct from "isTuned"/frequency matching, which stays
+    // frequency-based for the waterfall (multiple co-channel stations are
+    // meant to all highlight there) but isn't what a table click means:
+    // clicking one row should select that one row, not every row sharing
+    // its frequency.
+    std::string selectedEntryKey;
+    double selectedEntryFreq = -1;
+    static std::string entryKey(const ListenInfoEntry& e) {
+        return e.name + "@" + std::to_string(e.frequency);
+    }
     std::vector<const ListenInfoEntry*> viewEntries;
     std::vector<const ListenInfoEntry*> tunedEntries;
     std::vector<WaterfallListenInfoLabel> waterfallLabels;
