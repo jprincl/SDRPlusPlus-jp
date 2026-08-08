@@ -35,18 +35,30 @@ public:
         if (!config.conf.contains(name)) {
             config.conf[name]["eibiPath"] = "";
             config.conf[name]["showMarkers"] = true;
+            config.conf[name]["onlyTunedMarkers"] = false;
+            config.conf[name]["entriesWindowOpen"] = false;
             config.conf[name]["toleranceHz"] = 1000.0;
             config.conf[name]["targetArea"] = "";
+            config.conf[name]["maxRows"] = 6;
+            config.conf[name]["topOffsetPx"] = 0.0f;
         }
         auto& instanceConf = config.conf[name];
         eibiPath = instanceConf.value("eibiPath", std::string(""));
         showMarkers = instanceConf.value("showMarkers", true);
+        onlyTunedMarkers = instanceConf.value("onlyTunedMarkers", false);
+        entriesWindowOpen = instanceConf.value("entriesWindowOpen", false);
         toleranceHz = instanceConf.value("toleranceHz", 1000.0);
         targetArea = instanceConf.value("targetArea", std::string(""));
+        maxRows = instanceConf.value("maxRows", 6);
+        topOffsetPx = instanceConf.value("topOffsetPx", 0.0f);
         instanceConf["eibiPath"] = eibiPath;
         instanceConf["showMarkers"] = showMarkers;
+        instanceConf["onlyTunedMarkers"] = onlyTunedMarkers;
+        instanceConf["entriesWindowOpen"] = entriesWindowOpen;
         instanceConf["toleranceHz"] = toleranceHz;
         instanceConf["targetArea"] = targetArea;
+        instanceConf["maxRows"] = maxRows;
+        instanceConf["topOffsetPx"] = topOffsetPx;
         config.release(true);
 
         strncpy(eibiPathBuf, eibiPath.c_str(), sizeof(eibiPathBuf) - 1);
@@ -118,79 +130,97 @@ private:
         _this->waterfallLabels.clear();
         if (!_this->showMarkers) { return; }
 
-        std::vector<float> lanePositions; // right edge of the last label placed in each lane
-        const int laneLimit = 6;
+        const float baseY = args.min.y + _this->topOffsetPx; // dodge the Band Plan strip if configured
         const float laneHeight = ImGui::GetTextLineHeight() + 4;
+        const int laneLimit = _this->maxRows;
         const ImU32 tunedBg = IM_COL32(0xCF, 0xFD, 0xBC, 255);
         const ImU32 tunedText = IM_COL32(0, 0, 0, 255);
         const ImU32 dimBg = IM_COL32(140, 140, 140, 90);
         const ImU32 dimText = IM_COL32(210, 210, 210, 190);
 
-        // Entries within tolerance of the tuned frequency go first, so they
-        // claim lanes before anything else — the tuned station should never
-        // be the one that gets dropped when a frequency is crowded.
-        std::vector<const ListenInfoEntry*> drawOrder = _this->viewEntries;
-        std::stable_partition(drawOrder.begin(), drawOrder.end(),
-            [_this](const ListenInfoEntry* e) {
-                return std::abs(e->frequency - _this->lastTunedFreq) <= _this->toleranceHz;
-            });
-
-        int hiddenForSpace = 0;
-
-        for (const ListenInfoEntry* ePtr : drawOrder) {
-            const ListenInfoEntry& e = *ePtr;
-            bool isTuned = std::abs(e.frequency - _this->lastTunedFreq) <= _this->toleranceHz;
-            ImU32 bgColor = isTuned ? tunedBg : dimBg;
-            ImU32 textColor = isTuned ? tunedText : dimText;
-
+        auto drawLabel = [&](const ListenInfoEntry& e, float targetY, ImU32 bgColor, ImU32 textColor) {
             double centerXpos = args.min.x + std::round((e.frequency - args.lowFreq) * args.freqToPixelRatio);
-
             ImVec2 nameSize = ImGui::CalcTextSize(e.name.c_str());
-            float leftEdge = (float)centerXpos - (nameSize.x / 2) - 5;
-            float rightEdge = (float)centerXpos + (nameSize.x / 2) + 5;
 
-            float targetY = -1;
-            int lane = 0;
-            for (auto laneIt = lanePositions.begin(); laneIt != lanePositions.end(); ++laneIt, ++lane) {
-                if (leftEdge - 2 >= *laneIt) {
-                    *laneIt = rightEdge;
-                    targetY = args.min.y + lane * laneHeight;
-                    break;
-                }
-            }
-            if (targetY < 0) {
-                if (lane >= laneLimit) { hiddenForSpace++; continue; } // no room this frame; still in viewEntries/panel
-                targetY = args.min.y + lane * laneHeight;
-                lanePositions.push_back(rightEdge);
-            }
-
-            // Unclamped rect is what we store for hit-testing (mirrors the
-            // pattern used elsewhere in this codebase); clamped copy is
-            // only used for the actual draw calls below.
             ImVec2 rectMin((float)centerXpos - nameSize.x / 2 - 5, targetY);
             ImVec2 rectMax((float)centerXpos + nameSize.x / 2 + 5, targetY + nameSize.y);
             ImVec2 clampedMin(std::clamp(rectMin.x, args.min.x, args.max.x), rectMin.y);
             ImVec2 clampedMax(std::clamp(rectMax.x, args.min.x, args.max.x), rectMax.y);
-
-            if (clampedMax.x - clampedMin.x <= 0) { continue; }
+            if (clampedMax.x - clampedMin.x <= 0) { return; }
 
             args.window->DrawList->AddLine(ImVec2((float)centerXpos, targetY), ImVec2((float)centerXpos, args.max.y), bgColor);
             args.window->DrawList->AddRectFilled(clampedMin, clampedMax, bgColor);
             args.window->DrawList->AddText(ImVec2((float)centerXpos - nameSize.x / 2, targetY), textColor, e.name.c_str());
-
             _this->waterfallLabels.push_back({e, bgColor, rectMin, rectMax});
+        };
+
+        // Split into tuned vs. everything else. Both groups keep viewEntries'
+        // original (frequency-ascending) relative order — nothing here
+        // reorders based on what's currently tuned, which is exactly what
+        // caused the "everything jumps down when I retune" jank before.
+        std::vector<const ListenInfoEntry*> tunedHere, others;
+        for (const ListenInfoEntry* ePtr : _this->viewEntries) {
+            bool isTuned = std::abs(ePtr->frequency - _this->lastTunedFreq) <= _this->toleranceHz;
+            (isTuned ? tunedHere : others).push_back(ePtr);
         }
 
-        // Nothing should vanish silently — if lanes ran out, say so instead
-        // of just dropping entries with no on-screen trace. Full list is
-        // always in the panel regardless.
-        if (hiddenForSpace > 0) {
-            char hint[64];
-            snprintf(hint, sizeof(hint), "+%d more (see panel)", hiddenForSpace);
-            ImVec2 hintSize = ImGui::CalcTextSize(hint);
-            ImVec2 hintPos(args.max.x - hintSize.x - 6, args.min.y + 2);
-            args.window->DrawList->AddRectFilled(hintPos, ImVec2(hintPos.x + hintSize.x + 4, hintPos.y + hintSize.y + 2), IM_COL32(0, 0, 0, 160));
-            args.window->DrawList->AddText(ImVec2(hintPos.x + 2, hintPos.y + 1), IM_COL32(255, 255, 255, 255), hint);
+        // Tuned entries get their own dedicated, stable lanes at the very
+        // top (0, 1, 2...) — they all sit at ~the same X position anyway
+        // (same tuned frequency +/- tolerance), so no horizontal packing
+        // needed, and their lane never depends on what else is in view.
+        int reservedLanes = 0;
+        for (const ListenInfoEntry* ePtr : tunedHere) {
+            if (reservedLanes >= laneLimit) { break; }
+            drawLabel(*ePtr, baseY + reservedLanes * laneHeight, tunedBg, tunedText);
+            reservedLanes++;
+        }
+
+        // Everything else: normal horizontal-collision lane packing, but
+        // starting below the reserved lanes and walking `others` in its
+        // stable frequency order — so a given non-tuned station keeps
+        // landing in roughly the same lane frame to frame.
+        // Skipped entirely when onlyTunedMarkers is on — that's a deliberate
+        // choice, not a space shortage, so no "+N more" hint either.
+        if (!_this->onlyTunedMarkers) {
+            std::vector<float> lanePositions; // right edge of the last label placed in each lane (relative to reservedLanes)
+            int hiddenForSpace = 0;
+
+            for (const ListenInfoEntry* ePtr : others) {
+                const ListenInfoEntry& e = *ePtr;
+                double centerXpos = args.min.x + std::round((e.frequency - args.lowFreq) * args.freqToPixelRatio);
+                ImVec2 nameSize = ImGui::CalcTextSize(e.name.c_str());
+                float leftEdge = (float)centerXpos - (nameSize.x / 2) - 5;
+                float rightEdge = (float)centerXpos + (nameSize.x / 2) + 5;
+
+                float targetY = -1;
+                int lane = 0;
+                for (auto laneIt = lanePositions.begin(); laneIt != lanePositions.end(); ++laneIt, ++lane) {
+                    if (leftEdge - 2 >= *laneIt) {
+                        *laneIt = rightEdge;
+                        targetY = baseY + (reservedLanes + lane) * laneHeight;
+                        break;
+                    }
+                }
+                if (targetY < 0) {
+                    if (reservedLanes + lane >= laneLimit) { hiddenForSpace++; continue; } // no room; still in viewEntries/panel
+                    targetY = baseY + (reservedLanes + lane) * laneHeight;
+                    lanePositions.push_back(rightEdge);
+                }
+
+                drawLabel(e, targetY, dimBg, dimText);
+            }
+
+            // Nothing should vanish silently — if lanes ran out, say so instead
+            // of just dropping entries with no on-screen trace. Full list is
+            // always in the panel regardless.
+            if (hiddenForSpace > 0) {
+                char hint[64];
+                snprintf(hint, sizeof(hint), "+%d more (see panel)", hiddenForSpace);
+                ImVec2 hintSize = ImGui::CalcTextSize(hint);
+                ImVec2 hintPos(args.max.x - hintSize.x - 6, args.min.y + 2);
+                args.window->DrawList->AddRectFilled(hintPos, ImVec2(hintPos.x + hintSize.x + 4, hintPos.y + hintSize.y + 2), IM_COL32(0, 0, 0, 160));
+                args.window->DrawList->AddText(ImVec2(hintPos.x + 2, hintPos.y + 1), IM_COL32(255, 255, 255, 255), hint);
+            }
         }
     }
 
@@ -282,6 +312,12 @@ private:
             config.release(true);
         }
 
+        if (ImGui::Checkbox(("Show only tuned marker##_li_onlytuned_" + _this->name).c_str(), &_this->onlyTunedMarkers)) {
+            config.acquire();
+            config.conf[_this->name]["onlyTunedMarkers"] = _this->onlyTunedMarkers;
+            config.release(true);
+        }
+
         ImGui::LeftLabel("Match tolerance (Hz)");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
         if (ImGui::SliderFloat(("##_li_tol_" + _this->name).c_str(), &_this->toleranceHzF, 100.0f, 10000.0f, "%.0f")) {
@@ -291,6 +327,22 @@ private:
             config.release(true);
         }
 
+        ImGui::LeftLabel("Max rows on waterfall");
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
+        {
+            float mr = (float)_this->maxRows;
+            // Small screen (phone) -> keep this low; desktop can afford more.
+            // Deliberately per-instance/per-config, not auto-detected: each
+            // install (Android vs desktop) already has its own config file,
+            // so this just needs to be set once per device, not sensed.
+            if (ImGui::SliderFloat(("##_li_maxrows_" + _this->name).c_str(), &mr, 1.0f, 20.0f, "%.0f")) {
+                _this->maxRows = (int)mr;
+                config.acquire();
+                config.conf[_this->name]["maxRows"] = _this->maxRows;
+                config.release(true);
+            }
+        }
+
         ImGui::LeftLabel("Preferred target area");
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
         if (ImGui::InputText(("##_li_target_" + _this->name).c_str(), _this->targetAreaBuf, sizeof(_this->targetAreaBuf))) {
@@ -298,6 +350,28 @@ private:
             config.acquire();
             config.conf[_this->name]["targetArea"] = _this->targetArea;
             config.release(true);
+        }
+
+        ImGui::LeftLabel("Top offset (px)");
+        ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX() - 100);
+        {
+            float off = _this->topOffsetPx;
+            bool changed = ImGui::SliderFloat(("##_li_topoff_" + _this->name).c_str(), &off, 0.0f, 100.0f, "%.0f");
+            ImGui::SameLine();
+            // Same formula core uses for the Band Plan strip height
+            // (waterfall.cpp: drawBandPlan()) — click this after moving
+            // Band Plan to the top of the spectrum, to avoid overlapping it
+            // without having to guess a pixel value by eye.
+            if (ImGui::Button(("Match Band Plan##_li_bpmatch_" + _this->name).c_str())) {
+                off = ImGui::CalcTextSize("0").y * 2.5f + 2.0f;
+                changed = true;
+            }
+            if (changed) {
+                _this->topOffsetPx = off;
+                config.acquire();
+                config.conf[_this->name]["topOffsetPx"] = _this->topOffsetPx;
+                config.release(true);
+            }
         }
 
         ImGui::Text("Database: %zu entries", _this->db.size());
@@ -322,30 +396,92 @@ private:
         ImGui::TextUnformatted("Entries in view:");
         {
             std::lock_guard<std::mutex> lk(_this->dataMutex);
-            if (ImGui::BeginTable(("##_li_view_table_" + _this->name).c_str(), 4,
-                    ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
-                    ImVec2(0, 200))) {
-                ImGui::TableSetupColumn("Freq");
-                ImGui::TableSetupColumn("Name");
-                ImGui::TableSetupColumn("Target");
-                ImGui::TableSetupColumn("Time (UTC)");
-                ImGui::TableHeadersRow();
-                for (const ListenInfoEntry* ePtr : _this->viewEntries) {
-                    const ListenInfoEntry& e = *ePtr;
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(utils::formatFreq(e.frequency).c_str());
-                    ImGui::TableNextColumn();
-                    if (ImGui::Selectable(e.name.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
-                        tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, e.frequency);
-                    }
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(e.targetArea.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%04d-%04d", e.startTime, e.endTime);
+            float rowH = ImGui::GetTextLineHeightWithSpacing();
+            drawEntriesTable(_this->viewEntries, "panel_" + _this->name, rowH * 8.0f); // header + ~7 rows
+        }
+
+        if (ImGui::Button(("Browse entries...##_li_browse_" + _this->name).c_str(), ImVec2(menuWidth, 0))) {
+            _this->entriesWindowOpen = true;
+            config.acquire();
+            config.conf[_this->name]["entriesWindowOpen"] = true;
+            config.release(true);
+        }
+
+        // The detached window is always rendered from here while open — same
+        // idiom as the FT8 decoder's "Show Decodes" button/window.
+        if (_this->entriesWindowOpen) { _this->drawEntriesWindow(); }
+    }
+
+    // Shared by the compact in-panel table and the detached browse window,
+    // so both always show the exact same rows in the exact same format.
+    static void drawEntriesTable(const std::vector<const ListenInfoEntry*>& entries, const std::string& idSuffix, float height) {
+        if (ImGui::BeginTable(("##_li_table_" + idSuffix).c_str(), 4,
+                ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+                ImVec2(0, height))) {
+            ImGui::TableSetupColumn("Freq");
+            ImGui::TableSetupColumn("Name");
+            ImGui::TableSetupColumn("Target");
+            ImGui::TableSetupColumn("Time (UTC)");
+            ImGui::TableHeadersRow();
+            for (const ListenInfoEntry* ePtr : entries) {
+                const ListenInfoEntry& e = *ePtr;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(utils::formatFreq(e.frequency).c_str());
+                ImGui::TableNextColumn();
+                if (ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+                    tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, e.frequency);
                 }
-                ImGui::EndTable();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(e.targetArea.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%04d-%04d", e.startTime, e.endTime);
             }
+            ImGui::EndTable();
+        }
+    }
+
+    // Detached, non-modal browse window — same pattern as ft8_decoder's
+    // drawDecodesWindow(): a plain ImGui::Begin()/End() pair (never
+    // BeginPopupModal), so it gets the native title-bar collapse triangle
+    // and close button for free, and dragging it never darkens the rest of
+    // the GUI or disturbs the VFO. For now it shows exactly the same
+    // (already time/frequency-filtered) entries as the panel table — an
+    // independent "all records" scope and search/filter come later.
+    //
+    // gui::mainWindow.lockWaterfallControls is set while this window is
+    // hovered or being dragged, for the same reason ft8_decoder and
+    // frequency_manager set it: the waterfall's drag handling uses a global
+    // GetMouseDragDelta() and can mistake a drag starting on an overlapping
+    // floating window for a click on the waterfall itself, which would move
+    // the VFO out from under you.
+    void drawEntriesWindow() {
+        std::string title = "Frequency Info entries (" + name + ")###freqinfo_entries_win_" + name;
+        ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin(title.c_str(), &entriesWindowOpen)) {
+            ImGui::End();
+            return;
+        }
+
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                   ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
+            (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
+             ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
+            gui::mainWindow.lockWaterfallControls = true;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(dataMutex);
+            ImGui::Text("%zu entries", viewEntries.size());
+            drawEntriesTable(viewEntries, "browsewin_" + name, ImGui::GetContentRegionAvail().y);
+        }
+
+        ImGui::End();
+
+        if (!entriesWindowOpen) {
+            config.acquire();
+            config.conf[name]["entriesWindowOpen"] = false;
+            config.release(true);
         }
     }
 
@@ -357,8 +493,12 @@ private:
     char eibiPathBuf[1024] = {0};
     std::string lastLoadError;
     bool showMarkers = true;
+    bool onlyTunedMarkers = false;
+    bool entriesWindowOpen = false;
     double toleranceHz = 1000.0;
     float toleranceHzF = 1000.0f;
+    int maxRows = 6;
+    float topOffsetPx = 0.0f;
     std::string targetArea;
     char targetAreaBuf[16] = {0};
 
