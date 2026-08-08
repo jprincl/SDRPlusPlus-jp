@@ -7,7 +7,6 @@
 #include <core.h>
 #include <config.h>
 #include <signal_path/signal_path.h>
-#include <utils/freq_formatting.h>
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -15,6 +14,28 @@
 #include <mutex>
 #include "entry.h"
 #include "database.h"
+
+// core's utils::formatFreq() deliberately trims trailing zeros (e.g.
+// 12.040 MHz -> "12.04MHz") — sensible for a live tuning readout, but not
+// for a table column where entries should line up at a consistent
+// precision. Kept local to freq_info rather than touching the shared
+// core helper, since other UI in the app genuinely wants the trimmed form.
+// Precision per band matches the source data's own granularity: EiBi kHz
+// values go to at most one decimal (e.g. "5855.6"), so kHz is shown with
+// 1 decimal; MHz is shown with 3 (kHz resolution) per Jan's request.
+static std::string formatFreqFixed(double freqHz) {
+    char buf[64];
+    if (freqHz >= 1000000.0) {
+        snprintf(buf, sizeof(buf), "%.3f MHz", freqHz / 1000000.0);
+    }
+    else if (freqHz >= 1000.0) {
+        snprintf(buf, sizeof(buf), "%.1f kHz", freqHz / 1000.0);
+    }
+    else {
+        snprintf(buf, sizeof(buf), "%.0f Hz", freqHz);
+    }
+    return std::string(buf);
+}
 
 SDRPP_MOD_INFO{
     /* Name:            */ "freq_info",
@@ -135,8 +156,8 @@ private:
         const int laneLimit = _this->maxRows;
         const ImU32 tunedBg = IM_COL32(0xCF, 0xFD, 0xBC, 255);
         const ImU32 tunedText = IM_COL32(0, 0, 0, 255);
-        const ImU32 dimBg = IM_COL32(140, 140, 140, 90);
-        const ImU32 dimText = IM_COL32(210, 210, 210, 190);
+        const ImU32 dimBg = IM_COL32(100, 100, 100, 50);
+        const ImU32 dimText = IM_COL32(150, 150, 150, 130);
 
         auto drawLabel = [&](const ListenInfoEntry& e, float targetY, ImU32 bgColor, ImU32 textColor) {
             double centerXpos = args.min.x + std::round((e.frequency - args.lowFreq) * args.freqToPixelRatio);
@@ -279,7 +300,7 @@ private:
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(e.name.c_str());
         ImGui::Separator();
-        ImGui::Text("Frequency: %s", utils::formatFreq(e.frequency).c_str());
+        ImGui::Text("Frequency: %s", formatFreqFixed(e.frequency).c_str());
         ImGui::Text("Target: %s   Country: %s", e.targetArea.c_str(), e.ituCountry.c_str());
         ImGui::Text("Language: %s", e.language.c_str());
         ImGui::Text("Time: %04d-%04d UTC", e.startTime, e.endTime);
@@ -397,7 +418,10 @@ private:
         {
             std::lock_guard<std::mutex> lk(_this->dataMutex);
             float rowH = ImGui::GetTextLineHeightWithSpacing();
-            drawEntriesTable(_this->viewEntries, "panel_" + _this->name, rowH * 8.0f); // header + ~7 rows
+            bool doScroll = !almostEqual(_this->lastTunedFreq, _this->lastScrolledFreqPanel);
+            drawEntriesTable(_this->viewEntries, "panel_" + _this->name, rowH * 8.0f, // header + ~7 rows
+                              _this->lastTunedFreq, _this->toleranceHz, doScroll);
+            if (doScroll) { _this->lastScrolledFreqPanel = _this->lastTunedFreq; }
         }
 
         if (ImGui::Button(("Browse entries...##_li_browse_" + _this->name).c_str(), ImVec2(menuWidth, 0))) {
@@ -414,20 +438,38 @@ private:
 
     // Shared by the compact in-panel table and the detached browse window,
     // so both always show the exact same rows in the exact same format.
-    static void drawEntriesTable(const std::vector<const ListenInfoEntry*>& entries, const std::string& idSuffix, float height) {
+    // tunedFreq/toleranceHz identify which row (if any) is "currently
+    // tuned" — that row gets the same highlight color used on the
+    // waterfall, and scrollToTuned (true only on the frame the tuned
+    // frequency changed — see the two lastScrolledFreq* trackers at the
+    // call sites) brings it into view without fighting manual scrolling.
+    static void drawEntriesTable(const std::vector<const ListenInfoEntry*>& entries, const std::string& idSuffix, float height,
+                                   double tunedFreq, double toleranceHz, bool scrollToTuned) {
+        const ImU32 tunedRowBg = IM_COL32(0xCF, 0xFD, 0xBC, 255); // same style as the waterfall's tuned label
         if (ImGui::BeginTable(("##_li_table_" + idSuffix).c_str(), 4,
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
                 ImVec2(0, height))) {
-            ImGui::TableSetupColumn("Freq");
-            ImGui::TableSetupColumn("Name");
-            ImGui::TableSetupColumn("Target");
-            ImGui::TableSetupColumn("Time (UTC)");
+            ImGui::TableSetupScrollFreeze(0, 1); // 0 columns, 1 row (the header) frozen
+            // Name is the only column that should grow/shrink with the
+            // table; the rest are short, fixed-format values that don't
+            // need more room even in a wide window.
+            ImGui::TableSetupColumn("Freq", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthFixed, 55.0f);
+            ImGui::TableSetupColumn("Time (UTC)", ImGuiTableColumnFlags_WidthFixed, 90.0f);
             ImGui::TableHeadersRow();
             for (const ListenInfoEntry* ePtr : entries) {
                 const ListenInfoEntry& e = *ePtr;
+                bool isTuned = std::abs(e.frequency - tunedFreq) <= toleranceHz;
+
                 ImGui::TableNextRow();
+                if (isTuned) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, tunedRowBg);
+                    if (scrollToTuned) { ImGui::SetScrollHereY(0.5f); }
+                }
+
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(utils::formatFreq(e.frequency).c_str());
+                ImGui::TextUnformatted(formatFreqFixed(e.frequency).c_str());
                 ImGui::TableNextColumn();
                 if (ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
                     tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, e.frequency);
@@ -473,7 +515,10 @@ private:
         {
             std::lock_guard<std::mutex> lk(dataMutex);
             ImGui::Text("%zu entries", viewEntries.size());
-            drawEntriesTable(viewEntries, "browsewin_" + name, ImGui::GetContentRegionAvail().y);
+            bool doScroll = !almostEqual(lastTunedFreq, lastScrolledFreqWindow);
+            drawEntriesTable(viewEntries, "browsewin_" + name, ImGui::GetContentRegionAvail().y,
+                              lastTunedFreq, toleranceHz, doScroll);
+            if (doScroll) { lastScrolledFreqWindow = lastTunedFreq; }
         }
 
         ImGui::End();
@@ -503,6 +548,8 @@ private:
     char targetAreaBuf[16] = {0};
 
     double lastTunedFreq = -1;
+    double lastScrolledFreqPanel = -1;
+    double lastScrolledFreqWindow = -1;
     std::vector<const ListenInfoEntry*> viewEntries;
     std::vector<const ListenInfoEntry*> tunedEntries;
     std::vector<WaterfallListenInfoLabel> waterfallLabels;
