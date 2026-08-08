@@ -520,7 +520,6 @@ private:
                 ImGui::TableNextRow();
                 if (isTuned) {
                     ImGui::PushStyleColor(ImGuiCol_Text, tunedRowText);
-                    if (scrollToTuned) { ImGui::SetScrollHereY(0.5f); }
                 }
 
                 ImGui::TableNextColumn();
@@ -542,6 +541,13 @@ private:
                 }
                 bool clicked = ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), isTuned, ImGuiSelectableFlags_SpanAllColumns);
                 bool rowHovered = ImGui::IsItemHovered(); // must be read right after the item — captured, not acted on yet
+                // Only scroll if the row genuinely isn't visible yet — a row
+                // that's already one of the ~7 on screen shouldn't get
+                // recentered to the middle every time it becomes the tuned
+                // one, which is what made every other row visibly jump.
+                if (isTuned && scrollToTuned && !ImGui::IsItemVisible()) {
+                    ImGui::SetScrollHereY(0.5f);
+                }
                 if (clicked) {
                     tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, e.frequency);
                 }
