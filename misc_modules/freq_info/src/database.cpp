@@ -1,16 +1,31 @@
 #include "database.h"
 #include "eibi_parser.h"
+#include "aoki_parser.h"
 #include <ctime>
 #include <cctype>
 #include <utils/flog.h>
 
 void ListenInfoDatabase::loadEibi(const std::string& path) {
-    entries = parseEibiCsv(path);
-    std::sort(entries.begin(), entries.end(),
+    eibiEntries = parseEibiCsv(path);
+    rebuildCombined();
+    flog::info("freq_info: eibi now holds {0} entries ({1} total)", eibiEntries.size(), combined.size());
+}
+
+void ListenInfoDatabase::loadAoki(const std::string& path) {
+    aokiEntries = parseAokiTxt(path);
+    rebuildCombined();
+    flog::info("freq_info: aoki now holds {0} entries ({1} total)", aokiEntries.size(), combined.size());
+}
+
+void ListenInfoDatabase::rebuildCombined() {
+    combined.clear();
+    combined.reserve(eibiEntries.size() + aokiEntries.size());
+    combined.insert(combined.end(), eibiEntries.begin(), eibiEntries.end());
+    combined.insert(combined.end(), aokiEntries.begin(), aokiEntries.end());
+    std::sort(combined.begin(), combined.end(),
               [](const ListenInfoEntry& a, const ListenInfoEntry& b) {
                   return a.frequency < b.frequency;
               });
-    flog::info("freq_info: database now holds {0} entries", entries.size());
 }
 
 bool ListenInfoDatabase::isActiveNow(const ListenInfoEntry& e, std::chrono::system_clock::time_point now) {
@@ -53,11 +68,11 @@ std::vector<const ListenInfoEntry*> ListenInfoDatabase::queryRange(
     std::chrono::system_clock::time_point now) const {
 
     std::vector<const ListenInfoEntry*> out;
-    if (entries.empty() || lowFreq > highFreq) { return out; }
+    if (combined.empty() || lowFreq > highFreq) { return out; }
 
-    auto lo = std::lower_bound(entries.begin(), entries.end(), lowFreq,
+    auto lo = std::lower_bound(combined.begin(), combined.end(), lowFreq,
         [](const ListenInfoEntry& e, double f) { return e.frequency < f; });
-    auto hi = std::upper_bound(entries.begin(), entries.end(), highFreq,
+    auto hi = std::upper_bound(combined.begin(), combined.end(), highFreq,
         [](double f, const ListenInfoEntry& e) { return f < e.frequency; });
 
     for (auto it = lo; it != hi; ++it) {
