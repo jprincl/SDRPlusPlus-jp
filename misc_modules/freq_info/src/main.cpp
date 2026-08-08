@@ -410,7 +410,7 @@ private:
             float rowH = ImGui::GetTextLineHeightWithSpacing();
             bool doScroll = !almostEqual(_this->lastTunedFreq, _this->lastScrolledFreqPanel);
             drawEntriesTable(_this->viewEntries, "panel_" + _this->name, rowH * 8.0f, // header + ~7 rows
-                              _this->lastTunedFreq, _this->toleranceHz, doScroll);
+                              _this->lastTunedFreq, _this->toleranceHz, doScroll, true);
             if (doScroll) { _this->lastScrolledFreqPanel = _this->lastTunedFreq; }
         }
 
@@ -428,42 +428,54 @@ private:
 
     // Shared by the compact in-panel table and the detached browse window,
     // so both always show the exact same rows in the exact same format.
-    // tunedFreq/toleranceHz identify which row (if any) is "currently
-    // tuned" — that row gets the same highlight color used on the
-    // waterfall (with black text pushed on top so it stays readable
-    // against the light background), and scrollToTuned (true only on the
-    // frame the tuned frequency changed — see the two lastScrolledFreq*
-    // trackers at the call sites) brings it into view without fighting
-    // manual scrolling.
+    // compact=true renders only Freq+Name (for the narrow panel); false
+    // renders all four columns (the browse window). tunedFreq/toleranceHz
+    // identify which row (if any) is "currently tuned" — that row gets the
+    // same highlight color used on the waterfall (with black text pushed
+    // on top so it stays readable against the light background), and
+    // scrollToTuned (true only on the frame the tuned frequency changed —
+    // see the two lastScrolledFreq* trackers at the call sites) brings it
+    // into view without fighting manual scrolling. Clicking (or hovering)
+    // a row shows the same detail popup as clicking a waterfall marker —
+    // same drawTooltip() function, same content, same behavior either way.
     static void drawEntriesTable(const std::vector<const ListenInfoEntry*>& entries, const std::string& idSuffix, float height,
-                                   double tunedFreq, double toleranceHz, bool scrollToTuned) {
+                                   double tunedFreq, double toleranceHz, bool scrollToTuned, bool compact) {
         const ImU32 tunedRowBg = IM_COL32(0xCF, 0xFD, 0xBC, 255); // same style as the waterfall's tuned label
         const ImU32 tunedRowText = IM_COL32(0, 0, 0, 255);
+        const int colCount = compact ? 2 : 4;
 
         // Widths sized from actual content via CalcTextSize (which already
         // accounts for the current font/UI scale) instead of guessed fixed
         // pixel values — those didn't reliably fit real text at every scale.
-        // Freq and Time are our own format strings so their worst case is
-        // known in advance; Target is free text from the database, so it's
+        // Freq/Time are our own format strings so their worst case is known
+        // in advance; Target is free text from the database, so it's
         // measured against what's actually being shown this call.
-        float freqColW = ImGui::CalcTextSize("99.999 MHz").x + 20.0f;
-        float timeColW = ImGui::CalcTextSize("0000-0000").x + 20.0f;
-        float targetColW = ImGui::CalcTextSize("Target").x + 20.0f;
-        for (const ListenInfoEntry* ePtr : entries) {
-            float w = ImGui::CalcTextSize(ePtr->targetArea.c_str()).x + 20.0f;
-            if (w > targetColW) { targetColW = w; }
+        // Freq's header now carries the unit ("Freq (kHz)"), so cell values
+        // are unitless numbers only — shorter, and unambiguous since every
+        // row uses the same fixed unit (unlike formatFreqFixed's MHz/kHz/Hz
+        // auto-selection, which needs the per-cell suffix to stay honest).
+        float freqColW = ImGui::CalcTextSize("Freq (kHz)").x + 20.0f;
+        float timeColW = compact ? 0.0f : ImGui::CalcTextSize("0000-0000").x + 20.0f;
+        float targetColW = compact ? 0.0f : ImGui::CalcTextSize("Target").x + 20.0f;
+        if (!compact) {
+            for (const ListenInfoEntry* ePtr : entries) {
+                float w = ImGui::CalcTextSize(ePtr->targetArea.c_str()).x + 20.0f;
+                if (w > targetColW) { targetColW = w; }
+            }
         }
 
-        if (ImGui::BeginTable(("##_li_table_" + idSuffix).c_str(), 4,
+        if (ImGui::BeginTable(("##_li_table_" + idSuffix).c_str(), colCount,
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
                 ImVec2(0, height))) {
             ImGui::TableSetupScrollFreeze(0, 1); // 0 columns, 1 row (the header) frozen
             // Name is the only column that should grow/shrink with the
             // table; the rest are sized to fit their actual content exactly.
-            ImGui::TableSetupColumn("Freq", ImGuiTableColumnFlags_WidthFixed, freqColW);
+            ImGui::TableSetupColumn("Freq (kHz)", ImGuiTableColumnFlags_WidthFixed, freqColW);
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthFixed, targetColW);
-            ImGui::TableSetupColumn("Time (UTC)", ImGuiTableColumnFlags_WidthFixed, timeColW);
+            if (!compact) {
+                ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthFixed, targetColW);
+                ImGui::TableSetupColumn("Time (UTC)", ImGuiTableColumnFlags_WidthFixed, timeColW);
+            }
             ImGui::TableHeadersRow();
             for (const ListenInfoEntry* ePtr : entries) {
                 const ListenInfoEntry& e = *ePtr;
@@ -476,7 +488,7 @@ private:
                 }
 
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted(formatFreqFixed(e.frequency).c_str());
+                ImGui::Text("%.1f", e.frequency / 1000.0); // unitless — header already says kHz
                 ImGui::TableNextColumn();
                 // Use ImGui's own selected-row rendering (Selectable's
                 // `selected` flag -> ImGuiCol_Header/-Hovered/-Active)
@@ -495,11 +507,17 @@ private:
                 if (ImGui::Selectable((e.name + "##" + idSuffix + "_" + std::to_string(e.frequency)).c_str(), isTuned, ImGuiSelectableFlags_SpanAllColumns)) {
                     tuner::tune(tuner::TUNER_MODE_NORMAL, gui::waterfall.selectedVFO, e.frequency);
                 }
+                // Same detail popup as clicking a waterfall marker — reusing
+                // drawTooltip() means the content can never drift out of
+                // sync between the two entry points.
+                if (ImGui::IsItemHovered()) { drawTooltip(e); }
                 if (isTuned) { ImGui::PopStyleColor(3); }
-                ImGui::TableNextColumn();
-                ImGui::TextUnformatted(e.targetArea.c_str());
-                ImGui::TableNextColumn();
-                ImGui::Text("%04d-%04d", e.startTime, e.endTime);
+                if (!compact) {
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(e.targetArea.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%04d-%04d", e.startTime, e.endTime);
+                }
 
                 if (isTuned) { ImGui::PopStyleColor(); }
             }
@@ -541,7 +559,7 @@ private:
             ImGui::Text("%zu entries", viewEntries.size());
             bool doScroll = !almostEqual(lastTunedFreq, lastScrolledFreqWindow);
             drawEntriesTable(viewEntries, "browsewin_" + name, ImGui::GetContentRegionAvail().y,
-                              lastTunedFreq, toleranceHz, doScroll);
+                              lastTunedFreq, toleranceHz, doScroll, false);
             if (doScroll) { lastScrolledFreqWindow = lastTunedFreq; }
         }
 
