@@ -49,10 +49,10 @@ static ImU32 tunedColorForSource(const std::string& source) {
     return IM_COL32(0xCF, 0xFD, 0xBC, 255); // eibi (and unknown/default)
 }
 
-// In-place filter by source visibility toggle. Applied to both viewEntries
-// and tunedEntries right where they're computed, so the waterfall, both
-// tables, and the "Now tuned" list all stay consistent with the checkboxes
-// from one single filtering point rather than each re-checking the flags.
+// In-place filter by source visibility toggle. Applied to viewEntries
+// right where it's computed, so the waterfall and both tables all stay
+// consistent with the checkboxes from one single filtering point rather
+// than each re-checking the flags.
 static void filterBySource(std::vector<const ListenInfoEntry*>& v, bool showEibi, bool showAoki) {
     v.erase(std::remove_if(v.begin(), v.end(), [&](const ListenInfoEntry* e) {
         bool isAoki = (e->source == "aoki");
@@ -202,8 +202,6 @@ private:
         // moved, not on every redraw.
         if (!almostEqual(curFreq, _this->lastTunedFreq)) {
             _this->lastTunedFreq = curFreq;
-            _this->tunedEntries = _this->db.queryFrequency(curFreq, _this->toleranceHz, now, _this->targetArea, listenerLat, listenerLon);
-            filterBySource(_this->tunedEntries, _this->showEibiSource, _this->showAokiSource);
 
             // A specific table pick (see drawEntriesTable) only stays
             // meaningful while still near the frequency it was made at —
@@ -537,19 +535,6 @@ private:
         }
 
         ImGui::Separator();
-        ImGui::TextUnformatted("Now tuned:");
-        {
-            std::lock_guard<std::mutex> lk(_this->dataMutex);
-            if (_this->tunedEntries.empty()) {
-                ImGui::TextDisabled("(no match)");
-            }
-            for (const ListenInfoEntry* ePtr : _this->tunedEntries) {
-                const ListenInfoEntry& e = *ePtr;
-                ImGui::BulletText("%s (%s, %s)", e.name.c_str(), e.targetArea.c_str(), e.language.c_str());
-            }
-        }
-
-        ImGui::Separator();
         ImGui::TextUnformatted("Entries in view:");
         ImGui::SameLine();
         if (ImGui::Checkbox(("EiBi##_li_showeibi_" + _this->name).c_str(), &_this->showEibiSource)) {
@@ -569,7 +554,7 @@ private:
             std::lock_guard<std::mutex> lk(_this->dataMutex);
             float rowH = ImGui::GetTextLineHeightWithSpacing();
             bool doScroll = !almostEqual(_this->lastTunedFreq, _this->lastScrolledFreqPanel);
-            drawEntriesTable(_this->viewEntries, "panel_" + _this->name, rowH * 8.0f, // header + ~7 rows
+            drawEntriesTable(_this->viewEntries, "panel_" + _this->name, rowH * 11.0f, // header + ~10 rows
                               _this->lastTunedFreq, _this->toleranceHz, doScroll, true,
                               _this->panelHoverKey, _this->panelHoverStart,
                               _this->selectedEntryKey, _this->selectedEntryFreq);
@@ -794,25 +779,7 @@ private:
                 }
             }
 
-            // One row: [magnifying-glass icon][search box][Show all][N entries].
-            // No icon font is set up anywhere in this codebase (just
-            // Roboto-Medium, confirmed in core/src/gui/style.cpp) so the
-            // "small magnifying glass image" is drawn by hand — a circle
-            // plus a diagonal handle — the same low-level draw-list approach
-            // already used for the waterfall markers, not a font glyph.
-            float lineH = ImGui::GetTextLineHeight();
-            float iconSize = lineH * 0.75f;
-            ImVec2 iconPos = ImGui::GetCursorScreenPos();
-            ImU32 iconColor = IM_COL32(160, 160, 160, 255);
-            float glassR = iconSize * 0.32f;
-            ImVec2 glassCenter(iconPos.x + glassR + 1.0f, iconPos.y + glassR + 1.0f);
-            ImGui::GetWindowDrawList()->AddCircle(glassCenter, glassR, iconColor, 12, 1.6f);
-            ImVec2 handleFrom(glassCenter.x + glassR * 0.75f, glassCenter.y + glassR * 0.75f);
-            ImVec2 handleTo(iconPos.x + iconSize, iconPos.y + iconSize);
-            ImGui::GetWindowDrawList()->AddLine(handleFrom, handleTo, iconColor, 1.6f);
-            ImGui::Dummy(ImVec2(iconSize + 4.0f, lineH));
-            ImGui::SameLine();
-
+            // One row: [search box][Show all][N entries].
             float checkboxW = ImGui::CalcTextSize("Show all").x + 28.0f;
             float countW = ImGui::CalcTextSize("999999 entries").x + 8.0f;
             float reserveRight = checkboxW + countW + ImGui::GetStyle().ItemSpacing.x * 2;
@@ -883,7 +850,6 @@ private:
         return e.name + "@" + std::to_string(e.frequency);
     }
     std::vector<const ListenInfoEntry*> viewEntries;
-    std::vector<const ListenInfoEntry*> tunedEntries;
     std::vector<WaterfallListenInfoLabel> waterfallLabels;
     std::mutex dataMutex;
 
