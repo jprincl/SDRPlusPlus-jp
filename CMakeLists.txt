@@ -98,6 +98,7 @@ option(OPT_BUILD_SCANNER "Frequency scanner" ON)
 option(OPT_BUILD_SCHEDULER "Build the scheduler" OFF)
 option(OPT_BUILD_SPOTS "Build Spots module" ON)
 option(OPT_BUILD_WEBSDR_VIEW "Build WebSDR View module (no dependencies required)" ON)
+option(OPT_BUILD_WEB_MAP "Build WebMap lightweight HTTP module (no dependencies required)" ON)
 
 # Other options
 option(USE_INTERNAL_LIBCORRECT "Use an internal version of libcorrect" ON)
@@ -320,6 +321,7 @@ sdrpp_add_optional_modules(
     SCHEDULER:misc_modules/scheduler
     SPOTS:misc_modules/spots
     WEBSDR_VIEW:misc_modules/websdr_view
+    WEB_MAP:misc_modules/web_map
 )
 
 if (SDRPP_RUNTIME_OUTPUT_DIRECTORY)
