@@ -40,9 +40,25 @@
 #include <vector>
 
 // cpp-httplib je vendorovaná single-header knihovna (MIT), viz httplib.h
-// vedle tohoto souboru. Bez OpenSSL flagu = čisté HTTP, žádné TLS -- pro
+// vedle tohoto souboru. Quoted include (ne <>): quoted lookup vždy hledá
+// nejdřív adresář obsahujícího souboru, nezávisle na tom, jak si daný
+// CMake/Ninja generátor rozhodne předat include cesty compileru -- na
+// Android buildu se ukázalo, že úhlová varianta na to spoléhala a
+// nefungovalo to. Bez OpenSSL flagu = čisté HTTP, žádné TLS -- pro
 // lokální/LAN dev server v pořádku.
-#include <httplib.h>
+//
+// cpp-httplib větev "USE_IF2IP" (vazba na síťové rozhraní podle jména) se
+// aktivuje podmínkou "!defined ANDROID" -- ale NDK toolchain definuje
+// __ANDROID__ (s podtržítky), ne holé ANDROID. Bez téhle opravy se ta
+// větev na Androidu omylem zkompiluje a spadne na getifaddrs/freeifaddrs,
+// které bionic sysroot bez dost vysokého API levelu nedeklaruje. My tuhle
+// funkci (bind podle jména rozhraní) nepotřebujeme, takže ji takhle jen
+// spolehlivě vypneme, aniž bychom sahali do samotného vendorovaného souboru.
+#if defined(__ANDROID__) && !defined(ANDROID)
+    #define ANDROID
+#endif
+
+#include "httplib.h"
 
 #if defined(_WIN32)
     #define WIN32_LEAN_AND_MEAN
