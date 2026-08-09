@@ -9,6 +9,7 @@
 #include "decode/decoder.hpp"
 #include "gpx.hpp"
 #include "ptu.hpp"
+#include "map_reporter.h"
 
 /* Display name, bandwidth, decoder */
 typedef std::tuple<const char*, float, dsp::block*> sondespec_t;
@@ -29,6 +30,9 @@ private:
 	bool gpxOutput = false, ptuOutput = false;
 	char gpxFilename[2048];
 	char ptuFilename[2048];
+	bool mapOutput = false;
+	char mapHost[64];
+	int mapPort;
 	VFOManager::VFO *vfo;
 	dsp::demod::FM<float> fmDemod;
 	dsp::multirate::RationalResampler<float> resampler;
@@ -56,10 +60,13 @@ private:
 	SondeFullData lastData;
 	GPXWriter gpxWriter;
 	PTUWriter ptuWriter;
+	MapReporter mapReporter;
 
 	static void menuHandler(void *ctx);
 	static void sondeDataHandler(SondeFullData *data, void *ctx);
 	static void onTypeSelected(void *ctx, int selection);
 	static void onGPXOutputChanged(void *ctx);
 	static void onPTUOutputChanged(void *ctx);
+	static void onMapOutputChanged(void *ctx);
+	void reportToMap(SondeFullData *data);
 };
