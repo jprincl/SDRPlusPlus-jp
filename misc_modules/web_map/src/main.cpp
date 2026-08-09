@@ -5,9 +5,15 @@
  * subprocess, na rozdíl od F4JTV sdr_map_launcher, který spouští Django) +
  * TCP kolektor na druhém, nezávisle nastavitelném portu, protokolově
  * kompatibilní s F4JTV dekodéry (viz tcp_collector.h pro přesný tvar
- * JSON-lines obálky). Start/Stop v panelu ovládá obě vrstvy atomicky —
- * pokud se nepodaří nabindovat TCP port, HTTP se taky rozjede zpátky dolů,
- * ať nezůstane napůl rozjetý stav.
+ * JSON-lines obálky). Jediný vstupní bod pro data od dekodérů -- záměrně
+ * žádné in-process API (zvažováno a zavrženo: uzamklo by producentský
+ * modul k tomuhle konkrétnímu web_mapu; TCP nechává dekodéry tím, čím mají
+ * být -- univerzálním zdrojem dat, použitelným i mimo tenhle proces a mimo
+ * SDR++ vůbec).
+ *
+ * Start/Stop v panelu ovládá HTTP i TCP vrstvu atomicky -- pokud se
+ * nepodaří nabindovat TCP port, HTTP se taky rozjede zpátky dolů, ať
+ * nezůstane napůl rozjetý stav.
  *
  * Frontend na "/" je reálná Leaflet mapa (knihovna vendorovaná lokálně,
  * dlaždice z OSM online). Nový prohlížeč si při načtení nejdřív stáhne
