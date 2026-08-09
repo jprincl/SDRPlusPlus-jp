@@ -17,5 +17,4 @@ find_package(Threads REQUIRED)
 
 include(${SDRPP_MODULE_CMAKE})
 
-target_include_directories(web_map PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(web_map PRIVATE Threads::Threads)
