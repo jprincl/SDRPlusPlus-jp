@@ -41,15 +41,27 @@ RadiosondeDecoderModule::RadiosondeDecoderModule(std::string name)
 		config.conf[name]["gpxPath"] = getTempFile("radiosonde.gpx");
 		config.conf[name]["ptuPath"] = getTempFile("radiosonde_ptu.csv");
 		config.conf[name]["sondeType"] = 0;
+		config.conf[name]["mapHost"] = "127.0.0.1";
+		config.conf[name]["mapPort"] = 8093;
 		created = true;
 	}
 	gpxPath = config.conf[name]["gpxPath"];
 	ptuPath = config.conf[name]["ptuPath"];
 	typeToSelect = config.conf[name]["sondeType"];
+	// mapHost/mapPort may be absent in older configs (upgrading from a
+	// version predating this patch) -- hence the default via value(),
+	// unlike the fields seeded above in the "created" branch.
+	std::string mapHostCfg = config.conf[name].value("mapHost", "127.0.0.1");
+	mapPort = config.conf[name].value("mapPort", 8093);
 	config.release(created);
 
 	strncpy(gpxFilename, gpxPath.c_str(), sizeof(gpxFilename)-1);
 	strncpy(ptuFilename, ptuPath.c_str(), sizeof(ptuFilename)-1);
+	strncpy(mapHost, mapHostCfg.c_str(), sizeof(mapHost)-1);
+	mapHost[sizeof(mapHost)-1] = '\0';
+	// mapOutput always starts false (same convention as gpxOutput/ptuOutput
+	// above -- reporting only happens once the user explicitly enables it
+	// in this session, never automatically from a previous one).
 
 	bw = std::get<1>(supportedTypes[typeToSelect]);
 	vfo = sigpath::vfoManager.createVFO(name, ImGui::WaterfallVFO::REF_CENTER, 0, bw, bw, bw, bw, true);
@@ -128,7 +140,7 @@ RadiosondeDecoderModule::menuHandler(void *ctx)
 	const ImVec2 wh = ImGui::GetContentRegionAvail();
 	const float width = wh.x;
 	char time[64];
-	bool gpxStatusChanged, ptuStatusChanged;
+	bool gpxStatusChanged, ptuStatusChanged, mapStatusChanged;
 
 	if (!_this->enabled) style::beginDisabled();
 
@@ -313,6 +325,21 @@ RadiosondeDecoderModule::menuHandler(void *ctx)
 	                                     ImGuiInputTextFlags_EnterReturnsTrue);
 	if (ptuStatusChanged) onPTUOutputChanged(ctx);
 	/* }}} */
+	/* Live map output {{{ */
+	mapStatusChanged = ImGui::Checkbox(CONCAT("Map output##_map_track_", _this->name), &_this->mapOutput);
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(width - 90 - ImGui::GetCursorPosX());
+	mapStatusChanged |= ImGui::InputText(CONCAT("##_map_host_", _this->name), _this->mapHost, sizeof(mapHost)-1,
+	                                     ImGuiInputTextFlags_EnterReturnsTrue);
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(80);
+	mapStatusChanged |= ImGui::InputInt(CONCAT("##_map_port_", _this->name), &_this->mapPort, 0, 0,
+	                                    ImGuiInputTextFlags_EnterReturnsTrue);
+	if (mapStatusChanged) onMapOutputChanged(ctx);
+	if (_this->enabled && _this->mapOutput && ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("TCP JSON-lines, F4JTV sdr_map_launcher-compatible.\nE.g. web_map in this SDR++ at 127.0.0.1:8093,\nor any other software at any other address.");
+	}
+	/* }}} */
 
 	if (!_this->enabled) style::endDisabled();
 }
@@ -328,6 +355,31 @@ RadiosondeDecoderModule::sondeDataHandler(SondeFullData *data, void *ctx)
 	}
 	_this->gpxWriter.addTrackPoint(data->time, data->lat, data->lon, data->alt, data->spd, data->hdg);
 	_this->ptuWriter.addPoint(data);
+
+	if (_this->mapOutput) _this->reportToMap(data);
+}
+
+void
+RadiosondeDecoderModule::reportToMap(SondeFullData *data)
+{
+	// F4JTV sdr_map_launcher-compatible envelope (see web_map/tcp_collector.h):
+	// name/date/time/lat/lon/type/speed are the shared fields, "info" carries
+	// type-specific extras as key=value. Serial number is assumed to be
+	// plain alphanumeric (true for every supported sonde type) -- no JSON
+	// escaping, matching the rest of this project's small ad-hoc JSON
+	// assembly (see web_map's sendTestPoint()).
+	char date[16], timeStr[16], line[512];
+	struct tm *tm = gmtime(&data->time);
+	strftime(date, sizeof(date), "%Y-%m-%d", tm);
+	strftime(timeStr, sizeof(timeStr), "%H:%M:%S", tm);
+
+	snprintf(line, sizeof(line),
+		R"({"name":"%s","date":"%s","time":"%s","lat":%.5f,"lon":%.5f,)"
+		R"("type":"radiosonde","speed":%.1f,"info":"alt_m=%.0f climb=%.1f hdg=%.0f"})",
+		data->serial.c_str(), date, timeStr, data->lat, data->lon,
+		data->spd, data->alt, data->climb, data->hdg);
+
+	mapReporter.send(line);
 }
 
 void
@@ -361,6 +413,29 @@ RadiosondeDecoderModule::onPTUOutputChanged(void *ctx)
 		config.conf[_this->name]["ptuPath"] = _this->ptuFilename;
 		config.release(true);
 	}
+}
+
+void
+RadiosondeDecoderModule::onMapOutputChanged(void *ctx)
+{
+	RadiosondeDecoderModule *_this = (RadiosondeDecoderModule*)ctx;
+	if (_this->mapPort < 1)     _this->mapPort = 1;
+	if (_this->mapPort > 65535) _this->mapPort = 65535;
+
+	if (_this->mapOutput) {
+		_this->mapReporter.start(_this->mapHost, _this->mapPort);
+	} else {
+		_this->mapReporter.stop();
+	}
+
+	// Host/port are always persisted (not only when output is enabled) --
+	// unlike the GPX/PTU paths, this isn't a derived/generated value, it's
+	// a deliberate user choice we don't want to lose just because the
+	// checkbox happens to be off right now.
+	config.acquire();
+	config.conf[_this->name]["mapHost"] = _this->mapHost;
+	config.conf[_this->name]["mapPort"] = _this->mapPort;
+	config.release(true);
 }
 
 void
