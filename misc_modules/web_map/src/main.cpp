@@ -1,21 +1,23 @@
 /*
  * web_map — SDR++ module
  *
- * MVP krok: vlastní embedded HTTP/SSE server žijící přímo v procesu SDR++
- * (žádný subprocess, na rozdíl od F4JTV sdr_map_launcher, který spouští
- * Django). Tenhle soubor zatím NEOBSAHUJE TCP vrstvu pro příjem dat od
- * dekodérů (radiosonde, ft8/wspr...) — ta přijde v dalším kroku, na svém
- * vlastním portu. Účel téhle verze je ověřit, že:
+ * Vlastní embedded HTTP/SSE server žijící přímo v procesu SDR++ (žádný
+ * subprocess, na rozdíl od F4JTV sdr_map_launcher, který spouští Django) +
+ * TCP kolektor na druhém, nezávisle nastavitelném portu, protokolově
+ * kompatibilní s F4JTV dekodéry (viz tcp_collector.h pro přesný tvar
+ * JSON-lines obálky). Start/Stop v panelu ovládá obě vrstvy atomicky —
+ * pokud se nepodaří nabindovat TCP port, HTTP se taky rozjede zpátky dolů,
+ * ať nezůstane napůl rozjetý stav.
  *
- *   1) server jde čistě nastartovat/zastavit ze Start/Stop tlačítka,
- *   2) obsazený port se pozná HNED (bind_to_port), ne až tichým pádem
- *      vlákna na desktopu, kde se to snadno srazí s něčím jiným,
- *   3) Server-Sent Events push funguje end-to-end (tlačítko "Send test
- *      point" v panelu → prohlížeč na /events dostane zprávu živě).
+ * Frontend na "/" je reálná Leaflet mapa (knihovna vendorovaná lokálně,
+ * dlaždice z OSM online). Nový prohlížeč si při načtení nejdřív stáhne
+ * "/api/snapshot" (aktuální stav všech přijatých objektů), pak se napojí
+ * na "/events" (SSE) pro živé updaty — bez snapshotu by viděl jen věci
+ * přijaté PO otevření stránky.
  *
- * Až tohle sedí, další krok je: (a) TCP kolektor na vlastním portu se
- * stejnou JSON-lines obálkou jako F4JTV dekodéry, (b) reálná Leaflet
- * stránka místo testovací /.
+ * Vědomě zatím chybí (další krok, ne bug): expirace starých objektů a
+ * broadcast "remove" události při odpojení zdroje — F4JTV to řeší v
+ * listen_sdr.py, my zatím necháváme objekty v paměti navždy.
  */
 
 #include <imgui.h>
@@ -60,6 +62,9 @@
 
 #include "httplib.h"
 #include "leaflet_assets.h"
+#include "tcp_collector.h"
+
+#include <map>
 
 #if defined(_WIN32)
     #define WIN32_LEAN_AND_MEAN
@@ -69,7 +74,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "web_map",
-    /* Description:     */ "Embedded HTTP/SSE server pro živou mapu pozic (Leaflet přijde v dalším kroku).",
+    /* Description:     */ "Embedded HTTP/SSE server + TCP kolektor pro živou Leaflet mapu pozic (F4JTV-kompatibilní JSON-lines).",
     /* Author:          */ "jprincl",
     /* Version:         */ 0, 1, 0,
     /* Max instances:   */ 1
@@ -141,20 +146,19 @@ private:
             if (httpPort > 65535) httpPort = 65535;
             saveInt("http_port", httpPort);
         }
-        ImGui::EndDisabled();
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("Vstupní vrstva pro dekodéry (zatím neaktivní):");
-
-        // TCP vstup je vždy disabled -- pole je tu jen jako náhled na
-        // finální dvouportový design, dokud nepřidáme kolektor.
-        ImGui::BeginDisabled(true);
         ImGui::LeftLabel("TCP host");
         ImGui::SetNextItemWidth(width - ImGui::GetCursorPosX() + 8);
-        ImGui::InputText(("##wm_th_" + name).c_str(), tcpHostBuf, sizeof(tcpHostBuf));
+        if (ImGui::InputText(("##wm_th_" + name).c_str(), tcpHostBuf, sizeof(tcpHostBuf))) {
+            tcpHost = tcpHostBuf;
+            saveString("tcp_host", tcpHost);
+        }
         ImGui::LeftLabel("TCP port");
         ImGui::SetNextItemWidth(width - ImGui::GetCursorPosX() + 8);
-        ImGui::InputInt(("##wm_tp_" + name).c_str(), &tcpPort, 0);
+        if (ImGui::InputInt(("##wm_tp_" + name).c_str(), &tcpPort, 0)) {
+            if (tcpPort < 1)     tcpPort = 1;
+            if (tcpPort > 65535) tcpPort = 65535;
+            saveInt("tcp_port", tcpPort);
+        }
         ImGui::EndDisabled();
 
         ImGui::Spacing();
@@ -187,8 +191,11 @@ private:
         if (serverRunning) {
             ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.40f, 1.0f), "[+] Running");
             ImGui::TextDisabled("http://%s:%d/", displayHost(httpHost).c_str(), httpPort);
-            ImGui::TextDisabled("Připojení klienti: %d   Odesláno testů: %d",
+            ImGui::TextDisabled("Prohlížeč klienti: %d   Odesláno testů: %d",
                                 clientCount.load(), testSeq.load());
+            ImGui::TextDisabled("TCP vstup %s:%d   Dekodéry: %d   Objektů: %d   Chyb: %d",
+                                displayHost(tcpHost).c_str(), tcpPort,
+                                tcpCollector.clientCount(), objectCount.load(), ingestErrors.load());
         }
         else {
             ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.75f, 1.0f), "[-] Stopped");
@@ -218,6 +225,24 @@ private:
             char buf[128];
             std::snprintf(buf, sizeof(buf), R"({"status":"ok","clients":%d})", clientCount.load());
             res.set_content(buf, "application/json");
+        });
+
+        // Aktuální stav všech přijatých objektů -- prohlížeč si tohle
+        // stáhne PŘED napojením na /events, ať vidí i body přijaté před
+        // otevřením stránky (SSE samo o sobě jede jen dopředu v čase).
+        svr.Get("/api/snapshot", [this](const httplib::Request&, httplib::Response& res) {
+            std::string body = "[";
+            {
+                std::lock_guard<std::mutex> lg(objectsMutex);
+                bool first = true;
+                for (auto& kv : objects) {
+                    if (!first) body += ",";
+                    body += kv.second;
+                    first = false;
+                }
+            }
+            body += "]";
+            res.set_content(body, "application/json");
         });
 
         svr.Get("/events", [this](const httplib::Request&, httplib::Response& res) {
@@ -277,7 +302,38 @@ private:
         std::snprintf(buf, sizeof(buf),
             R"({"seq":%d,"name":"TEST-%d","lat":%.4f,"lon":%.4f,"type":"test"})",
             seq, seq, lat, lon);
-        broadcast("object", buf);
+        upsertAndBroadcast(buf);
+    }
+
+    // Sdílená cesta pro "Send test point" i pro skutečná data z TCP
+    // kolektoru -- validace, uložení do objects (kvůli /api/snapshot pro
+    // nově příchozí prohlížeče) a broadcast živým SSE klientům.
+    void upsertAndBroadcast(const std::string& rawJsonLine) {
+        json obj;
+        try {
+            obj = json::parse(rawJsonLine);
+        }
+        catch (...) {
+            ingestErrors++;
+            return;
+        }
+        if (!obj.contains("lat") || !obj.contains("lon") || !obj.contains("type")) {
+            ingestErrors++;
+            return;
+        }
+
+        std::string type = obj.value("type", "");
+        std::string ident = obj.value("name", "");
+        if (ident.empty()) ident = "#" + std::to_string(objectCount.load());
+        std::string key = type + "|" + ident;
+
+        {
+            std::lock_guard<std::mutex> lg(objectsMutex);
+            bool isNew = objects.find(key) == objects.end();
+            objects[key] = rawJsonLine;
+            if (isNew) objectCount++;
+        }
+        broadcast("object", rawJsonLine);
     }
 
     // ------------------------------------------------------- lifecycle ---
@@ -295,8 +351,21 @@ private:
         // pozadí. Tohle je přesně ten desktopový "s něčím se to srazí"
         // případ.
         if (!svr->bind_to_port(httpHost.c_str(), httpPort)) {
-            lastError = "Nepodařilo se nabindovat " + httpHost + ":" +
+            lastError = "Nepodařilo se nabindovat HTTP " + httpHost + ":" +
                         std::to_string(httpPort) + " (port obsazený, nebo neplatná adresa).";
+            flog::error("web_map: {}", lastError);
+            svr.reset();
+            return;
+        }
+
+        // Start/Stop je atomický pro obě vrstvy -- pokud TCP kolektor
+        // nenabindujte, zahodíme i už úspěšně nabindovaný HTTP socket
+        // (svr.reset() ho zavře), ať nezůstane napůl rozjetý stav.
+        std::string tcpErr = tcpCollector.start(tcpHost, tcpPort,
+            [this](const std::string& line) { upsertAndBroadcast(line); });
+        if (!tcpErr.empty()) {
+            lastError = "Nepodařilo se spustit TCP kolektor na " + tcpHost + ":" +
+                        std::to_string(tcpPort) + " (" + tcpErr + ").";
             flog::error("web_map: {}", lastError);
             svr.reset();
             return;
@@ -308,14 +377,15 @@ private:
             running = false;
         });
 
-        flog::info("web_map: HTTP/SSE server started on {}:{}", httpHost, httpPort);
+        flog::info("web_map: HTTP {}:{}  TCP {}:{}", httpHost, httpPort, tcpHost, tcpPort);
     }
 
     void stopServer() {
-        if (!svr && !running.load()) return;
+        if (!svr && !running.load() && !tcpCollector.isRunning()) return;
 
         if (svr) svr->stop();
         if (serverThread.joinable()) serverThread.join();
+        tcpCollector.stop();  // join-uje i všechna klientská vlákna, viz tcp_collector.cpp
 
         // klienty zaseknuté v čekání na frontu je potřeba probudit ručně --
         // svr->stop() zavře listening socket, ale nekopíruje se to
@@ -372,7 +442,6 @@ private:
 
     std::string httpHost = "0.0.0.0";
     int         httpPort = 8073;
-    // Zatím jen persistované/zobrazené, TCP kolektor přijde v dalším kroku.
     std::string tcpHost  = "0.0.0.0";
     int         tcpPort  = 8093;
 
@@ -388,6 +457,14 @@ private:
     std::mutex        clientsMutex;
     std::atomic<int>  clientCount{0};
     std::atomic<int>  testSeq{0};
+
+    // TCP kolektor + poslední známý stav všech objektů (typ|identita ->
+    // syrový JSON řádek), kvůli /api/snapshot pro nově příchozí prohlížeče.
+    TcpCollector                       tcpCollector;
+    std::map<std::string, std::string> objects;
+    std::mutex                         objectsMutex;
+    std::atomic<int>                   objectCount{0};
+    std::atomic<int>                   ingestErrors{0};
 
     static constexpr const char* kIndexHtml =
         R"HTML(<!doctype html>
@@ -443,8 +520,15 @@ function setStatus(connected) {
     : 'reconnecting...';
 }
 
+// stejne slozeni klice jako backend (typ|identita) -- viz upsertAndBroadcast
+// v main.cpp -- aby stejny objekt ze snapshotu i z live SSE mířil na
+// stejny marker.
+function keyOf(obj) {
+  return (obj.type || '') + '|' + (obj.name || obj.seq || '?');
+}
+
 function upsert(obj) {
-  const key = obj.name || String(obj.seq);
+  const key = keyOf(obj);
   let m = markers.get(key);
   if (!m) {
     m = L.marker([obj.lat, obj.lon], { icon: dotIcon }).addTo(map);
@@ -463,6 +547,13 @@ function removeById(id) {
   markers.delete(id);
   setStatus(true);
 }
+
+// Snapshot pred napojenim na SSE -- bez tohohle by novy prohlizec videl
+// jen body prijate PO otevreni stranky.
+fetch('/api/snapshot')
+  .then((r) => r.json())
+  .then((arr) => arr.forEach(upsert))
+  .catch(() => {});
 
 const es = new EventSource('/events');
 es.onopen = () => setStatus(true);
