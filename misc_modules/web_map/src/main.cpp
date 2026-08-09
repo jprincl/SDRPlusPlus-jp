@@ -59,6 +59,7 @@
 #endif
 
 #include "httplib.h"
+#include "leaflet_assets.h"
 
 #if defined(_WIN32)
     #define WIN32_LEAN_AND_MEAN
@@ -201,6 +202,16 @@ private:
     void setupRoutes(httplib::Server& svr) {
         svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
             res.set_content(kIndexHtml, "text/html; charset=utf-8");
+        });
+
+        // Vendorovaný Leaflet (leaflet_assets.cpp) -- servírováno ze stejného
+        // originu jako mapa, žádná závislost na CDN. Dlaždice (OSM) naopak
+        // úmyslně jedou z netu, viz komentář u tile layeru v kIndexHtml.
+        svr.Get("/leaflet.js", [](const httplib::Request&, httplib::Response& res) {
+            res.set_content(kLeafletJs, "application/javascript; charset=utf-8");
+        });
+        svr.Get("/leaflet.css", [](const httplib::Request&, httplib::Response& res) {
+            res.set_content(kLeafletCss, "text/css; charset=utf-8");
         });
 
         svr.Get("/api/ping", [this](const httplib::Request&, httplib::Response& res) {
@@ -380,29 +391,84 @@ private:
 
     static constexpr const char* kIndexHtml =
         R"HTML(<!doctype html>
-<html><head><meta charset="utf-8"><title>web_map test</title>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>web_map</title>
+<link rel="stylesheet" href="/leaflet.css">
 <style>
-body{font-family:sans-serif;margin:2rem;background:#111;color:#ddd}
-#log{white-space:pre-wrap;font-family:monospace;font-size:13px;background:#000;
-     padding:1rem;border-radius:6px;max-height:60vh;overflow:auto}
-#status{margin-bottom:1rem}
-</style></head>
+html, body, #map { height: 100%; margin: 0; padding: 0; background: #111; }
+#status {
+  position: fixed; top: 8px; left: 8px; z-index: 1000;
+  background: rgba(17,17,17,.85); color: #ddd; font-family: sans-serif;
+  font-size: 13px; padding: 6px 10px; border-radius: 6px;
+}
+.wm-marker { background: transparent; border: none; }
+.wm-dot {
+  width: 14px; height: 14px; border-radius: 50%; background: #e0433c;
+  border: 2px solid #fff; box-shadow: 0 0 3px rgba(0,0,0,.7);
+}
+</style>
+</head>
 <body>
-<h2>web_map &mdash; SSE test</h2>
 <div id="status">connecting&hellip;</div>
-<div id="log"></div>
+<div id="map"></div>
+<script src="/leaflet.js"></script>
 <script>
 const statusEl = document.getElementById('status');
-const logEl = document.getElementById('log');
-let count = 0;
-const es = new EventSource('/events');
-es.onopen = () => { statusEl.textContent = 'connected'; };
-es.onerror = () => { statusEl.textContent = 'reconnecting...'; };
-es.addEventListener('object', (e) => {
-  count++;
-  statusEl.textContent = 'connected \u2014 ' + count + ' zpr\u00e1v p\u0159ijato';
-  logEl.textContent = e.data + '\n' + logEl.textContent;
+
+// Vychozi pohled na test data (Plzen); az bude TCP kolektor, prvni
+// prijaty bod muze mapu sam vycentrovat.
+const map = L.map('map').setView([49.7384, 13.3736], 12);
+
+// Dlazdice umyslne z OSM online (dohodnuto) -- jen samotna Leaflet
+// knihovna je vendorovana a servirovana lokalne z tohoto modulu.
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+const dotIcon = L.divIcon({
+  className: 'wm-marker',
+  html: '<div class="wm-dot"></div>',
+  iconSize: [14, 14],
+  iconAnchor: [7, 7]
 });
+
+const markers = new Map();
+
+function setStatus(connected) {
+  const n = markers.size;
+  statusEl.textContent = connected
+    ? 'connected \u2014 ' + n + ' bod\u016f na map\u011b'
+    : 'reconnecting...';
+}
+
+function upsert(obj) {
+  const key = obj.name || String(obj.seq);
+  let m = markers.get(key);
+  if (!m) {
+    m = L.marker([obj.lat, obj.lon], { icon: dotIcon }).addTo(map);
+    markers.set(key, m);
+  } else {
+    m.setLatLng([obj.lat, obj.lon]);
+  }
+  m.bindPopup('<pre style="margin:0">' + JSON.stringify(obj, null, 1) + '</pre>');
+  setStatus(true);
+}
+
+function removeById(id) {
+  const m = markers.get(id);
+  if (!m) return;
+  map.removeLayer(m);
+  markers.delete(id);
+  setStatus(true);
+}
+
+const es = new EventSource('/events');
+es.onopen = () => setStatus(true);
+es.onerror = () => setStatus(false);
+es.addEventListener('object', (e) => upsert(JSON.parse(e.data)));
+es.addEventListener('remove', (e) => removeById(JSON.parse(e.data).id));
 </script>
 </body></html>)HTML";
 };
