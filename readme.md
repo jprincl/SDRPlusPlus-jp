@@ -138,7 +138,7 @@ Implemented Wefax decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some
 ## RTTY decoder module
 Implemented RTTY decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some changes were made to the code to work the module without issues in Android OS. Fixed crash SDR++ during disabling decoder with AFC turned on.
 
-<img width="1280" height="800" src="https://github.com/jprincl/SDRPlusPlus-jp/blob/186a3436de65eb45c111f63e75f9cee5beaf8f4c/doc/pictures/rtty_decoder.jpg">
+<img width="1280" height="800" src="https://github.com/jprincl/SDRPlusPlus-jp/blob/186a3436de65eb45c111f63e75f9cee5beaf8f4c/doc/pictures/rtty_decoder.jpg" />
 
 ---------------------------------------------------------------------------
 
