@@ -75,6 +75,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <map>
+#include <utility>
 
 SDRPP_MOD_INFO{
     /* Name:            */ "web_map",
@@ -254,6 +255,52 @@ private:
             res.set_content(body, "application/json");
         });
 
+        // Position history per object, so a browser that (re)loads mid-flight
+        // can rebuild the trail instead of starting from a blank line -- the
+        // trail itself is otherwise pure client-side state (see kIndexHtml),
+        // this is what lets it survive a page reload within a running
+        // session. Still nothing on disk -- restarting web_map loses it,
+        // same as everything else here. Same "no escaping, assumed safe"
+        // convention as the rest of this file for the key text.
+        svr.Get("/api/trails", [this](const httplib::Request&, httplib::Response& res) {
+            std::string body = "{";
+            {
+                std::lock_guard<std::mutex> lg(objectsMutex);
+                bool firstKey = true;
+                for (auto& kv : trailHistory) {
+                    if (!firstKey) body += ",";
+                    body += "\"" + kv.first + "\":[";
+                    bool firstPt = true;
+                    for (auto& pt : kv.second) {
+                        if (!firstPt) body += ",";
+                        char buf[64];
+                        std::snprintf(buf, sizeof(buf), "[%.6f,%.6f]", pt.first, pt.second);
+                        body += buf;
+                        firstPt = false;
+                    }
+                    body += "]";
+                    firstKey = false;
+                }
+            }
+            body += "}";
+            res.set_content(body, "application/json");
+        });
+
+        // Explicit, manual "start fresh" -- deliberately no automatic
+        // expiry (that's still a known follow-up, see the file header).
+        // Broadcasts "reset" so every connected browser clears live, not
+        // just the one that clicked the button.
+        svr.Post("/api/reset", [this](const httplib::Request&, httplib::Response& res) {
+            {
+                std::lock_guard<std::mutex> lg(objectsMutex);
+                objects.clear();
+                trailHistory.clear();
+            }
+            objectCount = 0;
+            broadcast("reset", "{}");
+            res.set_content(R"({"status":"ok"})", "application/json");
+        });
+
         svr.Get("/events", [this](const httplib::Request&, httplib::Response& res) {
             auto client = std::make_shared<SseClient>();
             {
@@ -339,12 +386,18 @@ private:
         std::string ident = obj.value("name", "");
         if (ident.empty()) ident = "#" + std::to_string(objectCount.load());
         std::string key = type + "|" + ident;
+        double lat = obj.value("lat", 0.0);
+        double lon = obj.value("lon", 0.0);
 
         {
             std::lock_guard<std::mutex> lg(objectsMutex);
             bool isNew = objects.find(key) == objects.end();
             objects[key] = rawJsonLine;
             if (isNew) objectCount++;
+
+            auto& hist = trailHistory[key];
+            hist.emplace_back(lat, lon);
+            if (hist.size() > kMaxServerTrailPoints) hist.pop_front();
         }
         broadcast("object", rawJsonLine);
     }
@@ -496,6 +549,11 @@ private:
     std::atomic<int>                   objectCount{0};
     std::atomic<int>                   ingestErrors{0};
 
+    // Position history per object (same key as objects), for /api/trails --
+    // guarded by the same objectsMutex, not a separate lock.
+    std::map<std::string, std::deque<std::pair<double, double>>> trailHistory;
+    static constexpr size_t kMaxServerTrailPoints = 2000;
+
     static constexpr const char* kIndexHtml =
         R"HTML(<!doctype html>
 <html><head><meta charset="utf-8">
@@ -514,10 +572,15 @@ html, body, #map { height: 100%; margin: 0; padding: 0; background: #111; }
   width: 14px; height: 14px; border-radius: 50%; background: #e0433c;
   border: 2px solid #fff; box-shadow: 0 0 3px rgba(0,0,0,.7);
 }
+#reset-btn {
+  margin-left: 8px; background: #333; color: #ddd; border: 1px solid #555;
+  border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer;
+}
+#reset-btn:hover { background: #444; }
 </style>
 </head>
 <body>
-<div id="status">connecting&hellip;</div>
+<div id="status">connecting&hellip; <button id="reset-btn" type="button">Reset data</button></div>
 <div id="map"></div>
 <script src="/leaflet.js"></script>
 <script>
@@ -543,18 +606,31 @@ const dotIcon = L.divIcon({
 
 const markers = new Map();
 
-// Client-side trail: bounded position history per object key, drawn as a
-// polyline behind the marker. Universal mechanism, not radiosonde-specific
-// (matches how F4JTV's map.js does it -- global mechanism, not per-type
-// hardcoding) -- any object that moves gets a trail, a static one-shot
-// object just ends up with an invisible single-point "trail". Session-only:
-// starts empty on page load, no server-side history (deliberately deferred,
-// see the file header comment).
+// Trail: bounded position history per object key, drawn as a polyline
+// behind the marker. Universal mechanism, not radiosonde-specific (matches
+// how F4JTV's map.js does it -- global mechanism, not per-type hardcoding)
+// -- any object that moves gets a trail, a static one-shot object just ends
+// up with an invisible single-point "trail". The server keeps a matching
+// bounded history per key too (see /api/trails below) purely in memory, so
+// a page reload rebuilds the trail instead of starting from a blank line --
+// nothing survives a web_map restart though, still no disk/DB, see the
+// file header comment.
 const trails = new Map();
 const trailLines = new Map();
 const MAX_TRAIL_POINTS = 2000;
-
 const markerColor = '#e0433c';
+
+function redrawTrail(key) {
+  const hist = trails.get(key);
+  if (!hist || hist.length === 0) return;
+  let line = trailLines.get(key);
+  if (!line) {
+    line = L.polyline(hist, { color: markerColor, weight: 2, opacity: 0.55 }).addTo(map);
+    trailLines.set(key, line);
+  } else {
+    line.setLatLngs(hist);
+  }
+}
 
 function setStatus(connected) {
   const n = markers.size;
@@ -578,14 +654,7 @@ function upsert(obj) {
   if (!hist) { hist = []; trails.set(key, hist); }
   hist.push(pos);
   if (hist.length > MAX_TRAIL_POINTS) hist.shift();
-
-  let line = trailLines.get(key);
-  if (!line) {
-    line = L.polyline(hist, { color: markerColor, weight: 2, opacity: 0.55 }).addTo(map);
-    trailLines.set(key, line);
-  } else {
-    line.setLatLngs(hist);
-  }
+  redrawTrail(key);
 
   let m = markers.get(key);
   if (!m) {
@@ -607,8 +676,42 @@ function removeById(id) {
   setStatus(true);
 }
 
-// Snapshot before connecting to SSE -- without this a new browser would
-// only see points received AFTER the page was opened.
+function clearAll() {
+  markers.forEach((m) => map.removeLayer(m));
+  markers.clear();
+  trailLines.forEach((l) => map.removeLayer(l));
+  trailLines.clear();
+  trails.clear();
+  setStatus(es.readyState === EventSource.OPEN);
+}
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+  if (!confirm('Clear all data from the map? This cannot be undone.')) return;
+  fetch('/api/reset', { method: 'POST' }).catch(() => {});
+  // Also clear immediately for the tab that clicked -- the "reset" SSE
+  // event (below) is what syncs every OTHER open browser/device.
+  clearAll();
+});
+
+// Trail history first, then the latest-position snapshot, then live SSE --
+// without the history fetch a reload would start every trail from a blank
+// line; without the snapshot fetch a new browser would only see points
+// received AFTER the page was opened (SSE by itself only moves forward in
+// time).
+fetch('/api/trails')
+  .then((r) => r.json())
+  .then((data) => {
+    for (const key in data) {
+      const pts = data[key];
+      const existing = trails.get(key);
+      // merge rather than overwrite, in case a live SSE update already
+      // landed for this key in the brief window before this fetch resolved
+      trails.set(key, existing ? pts.concat(existing) : pts);
+      redrawTrail(key);
+    }
+  })
+  .catch(() => {});
+
 fetch('/api/snapshot')
   .then((r) => r.json())
   .then((arr) => arr.forEach(upsert))
@@ -619,6 +722,7 @@ es.onopen = () => setStatus(true);
 es.onerror = () => setStatus(false);
 es.addEventListener('object', (e) => upsert(JSON.parse(e.data)));
 es.addEventListener('remove', (e) => removeById(JSON.parse(e.data).id));
+es.addEventListener('reset', () => clearAll());
 </script>
 </body></html>)HTML";
 };
