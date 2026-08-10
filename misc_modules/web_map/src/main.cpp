@@ -190,20 +190,26 @@ private:
             ImGui::PopStyleColor();
         }
 
-        if (serverRunning) {
-            if (ImGui::Button(("Send test point##wm_test_" + name).c_str(), ImVec2(width, 0))) {
-                sendTestPoint();
-            }
-        }
+        // "Send test point" button removed from the UI (kept as a commented
+        // -out function below, sendTestPoint(), for quick re-enabling if
+        // needed for future debugging without a live decoder attached).
+        //
+        // if (serverRunning) {
+        //     if (ImGui::Button(("Send test point##wm_test_" + name).c_str(), ImVec2(width, 0))) {
+        //         sendTestPoint();
+        //     }
+        // }
 
         ImGui::Spacing();
         if (serverRunning) {
             ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.40f, 1.0f), "[+] Running");
             ImGui::TextDisabled("http://%s:%d/", displayHost(httpHost).c_str(), httpPort);
-            ImGui::TextDisabled("Browser clients: %d   Test points sent: %d",
-                                clientCount.load(), testSeq.load());
-            ImGui::TextDisabled("TCP input %s:%d   Decoders: %d   Objects: %d   Errors: %d",
-                                displayHost(tcpHost).c_str(), tcpPort,
+            ImGui::TextDisabled("Browser clients: %d", clientCount.load());
+            // Test point counter hidden along with the button above --
+            // uncomment together if sendTestPoint() gets re-enabled.
+            // ImGui::TextDisabled("Test points sent: %d", testSeq.load());
+            ImGui::TextDisabled("TCP input %s:%d", displayHost(tcpHost).c_str(), tcpPort);
+            ImGui::TextDisabled("Decoders: %d   Objects: %d   Errors: %d",
                                 tcpCollector.clientCount(), objectCount.load(), ingestErrors.load());
         }
         else {
@@ -382,17 +388,23 @@ private:
         }
     }
 
-    void sendTestPoint() {
-        int seq = ++testSeq;
-        // deterministic drift so the log visibly shows the point "living"
-        double lat = 49.7384 + (seq % 7) * 0.01;
-        double lon = 13.3736 + (seq % 5) * 0.01;
-        char buf[192];
-        std::snprintf(buf, sizeof(buf),
-            R"({"seq":%d,"name":"TEST-%d","lat":%.4f,"lon":%.4f,"type":"test"})",
-            seq, seq, lat, lon);
-        upsertAndBroadcast(buf);
-    }
+    // sendTestPoint() is kept here, commented out, rather than deleted --
+    // it's a quick way to exercise the whole ingest -> store -> broadcast
+    // -> map pipeline without needing a live decoder attached, useful for
+    // future debugging. To bring it back: uncomment this, and the button
+    // + status line above that call it.
+    //
+    // void sendTestPoint() {
+    //     int seq = ++testSeq;
+    //     // deterministic drift so the log visibly shows the point "living"
+    //     double lat = 49.7384 + (seq % 7) * 0.01;
+    //     double lon = 13.3736 + (seq % 5) * 0.01;
+    //     char buf[192];
+    //     std::snprintf(buf, sizeof(buf),
+    //         R"({"seq":%d,"name":"TEST-%d","lat":%.4f,"lon":%.4f,"type":"test"})",
+    //         seq, seq, lat, lon);
+    //     upsertAndBroadcast(buf);
+    // }
 
     // Shared path for "Send test point" and real data from the TCP
     // collector alike -- validation, storing into objects (for
@@ -700,7 +712,7 @@ const markers = new Map();
 const trails = new Map();
 const trailLines = new Map();
 const MAX_TRAIL_POINTS = 2000;
-const trailColor = '#ffcc00';
+const trailColor = '#e60000';
 
 function redrawTrail(key) {
   const hist = trails.get(key);
