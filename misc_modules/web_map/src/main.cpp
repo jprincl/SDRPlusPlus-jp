@@ -72,13 +72,9 @@
 #include "leaflet_assets.h"
 #include "tcp_collector.h"
 
+#include <cctype>
+#include <cstdlib>
 #include <map>
-
-#if defined(_WIN32)
-    #define WIN32_LEAN_AND_MEAN
-    #include <windows.h>
-    #include <shellapi.h>
-#endif
 
 SDRPP_MOD_INFO{
     /* Name:            */ "web_map",
@@ -115,7 +111,7 @@ public:
 
         copyToBuffers();
 
-        gui::menu.registerEntry(name, menuHandler, this, this);
+        gui::menu.registerEntry(name, menuHandler, this, NULL);
     }
 
     ~WebMapModule() {
@@ -124,18 +120,9 @@ public:
     }
 
     void postInit() override {}
-    // The 4th arg to registerEntry() above (this, not NULL) is what makes
-    // the menu draw a checkbox bound to these three -- see gui/widgets/menu.cpp
-    // upstream: unchecking it calls disable(), checking it calls enable().
-    // Disabling force-stops the server (can't be "off" while still serving
-    // requests); re-enabling only flips the flag back, same "no auto-start"
-    // convention as everything else in this module -- press Start again.
-    void enable() override { moduleEnabled = true; }
-    void disable() override {
-        moduleEnabled = false;
-        stopServer();
-    }
-    bool isEnabled() override { return moduleEnabled; }
+    void enable()  override {}
+    void disable() override {}
+    bool isEnabled() override { return true; }
 
 private:
     // ------------------------------------------------------------- GUI ---
@@ -148,37 +135,47 @@ private:
         const bool serverRunning = isServerRunning();
 
         ImGui::BeginDisabled(serverRunning);
-        ImGui::LeftLabel("HTTP host");
+        ImGui::LeftLabel("HTTP host:port");
         ImGui::SetNextItemWidth(width - ImGui::GetCursorPosX() + 8);
-        if (ImGui::InputText(("##wm_hh_" + name).c_str(), httpHostBuf, sizeof(httpHostBuf))) {
-            httpHost = httpHostBuf;
-            saveString("http_host", httpHost);
+        if (ImGui::InputText(("##wm_http_addr_" + name).c_str(), httpAddrBuf, sizeof(httpAddrBuf))) {
+            std::string h; int p;
+            if (parseHostPort(httpAddrBuf, h, p)) {
+                httpAddrError = false;
+                httpHost = h;
+                httpPort = p;
+                saveString("http_host", httpHost);
+                saveInt("http_port", httpPort);
+            }
+            else {
+                httpAddrError = true;
+            }
         }
-        ImGui::LeftLabel("HTTP port");
-        ImGui::SetNextItemWidth(width - ImGui::GetCursorPosX() + 8);
-        if (ImGui::InputInt(("##wm_hp_" + name).c_str(), &httpPort, 0)) {
-            if (httpPort < 1)     httpPort = 1;
-            if (httpPort > 65535) httpPort = 65535;
-            saveInt("http_port", httpPort);
+        if (httpAddrError) {
+            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "invalid format, expected host:port");
         }
-        ImGui::LeftLabel("TCP host");
+        ImGui::LeftLabel("TCP host:port");
         ImGui::SetNextItemWidth(width - ImGui::GetCursorPosX() + 8);
-        if (ImGui::InputText(("##wm_th_" + name).c_str(), tcpHostBuf, sizeof(tcpHostBuf))) {
-            tcpHost = tcpHostBuf;
-            saveString("tcp_host", tcpHost);
+        if (ImGui::InputText(("##wm_tcp_addr_" + name).c_str(), tcpAddrBuf, sizeof(tcpAddrBuf))) {
+            std::string h; int p;
+            if (parseHostPort(tcpAddrBuf, h, p)) {
+                tcpAddrError = false;
+                tcpHost = h;
+                tcpPort = p;
+                saveString("tcp_host", tcpHost);
+                saveInt("tcp_port", tcpPort);
+            }
+            else {
+                tcpAddrError = true;
+            }
         }
-        ImGui::LeftLabel("TCP port");
-        ImGui::SetNextItemWidth(width - ImGui::GetCursorPosX() + 8);
-        if (ImGui::InputInt(("##wm_tp_" + name).c_str(), &tcpPort, 0)) {
-            if (tcpPort < 1)     tcpPort = 1;
-            if (tcpPort > 65535) tcpPort = 65535;
-            saveInt("tcp_port", tcpPort);
+        if (tcpAddrError) {
+            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "invalid format, expected host:port");
         }
         ImGui::EndDisabled();
 
         ImGui::Spacing();
 
-        const float btnW = (width - 8.0f) / 2.0f;
+        const float btnW = width;
         if (!serverRunning) {
             if (ImGui::Button(("Start server##wm_start_" + name).c_str(), ImVec2(btnW, 0))) {
                 startServer();
@@ -190,10 +187,6 @@ private:
                 stopServer();
             }
             ImGui::PopStyleColor();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(("Open in browser##wm_open_" + name).c_str(), ImVec2(btnW, 0))) {
-            openBrowser();
         }
 
         if (serverRunning) {
@@ -432,21 +425,28 @@ private:
         flog::info("web_map: server stopped");
     }
 
-    // -------------------------------------------------- browser launch ---
-    void openBrowser() {
-        const std::string url = "http://" + displayHost(httpHost) + ":" + std::to_string(httpPort) + "/";
-#if defined(_WIN32)
-        ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-#elif defined(__APPLE__)
-        (void)system(("open \"" + url + "\" >/dev/null 2>&1 &").c_str());
-#else
-        (void)system(("xdg-open \"" + url + "\" >/dev/null 2>&1 &").c_str());
-#endif
-    }
-
     static std::string displayHost(const std::string& h) {
         if (h == "0.0.0.0" || h.empty()) return "127.0.0.1";
         return h;
+    }
+
+    // Parses "host:port" (the merged address field in the panel). Splits on
+    // the LAST ':' rather than the first, so it doesn't break if a hostname
+    // itself ever contained one -- harmless for plain IPv4 today, cheap
+    // correctness margin for later.
+    static bool parseHostPort(const std::string& s, std::string& outHost, int& outPort) {
+        size_t colon = s.rfind(':');
+        if (colon == std::string::npos || colon == 0 || colon == s.size() - 1) return false;
+        std::string host = s.substr(0, colon);
+        std::string portStr = s.substr(colon + 1);
+        for (char c : portStr) {
+            if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+        }
+        int port = std::atoi(portStr.c_str());
+        if (port < 1 || port > 65535) return false;
+        outHost = host;
+        outPort = port;
+        return true;
     }
 
     // ----------------------------------------------- config helpers ---
@@ -461,21 +461,22 @@ private:
         config.release(true);
     }
     void copyToBuffers() {
-        std::strncpy(httpHostBuf, httpHost.c_str(), sizeof(httpHostBuf) - 1);
-        std::strncpy(tcpHostBuf,  tcpHost.c_str(),  sizeof(tcpHostBuf) - 1);
+        std::snprintf(httpAddrBuf, sizeof(httpAddrBuf), "%s:%d", httpHost.c_str(), httpPort);
+        std::snprintf(tcpAddrBuf, sizeof(tcpAddrBuf), "%s:%d", tcpHost.c_str(), tcpPort);
     }
 
     // ------------------------------------------------------- fields ---
     std::string name;
-    bool moduleEnabled = true;  // drives the menu checkbox, see enable()/disable() above
 
     std::string httpHost = "0.0.0.0";
     int         httpPort = 8073;
     std::string tcpHost  = "0.0.0.0";
     int         tcpPort  = 8093;
 
-    char httpHostBuf[64]{};
-    char tcpHostBuf[64]{};
+    char httpAddrBuf[64]{};
+    char tcpAddrBuf[64]{};
+    bool httpAddrError = false;
+    bool tcpAddrError  = false;
 
     std::unique_ptr<httplib::Server> svr;
     std::thread       serverThread;
