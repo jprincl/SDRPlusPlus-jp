@@ -9,11 +9,35 @@
 #include "main.hpp"
 #include "utils.hpp"
 
+#include <cctype>
+#include <cstdlib>
+
 #define CONCAT(a, b)    ((std::string(a) + b).c_str())
 
 #define SNAP_INTERVAL 1000
 #define UNCAL_COLOR IM_COL32(255,234,0,255)
 #define OUT_SAMPLE_RATE 48000
+
+// Parses "host:port" (the merged map-output address field in the panel).
+// Splits on the LAST ':' rather than the first, so it doesn't break if a
+// hostname itself ever contained one -- same helper as web_map's own
+// parseHostPort(), duplicated here since modules don't share private code.
+static bool
+parseHostPort(const std::string &s, std::string &outHost, int &outPort)
+{
+	size_t colon = s.rfind(':');
+	if (colon == std::string::npos || colon == 0 || colon == s.size() - 1) return false;
+	std::string host = s.substr(0, colon);
+	std::string portStr = s.substr(colon + 1);
+	for (char c : portStr) {
+		if (!isdigit(static_cast<unsigned char>(c))) return false;
+	}
+	int port = atoi(portStr.c_str());
+	if (port < 1 || port > 65535) return false;
+	outHost = host;
+	outPort = port;
+	return true;
+}
 
 SDRPP_MOD_INFO {
     /* Name:            */ "radiosonde_decoder",
@@ -59,6 +83,7 @@ RadiosondeDecoderModule::RadiosondeDecoderModule(std::string name)
 	strncpy(ptuFilename, ptuPath.c_str(), sizeof(ptuFilename)-1);
 	strncpy(mapHost, mapHostCfg.c_str(), sizeof(mapHost)-1);
 	mapHost[sizeof(mapHost)-1] = '\0';
+	snprintf(mapAddr, sizeof(mapAddr), "%s:%d", mapHost, mapPort);
 	// mapOutput always starts false (same convention as gpxOutput/ptuOutput
 	// above -- reporting only happens once the user explicitly enables it
 	// in this session, never automatically from a previous one).
@@ -328,13 +353,23 @@ RadiosondeDecoderModule::menuHandler(void *ctx)
 	/* Live map output {{{ */
 	mapStatusChanged = ImGui::Checkbox(CONCAT("Map output##_map_track_", _this->name), &_this->mapOutput);
 	ImGui::SameLine();
-	ImGui::SetNextItemWidth(width - 90 - ImGui::GetCursorPosX());
-	mapStatusChanged |= ImGui::InputText(CONCAT("##_map_host_", _this->name), _this->mapHost, sizeof(mapHost)-1,
-	                                     ImGuiInputTextFlags_EnterReturnsTrue);
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth(80);
-	mapStatusChanged |= ImGui::InputInt(CONCAT("##_map_port_", _this->name), &_this->mapPort, 0, 0,
-	                                    ImGuiInputTextFlags_EnterReturnsTrue);
+	ImGui::SetNextItemWidth(width - ImGui::GetCursorPosX());
+	if (ImGui::InputText(CONCAT("##_map_addr_", _this->name), _this->mapAddr, sizeof(_this->mapAddr)-1,
+	                     ImGuiInputTextFlags_EnterReturnsTrue)) {
+		std::string h; int p;
+		if (parseHostPort(_this->mapAddr, h, p)) {
+			_this->mapAddrError = false;
+			strncpy(_this->mapHost, h.c_str(), sizeof(_this->mapHost)-1);
+			_this->mapHost[sizeof(_this->mapHost)-1] = '\0';
+			_this->mapPort = p;
+			mapStatusChanged = true;
+		} else {
+			_this->mapAddrError = true;
+		}
+	}
+	if (_this->mapAddrError) {
+		ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "invalid format, expected host:port");
+	}
 	if (mapStatusChanged) onMapOutputChanged(ctx);
 	if (_this->enabled && _this->mapOutput && ImGui::IsItemHovered()) {
 		ImGui::SetTooltip("TCP JSON-lines, F4JTV sdr_map_launcher-compatible.\nE.g. web_map in this SDR++ at 127.0.0.1:8093,\nor any other software at any other address.");
