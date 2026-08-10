@@ -368,16 +368,24 @@ RadiosondeDecoderModule::reportToMap(SondeFullData *data)
 	// plain alphanumeric (true for every supported sonde type) -- no JSON
 	// escaping, matching the rest of this project's small ad-hoc JSON
 	// assembly (see web_map's sendTestPoint()).
-	char date[16], timeStr[16], line[512];
+	//
+	// Full field list per decode/common.hpp's SondeFullData: temp/rh/dewpt/
+	// pressure default to 0 when a given sonde type doesn't provide them
+	// (SondeFullData::init()), not some "no data" sentinel -- there's no way
+	// to tell "genuinely 0" from "not reported" from the value alone. We
+	// send them as-is either way, same as alt/climb/hdg already did.
+	char date[16], timeStr[16], line[768];
 	struct tm *tm = gmtime(&data->time);
 	strftime(date, sizeof(date), "%Y-%m-%d", tm);
 	strftime(timeStr, sizeof(timeStr), "%H:%M:%S", tm);
 
 	snprintf(line, sizeof(line),
 		R"({"name":"%s","date":"%s","time":"%s","lat":%.5f,"lon":%.5f,)"
-		R"("type":"radiosonde","speed":%.1f,"info":"alt_m=%.0f climb=%.1f hdg=%.0f"})",
+		R"("type":"radiosonde","speed":%.1f,"info":"alt_m=%.0f climb=%.1f hdg=%.0f )"
+		R"(temp_c=%.1f rh_pct=%.0f dewpt_c=%.1f pressure_hpa=%.1f calib_pct=%.0f"})",
 		data->serial.c_str(), date, timeStr, data->lat, data->lon,
-		data->spd, data->alt, data->climb, data->hdg);
+		data->spd, data->alt, data->climb, data->hdg,
+		data->temp, data->rh, data->dewpt, data->pressure, data->calib_percent);
 
 	mapReporter.send(line);
 }
