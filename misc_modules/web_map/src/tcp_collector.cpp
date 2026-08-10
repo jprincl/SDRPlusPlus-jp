@@ -4,7 +4,7 @@
 #include <cstring>
 
 #if defined(_WIN32)
-    // SOCKET/INVALID_SOCKET atd. uz jsou z tcp_collector.h (winsock2.h)
+    // SOCKET/INVALID_SOCKET etc. already come from tcp_collector.h (winsock2.h)
 #else
     #include <arpa/inet.h>
     #include <errno.h>
@@ -21,10 +21,10 @@ std::string TcpCollector::start(const std::string& host, int port, ObjectHandler
 
 #if defined(_WIN32)
     listenSock_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listenSock_ == INVALID_SOCKET) return "socket() selhal";
+    if (listenSock_ == INVALID_SOCKET) return "socket() failed";
 #else
     listenSock_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listenSock_ < 0) return std::string("socket() selhal: ") + strerror(errno);
+    if (listenSock_ < 0) return std::string("socket() failed: ") + strerror(errno);
 #endif
 
     int yes = 1;
@@ -38,16 +38,16 @@ std::string TcpCollector::start(const std::string& host, int port, ObjectHandler
         addr.sin_addr.s_addr = INADDR_ANY;
     }
     else if (::inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-        addr.sin_addr.s_addr = INADDR_ANY;  // neplatna adresa -> bezpecny fallback
+        addr.sin_addr.s_addr = INADDR_ANY;  // invalid address -> safe fallback
     }
 
     if (::bind(listenSock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
 #if defined(_WIN32)
-        std::string err = "bind selhal (port obsazeny?)";
+        std::string err = "bind failed (port busy?)";
         closesocket(listenSock_);
         listenSock_ = INVALID_SOCKET;
 #else
-        std::string err = std::string("bind selhal: ") + strerror(errno);
+        std::string err = std::string("bind failed: ") + strerror(errno);
         close(listenSock_);
         listenSock_ = -1;
 #endif
@@ -56,11 +56,11 @@ std::string TcpCollector::start(const std::string& host, int port, ObjectHandler
 
     if (::listen(listenSock_, 16) != 0) {
 #if defined(_WIN32)
-        std::string err = "listen selhal";
+        std::string err = "listen failed";
         closesocket(listenSock_);
         listenSock_ = INVALID_SOCKET;
 #else
-        std::string err = std::string("listen selhal: ") + strerror(errno);
+        std::string err = std::string("listen failed: ") + strerror(errno);
         close(listenSock_);
         listenSock_ = -1;
 #endif
@@ -77,19 +77,19 @@ void TcpCollector::stop() {
 
 #if defined(_WIN32)
     if (listenSock_ != INVALID_SOCKET) {
-        closesocket(listenSock_);  // odblokuje accept()
+        closesocket(listenSock_);  // unblocks accept()
         listenSock_ = INVALID_SOCKET;
     }
 #else
     if (listenSock_ >= 0) {
         shutdown(listenSock_, SHUT_RDWR);
-        close(listenSock_);  // odblokuje accept()
+        close(listenSock_);  // unblocks accept()
         listenSock_ = -1;
     }
 #endif
     if (acceptThread_.joinable()) acceptThread_.join();
 
-    // vsechny zive klientske sockety natvrdo zavrit -- odblokuje jejich recv()
+    // force-close every live client socket -- unblocks their recv()
     {
         std::lock_guard<std::mutex> lg(clientsMutex_);
         for (auto fd : clientSockets_) {
@@ -119,8 +119,8 @@ void TcpCollector::acceptLoop() {
         int peerLen = sizeof(peer);
         SOCKET fd = ::accept(listenSock_, reinterpret_cast<sockaddr*>(&peer), &peerLen);
         if (fd == INVALID_SOCKET) {
-            if (!running_.load()) break;  // stop() prave zavrel listenSock_
-            continue;                      // prechodna chyba, zkusit znovu
+            if (!running_.load()) break;  // stop() just closed listenSock_
+            continue;                      // transient error, try again
         }
 #else
         socklen_t peerLen = sizeof(peer);
@@ -153,7 +153,7 @@ void TcpCollector::clientLoop(
 #else
         ssize_t n = ::recv(fd, chunk, sizeof(chunk), 0);
 #endif
-        if (n <= 0) break;  // spojeni zavrene nebo chyba
+        if (n <= 0) break;  // connection closed or error
         buf.append(chunk, static_cast<size_t>(n));
 
         size_t pos;
@@ -172,9 +172,9 @@ void TcpCollector::clientLoop(
 #endif
     clientCount_--;
 
-    // vlastni socket smazat ze seznamu pro force-close v stop() -- vlakno
-    // samo sebe ze clientThreads_ NEMAZE (to je bezpecne jen z stop(),
-    // ktere na nej pak jeste zavola join()).
+    // Remove our own socket from the list for force-close in stop() --
+    // the thread does NOT remove itself from clientThreads_ (that's only
+    // safe from stop(), which then also calls join() on it).
     std::lock_guard<std::mutex> lg(clientsMutex_);
     auto it = std::find(clientSockets_.begin(), clientSockets_.end(), fd);
     if (it != clientSockets_.end()) clientSockets_.erase(it);
