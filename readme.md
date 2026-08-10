@@ -151,6 +151,8 @@ Implemented SSTV decoder module from SwissKnifeEdition SDR++ (from F4JTV). Some 
 
 Implemented a station-identification module inspired by the **ListenInfo** plugin for SDR#. Imports EiBi and Aoki shortwave/mediumwave schedule databases and shows, live on the waterfall and in a side panel, which station(s) should be on a given frequency right now — tap or click a label to tune, hold it to see full detail (target area, country, language, transmitter site, power). When several stations share a channel it ranks them by target area, or (for Aoki, which carries real transmitter coordinates) by distance from your own location on bands where that's actually predictive of what you'll hear. A separate browsable window lists the whole database with search. See [misc_modules/freq_info/README.md](misc_modules/freq_info/README.md) for setup and details.
 
+<img width="1280" height="800" src="https://github.com/jprincl/SDRPlusPlus-jp/blob/c73fe6e0a0fb76929ee6ea9f304e462a604393c6/doc/pictures/freq_info_module.jpeg>
+
 ---------------------------------------------------------------------------
 
 **Please do not report bugs in this fork to original author.**
