@@ -33,6 +33,8 @@ private:
 	bool mapOutput = false;
 	char mapHost[64];
 	int mapPort;
+	char mapAddr[80];       /* combined "host:port" UI field, see parseHostPort() */
+	bool mapAddrError = false;
 	VFOManager::VFO *vfo;
 	dsp::demod::FM<float> fmDemod;
 	dsp::multirate::RationalResampler<float> resampler;
