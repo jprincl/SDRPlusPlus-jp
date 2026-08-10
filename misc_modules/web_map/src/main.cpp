@@ -1,29 +1,30 @@
 /*
  * web_map — SDR++ module
  *
- * Vlastní embedded HTTP/SSE server žijící přímo v procesu SDR++ (žádný
- * subprocess, na rozdíl od F4JTV sdr_map_launcher, který spouští Django) +
- * TCP kolektor na druhém, nezávisle nastavitelném portu, protokolově
- * kompatibilní s F4JTV dekodéry (viz tcp_collector.h pro přesný tvar
- * JSON-lines obálky). Jediný vstupní bod pro data od dekodérů -- záměrně
- * žádné in-process API (zvažováno a zavrženo: uzamklo by producentský
- * modul k tomuhle konkrétnímu web_mapu; TCP nechává dekodéry tím, čím mají
- * být -- univerzálním zdrojem dat, použitelným i mimo tenhle proces a mimo
- * SDR++ vůbec).
+ * Own embedded HTTP/SSE server living directly in the SDR++ process (no
+ * subprocess, unlike F4JTV's sdr_map_launcher, which spawns Django) + a
+ * TCP collector on a second, independently configurable port, protocol
+ * compatible with F4JTV decoders (see tcp_collector.h for the exact shape
+ * of the JSON-lines envelope). The only entry point for data from decoders
+ * -- deliberately no in-process API (considered and rejected: it would
+ * lock a producer module to this specific web_map; TCP keeps decoders what
+ * they should be -- a universal data source, usable outside this process
+ * and outside SDR++ entirely).
  *
- * Start/Stop v panelu ovládá HTTP i TCP vrstvu atomicky -- pokud se
- * nepodaří nabindovat TCP port, HTTP se taky rozjede zpátky dolů, ať
- * nezůstane napůl rozjetý stav.
+ * Start/Stop in the panel controls both the HTTP and TCP layers
+ * atomically -- if the TCP port fails to bind, HTTP is torn back down too,
+ * so it never sits half-started.
  *
- * Frontend na "/" je reálná Leaflet mapa (knihovna vendorovaná lokálně,
- * dlaždice z OSM online). Nový prohlížeč si při načtení nejdřív stáhne
- * "/api/snapshot" (aktuální stav všech přijatých objektů), pak se napojí
- * na "/events" (SSE) pro živé updaty — bez snapshotu by viděl jen věci
- * přijaté PO otevření stránky.
+ * The frontend at "/" is a real Leaflet map (library vendored locally,
+ * tiles from OSM online). A newly opened browser first downloads
+ * "/api/snapshot" (current state of every received object), then
+ * connects to "/events" (SSE) for live updates -- without the snapshot it
+ * would only ever see things received AFTER the page was opened.
  *
- * Vědomě zatím chybí (další krok, ne bug): expirace starých objektů a
- * broadcast "remove" události při odpojení zdroje — F4JTV to řeší v
- * listen_sdr.py, my zatím necháváme objekty v paměti navždy.
+ * Deliberately still missing (a next step, not a bug): expiring old
+ * objects and broadcasting a "remove" event when a source disconnects --
+ * F4JTV handles this in listen_sdr.py, we currently keep objects in
+ * memory forever.
  */
 
 #include <imgui.h>
@@ -47,21 +48,22 @@
 #include <thread>
 #include <vector>
 
-// cpp-httplib je vendorovaná single-header knihovna (MIT), viz httplib.h
-// vedle tohoto souboru. Quoted include (ne <>): quoted lookup vždy hledá
-// nejdřív adresář obsahujícího souboru, nezávisle na tom, jak si daný
-// CMake/Ninja generátor rozhodne předat include cesty compileru -- na
-// Android buildu se ukázalo, že úhlová varianta na to spoléhala a
-// nefungovalo to. Bez OpenSSL flagu = čisté HTTP, žádné TLS -- pro
-// lokální/LAN dev server v pořádku.
+// cpp-httplib is a vendored single-header library (MIT), see httplib.h
+// next to this file. Quoted include (not <>): quoted lookup always
+// searches the including file's own directory first, independent of how a
+// given CMake/Ninja generator decides to pass include paths to the
+// compiler -- on the Android build the angle-bracket form turned out to
+// rely on that and didn't work. No OpenSSL flag = plain HTTP, no TLS --
+// fine for a local/LAN dev server.
 //
-// cpp-httplib větev "USE_IF2IP" (vazba na síťové rozhraní podle jména) se
-// aktivuje podmínkou "!defined ANDROID" -- ale NDK toolchain definuje
-// __ANDROID__ (s podtržítky), ne holé ANDROID. Bez téhle opravy se ta
-// větev na Androidu omylem zkompiluje a spadne na getifaddrs/freeifaddrs,
-// které bionic sysroot bez dost vysokého API levelu nedeklaruje. My tuhle
-// funkci (bind podle jména rozhraní) nepotřebujeme, takže ji takhle jen
-// spolehlivě vypneme, aniž bychom sahali do samotného vendorovaného souboru.
+// cpp-httplib's "USE_IF2IP" branch (binding by network interface name) is
+// gated on "!defined ANDROID" -- but the NDK toolchain defines
+// __ANDROID__ (with underscores), not bare ANDROID. Without this fix that
+// branch mistakenly compiles on Android and falls over on
+// getifaddrs/freeifaddrs, which the bionic sysroot doesn't declare below a
+// high enough API level. We don't need that feature (binding by interface
+// name), so this just reliably turns it off without touching the
+// vendored file itself.
 #if defined(__ANDROID__) && !defined(ANDROID)
     #define ANDROID
 #endif
@@ -80,7 +82,7 @@
 
 SDRPP_MOD_INFO{
     /* Name:            */ "web_map",
-    /* Description:     */ "Embedded HTTP/SSE server + TCP kolektor pro živou Leaflet mapu pozic (F4JTV-kompatibilní JSON-lines).",
+    /* Description:     */ "Embedded HTTP/SSE server + TCP collector for a live Leaflet position map (F4JTV-compatible JSON-lines).",
     /* Author:          */ "jprincl",
     /* Version:         */ 0, 1, 0,
     /* Max instances:   */ 1
@@ -89,9 +91,9 @@ SDRPP_MOD_INFO{
 ConfigManager config;
 
 // ---------------------------------------------------------------- SSE ----
-// Jeden otevřený /events spojení = jeden klient s vlastní frontou zpráv.
-// broadcast() zprávu přidá do fronty všech aktivních klientů a probudí
-// jejich content provider vlákno (viz setupRoutes).
+// One open /events connection = one client with its own message queue.
+// broadcast() adds a message to every active client's queue and wakes
+// their content provider thread (see setupRoutes).
 struct SseClient {
     std::mutex mtx;
     std::condition_variable cv;
@@ -113,9 +115,7 @@ public:
 
         copyToBuffers();
 
-        // NULL = žádný checkbox vedle položky v menu; Start/Stop v panelu
-        // je ten skutečný vypínač (stejný důvod jako u sdr_map_launcher).
-        gui::menu.registerEntry(name, menuHandler, this, NULL);
+        gui::menu.registerEntry(name, menuHandler, this, this);
     }
 
     ~WebMapModule() {
@@ -124,9 +124,18 @@ public:
     }
 
     void postInit() override {}
-    void enable()  override {}
-    void disable() override {}
-    bool isEnabled() override { return true; }
+    // The 4th arg to registerEntry() above (this, not NULL) is what makes
+    // the menu draw a checkbox bound to these three -- see gui/widgets/menu.cpp
+    // upstream: unchecking it calls disable(), checking it calls enable().
+    // Disabling force-stops the server (can't be "off" while still serving
+    // requests); re-enabling only flips the flag back, same "no auto-start"
+    // convention as everything else in this module -- press Start again.
+    void enable() override { moduleEnabled = true; }
+    void disable() override {
+        moduleEnabled = false;
+        stopServer();
+    }
+    bool isEnabled() override { return moduleEnabled; }
 
 private:
     // ------------------------------------------------------------- GUI ---
@@ -197,9 +206,9 @@ private:
         if (serverRunning) {
             ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.40f, 1.0f), "[+] Running");
             ImGui::TextDisabled("http://%s:%d/", displayHost(httpHost).c_str(), httpPort);
-            ImGui::TextDisabled("Prohlížeč klienti: %d   Odesláno testů: %d",
+            ImGui::TextDisabled("Browser clients: %d   Test points sent: %d",
                                 clientCount.load(), testSeq.load());
-            ImGui::TextDisabled("TCP vstup %s:%d   Dekodéry: %d   Objektů: %d   Chyb: %d",
+            ImGui::TextDisabled("TCP input %s:%d   Decoders: %d   Objects: %d   Errors: %d",
                                 displayHost(tcpHost).c_str(), tcpPort,
                                 tcpCollector.clientCount(), objectCount.load(), ingestErrors.load());
         }
@@ -217,9 +226,9 @@ private:
             res.set_content(kIndexHtml, "text/html; charset=utf-8");
         });
 
-        // Vendorovaný Leaflet (leaflet_assets.cpp) -- servírováno ze stejného
-        // originu jako mapa, žádná závislost na CDN. Dlaždice (OSM) naopak
-        // úmyslně jedou z netu, viz komentář u tile layeru v kIndexHtml.
+        // Vendored Leaflet (leaflet_assets.cpp) -- served from the same
+        // origin as the map, no CDN dependency. Tiles (OSM) intentionally
+        // come from the network -- see the tile layer comment in kIndexHtml.
         svr.Get("/leaflet.js", [](const httplib::Request&, httplib::Response& res) {
             res.set_content(kLeafletJs, "application/javascript; charset=utf-8");
         });
@@ -233,9 +242,10 @@ private:
             res.set_content(buf, "application/json");
         });
 
-        // Aktuální stav všech přijatých objektů -- prohlížeč si tohle
-        // stáhne PŘED napojením na /events, ať vidí i body přijaté před
-        // otevřením stránky (SSE samo o sobě jede jen dopředu v čase).
+        // Current state of every received object -- the browser downloads
+        // this BEFORE connecting to /events, so it also sees points
+        // received before the page was opened (SSE by itself only ever
+        // moves forward in time).
         svr.Get("/api/snapshot", [this](const httplib::Request&, httplib::Response& res) {
             std::string body = "[";
             {
@@ -265,7 +275,10 @@ private:
                 "text/event-stream",
                 [client](size_t, httplib::DataSink& sink) -> bool {
                     std::unique_lock<std::mutex> lock(client->mtx);
-                    client->cv.wait_for(lock, std::chrono::seconds(15), [&] {
+                    // Shorter interval = lower worst-case delay on Stop if
+                    // a client connects just outside the notify loop in
+                    // stopServer() -- see the comment there.
+                    client->cv.wait_for(lock, std::chrono::seconds(3), [&] {
                         return !client->queue.empty() || !client->active.load();
                     });
                     if (!client->active.load()) return false;
@@ -301,7 +314,7 @@ private:
 
     void sendTestPoint() {
         int seq = ++testSeq;
-        // deterministický posun, aby bylo v logu vidět, že bod "žije"
+        // deterministic drift so the log visibly shows the point "living"
         double lat = 49.7384 + (seq % 7) * 0.01;
         double lon = 13.3736 + (seq % 5) * 0.01;
         char buf[192];
@@ -311,9 +324,10 @@ private:
         upsertAndBroadcast(buf);
     }
 
-    // Sdílená cesta pro "Send test point" i pro skutečná data z TCP
-    // kolektoru -- validace, uložení do objects (kvůli /api/snapshot pro
-    // nově příchozí prohlížeče) a broadcast živým SSE klientům.
+    // Shared path for "Send test point" and real data from the TCP
+    // collector alike -- validation, storing into objects (for
+    // /api/snapshot for newly connecting browsers), and broadcasting to
+    // live SSE clients.
     void upsertAndBroadcast(const std::string& rawJsonLine) {
         json obj;
         try {
@@ -352,25 +366,25 @@ private:
         svr = std::make_unique<httplib::Server>();
         setupRoutes(*svr);
 
-        // bind_to_port ověří port HNED, v tomhle (GUI) vlákně -- takže
-        // obsazený port se ukáže v panelu okamžitě, ne jako tiché nic na
-        // pozadí. Tohle je přesně ten desktopový "s něčím se to srazí"
-        // případ.
+        // bind_to_port checks the port RIGHT NOW, on this (GUI) thread --
+        // so a busy port shows up in the panel immediately, not as
+        // silent nothing in the background. This is exactly that
+        // desktop "collides with something" case.
         if (!svr->bind_to_port(httpHost.c_str(), httpPort)) {
-            lastError = "Nepodařilo se nabindovat HTTP " + httpHost + ":" +
-                        std::to_string(httpPort) + " (port obsazený, nebo neplatná adresa).";
+            lastError = "Failed to bind HTTP " + httpHost + ":" +
+                        std::to_string(httpPort) + " (port busy, or invalid address).";
             flog::error("web_map: {}", lastError);
             svr.reset();
             return;
         }
 
-        // Start/Stop je atomický pro obě vrstvy -- pokud TCP kolektor
-        // nenabindujte, zahodíme i už úspěšně nabindovaný HTTP socket
-        // (svr.reset() ho zavře), ať nezůstane napůl rozjetý stav.
+        // Start/Stop is atomic for both layers -- if the TCP collector
+        // fails to bind, we also discard the already-successfully-bound
+        // HTTP socket (svr.reset() closes it), so it never sits half-started.
         std::string tcpErr = tcpCollector.start(tcpHost, tcpPort,
             [this](const std::string& line) { upsertAndBroadcast(line); });
         if (!tcpErr.empty()) {
-            lastError = "Nepodařilo se spustit TCP kolektor na " + tcpHost + ":" +
+            lastError = "Failed to start the TCP collector on " + tcpHost + ":" +
                         std::to_string(tcpPort) + " (" + tcpErr + ").";
             flog::error("web_map: {}", lastError);
             svr.reset();
@@ -379,7 +393,7 @@ private:
 
         running = true;
         serverThread = std::thread([this]() {
-            svr->listen_after_bind();  // blokuje do stop()
+            svr->listen_after_bind();  // blocks until stop()
             running = false;
         });
 
@@ -389,13 +403,16 @@ private:
     void stopServer() {
         if (!svr && !running.load() && !tcpCollector.isRunning()) return;
 
-        if (svr) svr->stop();
-        if (serverThread.joinable()) serverThread.join();
-        tcpCollector.stop();  // join-uje i všechna klientská vlákna, viz tcp_collector.cpp
-
-        // klienty zaseknuté v čekání na frontu je potřeba probudit ručně --
-        // svr->stop() zavře listening socket, ale nekopíruje se to
-        // automaticky do našich vlastních condition_variable čekání.
+        // MUST wake any SSE clients parked in the wait_for BEFORE joining
+        // serverThread below. cpp-httplib's listen_after_bind() only
+        // returns once its internal thread pool has joined every in-flight
+        // request handler (ThreadPool::shutdown() in httplib.h) -- and our
+        // /events handler can sit blocked in that wait for up to
+        // kSseHeartbeatSec. Doing this notify AFTER the join (the original
+        // bug here) means the whole app stalls for however much of that
+        // wait was left when Stop got pressed -- that's the multi-second
+        // freeze. Notifying first lets those handler threads exit almost
+        // immediately, so the join below returns fast.
         {
             std::lock_guard<std::mutex> lg(clientsMutex);
             for (auto& c : clients) {
@@ -405,6 +422,11 @@ private:
             clients.clear();
         }
         clientCount = 0;
+
+        if (svr) svr->stop();
+        if (serverThread.joinable()) serverThread.join();
+        tcpCollector.stop();  // also joins every client thread, see tcp_collector.cpp
+
         svr.reset();
         running = false;
         flog::info("web_map: server stopped");
@@ -445,6 +467,7 @@ private:
 
     // ------------------------------------------------------- fields ---
     std::string name;
+    bool moduleEnabled = true;  // drives the menu checkbox, see enable()/disable() above
 
     std::string httpHost = "0.0.0.0";
     int         httpPort = 8073;
@@ -464,8 +487,8 @@ private:
     std::atomic<int>  clientCount{0};
     std::atomic<int>  testSeq{0};
 
-    // TCP kolektor + poslední známý stav všech objektů (typ|identita ->
-    // syrový JSON řádek), kvůli /api/snapshot pro nově příchozí prohlížeče.
+    // TCP collector + last known state of every object (type|identity ->
+    // raw JSON line), for /api/snapshot for newly connecting browsers.
     TcpCollector                       tcpCollector;
     std::map<std::string, std::string> objects;
     std::mutex                         objectsMutex;
@@ -499,12 +522,12 @@ html, body, #map { height: 100%; margin: 0; padding: 0; background: #111; }
 <script>
 const statusEl = document.getElementById('status');
 
-// Vychozi pohled na test data (Plzen); az bude TCP kolektor, prvni
-// prijaty bod muze mapu sam vycentrovat.
+// Default view over the test data (Plzen); once the TCP collector is
+// wired up, the first received point could re-center the map itself.
 const map = L.map('map').setView([49.7384, 13.3736], 12);
 
-// Dlazdice umyslne z OSM online (dohodnuto) -- jen samotna Leaflet
-// knihovna je vendorovana a servirovana lokalne z tohoto modulu.
+// Tiles intentionally from OSM online (agreed) -- only the Leaflet
+// library itself is vendored and served locally from this module.
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -519,28 +542,56 @@ const dotIcon = L.divIcon({
 
 const markers = new Map();
 
+// Client-side trail: bounded position history per object key, drawn as a
+// polyline behind the marker. Universal mechanism, not radiosonde-specific
+// (matches how F4JTV's map.js does it -- global mechanism, not per-type
+// hardcoding) -- any object that moves gets a trail, a static one-shot
+// object just ends up with an invisible single-point "trail". Session-only:
+// starts empty on page load, no server-side history (deliberately deferred,
+// see the file header comment).
+const trails = new Map();
+const trailLines = new Map();
+const MAX_TRAIL_POINTS = 2000;
+
+const markerColor = '#e0433c';
+
 function setStatus(connected) {
   const n = markers.size;
   statusEl.textContent = connected
-    ? 'connected \u2014 ' + n + ' bod\u016f na map\u011b'
+    ? 'connected \u2014 ' + n + ' points on map'
     : 'reconnecting...';
 }
 
-// stejne slozeni klice jako backend (typ|identita) -- viz upsertAndBroadcast
-// v main.cpp -- aby stejny objekt ze snapshotu i z live SSE mířil na
-// stejny marker.
+// same key composition as the backend (type|identity) -- see
+// upsertAndBroadcast in main.cpp -- so the same object from the snapshot
+// and from live SSE both point at the same marker.
 function keyOf(obj) {
   return (obj.type || '') + '|' + (obj.name || obj.seq || '?');
 }
 
 function upsert(obj) {
   const key = keyOf(obj);
+  const pos = [obj.lat, obj.lon];
+
+  let hist = trails.get(key);
+  if (!hist) { hist = []; trails.set(key, hist); }
+  hist.push(pos);
+  if (hist.length > MAX_TRAIL_POINTS) hist.shift();
+
+  let line = trailLines.get(key);
+  if (!line) {
+    line = L.polyline(hist, { color: markerColor, weight: 2, opacity: 0.55 }).addTo(map);
+    trailLines.set(key, line);
+  } else {
+    line.setLatLngs(hist);
+  }
+
   let m = markers.get(key);
   if (!m) {
-    m = L.marker([obj.lat, obj.lon], { icon: dotIcon }).addTo(map);
+    m = L.marker(pos, { icon: dotIcon }).addTo(map);
     markers.set(key, m);
   } else {
-    m.setLatLng([obj.lat, obj.lon]);
+    m.setLatLng(pos);
   }
   m.bindPopup('<pre style="margin:0">' + JSON.stringify(obj, null, 1) + '</pre>');
   setStatus(true);
@@ -548,14 +599,15 @@ function upsert(obj) {
 
 function removeById(id) {
   const m = markers.get(id);
-  if (!m) return;
-  map.removeLayer(m);
-  markers.delete(id);
+  if (m) { map.removeLayer(m); markers.delete(id); }
+  const line = trailLines.get(id);
+  if (line) { map.removeLayer(line); trailLines.delete(id); }
+  trails.delete(id);
   setStatus(true);
 }
 
-// Snapshot pred napojenim na SSE -- bez tohohle by novy prohlizec videl
-// jen body prijate PO otevreni stranky.
+// Snapshot before connecting to SSE -- without this a new browser would
+// only see points received AFTER the page was opened.
 fetch('/api/snapshot')
   .then((r) => r.json())
   .then((arr) => arr.forEach(upsert))
