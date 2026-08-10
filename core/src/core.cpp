@@ -387,6 +387,7 @@ int sdrpp_main(int argc, char* argv[]) {
     core::configManager.conf["modules"][modCount++] = "rtty_decoder.so";
 
     core::configManager.conf["modules"][modCount++] = "frequency_manager.so";
+    core::configManager.conf["modules"][modCount++] = "freq_info.so";
     core::configManager.conf["modules"][modCount++] = "noise_reduction_logmmse.so";
     core::configManager.conf["modules"][modCount++] = "recorder.so";
     core::configManager.conf["modules"][modCount++] = "rigctl_server.so";
