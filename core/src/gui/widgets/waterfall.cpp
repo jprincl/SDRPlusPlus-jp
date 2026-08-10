@@ -766,7 +766,8 @@ namespace ImGui {
         bool startVis, endVis;
         uint32_t color, colorTrans;
 
-        float height = ImGui::CalcTextSize("0").y * 2.5f;
+        //old value: float height = ImGui::CalcTextSize("0").y * 2.5f; 
+        float height = ImGui::CalcTextSize("0").y + style::dp(6.0f);
         float bpBottom;
 
         if (bandPlanPos == BANDPLAN_POS_BOTTOM) {
