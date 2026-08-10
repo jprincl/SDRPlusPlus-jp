@@ -13,7 +13,7 @@ automatically — you fetch the file yourself and point the plugin at it.
 
 The standard, actively maintained shortwave broadcast/utility schedule
 database. Get the current season's file from
-[eibispace.de](http://eibispace.de/dx/) — look for `sked-Xzz.csv` (e.g.
+[eibispace.de](http://eibispace.de/) — look for CSV database file (`sked-Xzz.csv`) (e.g.
 `sked-a26.csv` for the A26/summer 2026 season; the letter changes each
 season, roughly twice a year).
 
