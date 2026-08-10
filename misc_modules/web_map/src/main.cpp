@@ -286,6 +286,36 @@ private:
             res.set_content(body, "application/json");
         });
 
+        // Feeds the top bar's info line: how many decoders (TCP producer
+        // connections) are currently attached and which object types have
+        // been seen so far -- inferred from stored object keys ("type|id"),
+        // since the wire protocol has no separate "hello, I'm decoder X"
+        // handshake to name them individually.
+        svr.Get("/api/status", [this](const httplib::Request&, httplib::Response& res) {
+            std::vector<std::string> types;
+            size_t objCount;
+            {
+                std::lock_guard<std::mutex> lg(objectsMutex);
+                objCount = objects.size();
+                for (auto& kv : objects) {
+                    size_t pipe = kv.first.find('|');
+                    std::string type = (pipe == std::string::npos) ? kv.first : kv.first.substr(0, pipe);
+                    if (std::find(types.begin(), types.end(), type) == types.end()) {
+                        types.push_back(type);
+                    }
+                }
+            }
+            std::string body = "{\"tcp_clients\":" + std::to_string(tcpCollector.clientCount()) +
+                                ",\"http_clients\":" + std::to_string(clientCount.load()) +
+                                ",\"objects\":" + std::to_string(objCount) + ",\"types\":[";
+            for (size_t i = 0; i < types.size(); i++) {
+                if (i) body += ",";
+                body += "\"" + types[i] + "\"";
+            }
+            body += "]}";
+            res.set_content(body, "application/json");
+        });
+
         // Explicit, manual "start fresh" -- deliberately no automatic
         // expiry (that's still a known follow-up, see the file header).
         // Broadcasts "reset" so every connected browser clears live, not
@@ -561,12 +591,18 @@ private:
 <title>web_map</title>
 <link rel="stylesheet" href="/leaflet.css">
 <style>
-html, body, #map { height: 100%; margin: 0; padding: 0; background: #111; }
-#status {
-  position: fixed; top: 8px; left: 8px; z-index: 1000;
-  background: rgba(17,17,17,.85); color: #ddd; font-family: sans-serif;
-  font-size: 13px; padding: 6px 10px; border-radius: 6px;
+html, body { height: 100%; margin: 0; padding: 0; background: #111; overflow: hidden; }
+#topbar {
+  height: 40px; display: flex; align-items: center; gap: 12px;
+  background: #1a1a1a; color: #ccc; font-family: sans-serif; font-size: 13px;
+  padding: 0 12px; border-bottom: 1px solid #333; box-sizing: border-box;
 }
+#topbar-title { font-weight: 600; color: #fff; white-space: nowrap; }
+#topbar-info {
+  color: #999; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#map { position: absolute; top: 40px; left: 0; right: 0; bottom: 0; }
 .wm-marker { background: transparent; border: none; }
 .wm-dot {
   width: 14px; height: 14px; border-radius: 50%; background: #e0433c;
@@ -574,8 +610,8 @@ html, body, #map { height: 100%; margin: 0; padding: 0; background: #111; }
 }
 .wm-balloon { filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
 #reset-btn {
-  margin-left: 8px; background: #333; color: #ddd; border: 1px solid #555;
-  border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer;
+  flex: 0 0 auto; background: #333; color: #ddd; border: 1px solid #555;
+  border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer;
 }
 #reset-btn:hover { background: #444; }
 
@@ -600,15 +636,20 @@ html, body, #map { height: 100%; margin: 0; padding: 0; background: #111; }
 </style>
 </head>
 <body>
-<div id="status">connecting&hellip; <button id="reset-btn" type="button">Reset data</button></div>
+<div id="topbar">
+  <span id="topbar-title">SDR++ web map module:</span>
+  <span id="topbar-info">connecting&hellip;</span>
+  <button id="reset-btn" type="button">Reset data</button>
+</div>
 <div id="map"></div>
 <script src="/leaflet.js"></script>
 <script>
-const statusEl = document.getElementById('status');
+const topbarInfo = document.getElementById('topbar-info');
 
 // Default view over the test data (Plzen); once the TCP collector is
 // wired up, the first received point could re-center the map itself.
 const map = L.map('map').setView([49.7384, 13.3736], 12);
+
 
 // Tiles intentionally from OSM online (agreed) -- only the Leaflet
 // library itself is vendored and served locally from this module.
@@ -659,26 +700,52 @@ const markers = new Map();
 const trails = new Map();
 const trailLines = new Map();
 const MAX_TRAIL_POINTS = 2000;
-const markerColor = '#e0433c';
+const trailColor = '#ffcc00';
 
 function redrawTrail(key) {
   const hist = trails.get(key);
   if (!hist || hist.length === 0) return;
   let line = trailLines.get(key);
   if (!line) {
-    line = L.polyline(hist, { color: markerColor, weight: 2, opacity: 0.55 }).addTo(map);
+    line = L.polyline(hist, { color: trailColor, weight: 4, opacity: 0.9 }).addTo(map);
     trailLines.set(key, line);
   } else {
     line.setLatLngs(hist);
   }
 }
 
-function setStatus(connected) {
-  const n = markers.size;
-  statusEl.textContent = connected
-    ? 'connected \u2014 ' + n + ' points on map'
-    : 'reconnecting...';
+// Info line in the top bar: connection state, this server's own address
+// (no backend call needed -- the browser is already talking to it),
+// decoder/type info from periodic /api/status polling, and point count.
+let connState = false;
+let lastServerStatus = null;
+
+function refreshTopbarInfo() {
+  const parts = [connState ? 'connected' : 'reconnecting...', location.host];
+  if (lastServerStatus) {
+    const n = lastServerStatus.tcp_clients;
+    parts.push(n + ' decoder' + (n === 1 ? '' : 's') + ' connected');
+    if (lastServerStatus.types && lastServerStatus.types.length) {
+      parts.push('types: ' + lastServerStatus.types.join(', '));
+    }
+  }
+  parts.push(markers.size + ' points on map');
+  topbarInfo.textContent = parts.join('  \u2014  ');
 }
+
+function setStatus(connected) {
+  connState = connected;
+  refreshTopbarInfo();
+}
+
+function pollServerStatus() {
+  fetch('/api/status')
+    .then((r) => r.json())
+    .then((data) => { lastServerStatus = data; refreshTopbarInfo(); })
+    .catch(() => {});
+}
+pollServerStatus();
+setInterval(pollServerStatus, 5000);
 
 // same key composition as the backend (type|identity) -- see
 // upsertAndBroadcast in main.cpp -- so the same object from the snapshot
