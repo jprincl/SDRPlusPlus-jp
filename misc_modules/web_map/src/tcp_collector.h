@@ -14,20 +14,21 @@
     #pragma comment(lib, "ws2_32.lib")
 #endif
 
-// Minimal newline-delimited JSON TCP kolektor, protokolove kompatibilni s
+// Minimal newline-delimited JSON TCP collector, protocol compatible with
 // F4JTV/SDRPlusPlus_SwissKnifeEdition (misc_modules/sdr_map_launcher ->
-// sdr_map/map/management/commands/listen_sdr.py): kazdy pripojeny dekoder
-// posila JEDEN JSON radek na objekt:
+// sdr_map/map/management/commands/listen_sdr.py): every connected decoder
+// sends ONE JSON line per object:
 //
 //   {"name":"...","date":"YYYY-MM-DD","time":"HH:MM:SS","lat":..,"lon":..,
 //    "type":"ADSB|AIS|APRS|APRS Meteo|lrrp|radiosonde|TETRA|SARSAT|satellite",
 //    "speed":..,"info":"key=value ..."}
 //
-// My tenhle radek jen predame dal (viz ObjectHandler) -- zadny typovy
-// rozbor "info" pole tady zatim neni (SARSAT/TETRA/ADSB extra enrichment
-// atd.), takze porovnany F4JTV dekoder muze mirit na tenhle port beze
-// zmeny svyho vystupniho kodu. Vice pripojeni najednou je ocekavane
-// (kazdy dekoder modul ma vlastni TCP spojeni).
+// We just pass this line straight through (see ObjectHandler) -- no
+// type-specific parsing of the "info" field here yet (SARSAT/TETRA/ADSB
+// extra enrichment etc.), so a ported F4JTV decoder can point at this
+// port with zero changes to its output side. Multiple simultaneous
+// connections are expected (each decoder module holds its own TCP
+// connection).
 class TcpCollector {
 public:
     using ObjectHandler = std::function<void(const std::string& rawJsonLine)>;
@@ -38,7 +39,8 @@ public:
     TcpCollector(const TcpCollector&) = delete;
     TcpCollector& operator=(const TcpCollector&) = delete;
 
-    // Prazdny navratovy retezec = uspech. Jinak popis chyby (bind/listen).
+    // Empty return string = success. Otherwise an error description
+    // (bind/listen).
     std::string start(const std::string& host, int port, ObjectHandler onObject);
     void stop();
     bool isRunning() const { return running_.load(); }
