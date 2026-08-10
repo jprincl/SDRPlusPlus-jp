@@ -572,11 +572,31 @@ html, body, #map { height: 100%; margin: 0; padding: 0; background: #111; }
   width: 14px; height: 14px; border-radius: 50%; background: #e0433c;
   border: 2px solid #fff; box-shadow: 0 0 3px rgba(0,0,0,.7);
 }
+.wm-balloon { filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
 #reset-btn {
   margin-left: 8px; background: #333; color: #ddd; border: 1px solid #555;
   border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer;
 }
 #reset-btn:hover { background: #444; }
+
+/* Popup restyled to match the dark page instead of Leaflet's default
+   white card -- purely cosmetic, no functional change. */
+.leaflet-popup-content-wrapper {
+  background: #1c1c1c; color: #eee; border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.5);
+}
+.leaflet-popup-tip { background: #1c1c1c; }
+.leaflet-popup-content { margin: 10px 12px; }
+.leaflet-popup-close-button { color: #bbb !important; }
+.wm-popup-title { font-weight: 600; font-size: 14px; margin-bottom: 1px; }
+.wm-popup-sub {
+  color: #999; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .04em; margin-bottom: 8px;
+}
+.wm-popup-table { border-collapse: collapse; font-size: 12px; }
+.wm-popup-table td { padding: 2px 10px 2px 0; vertical-align: top; }
+.wm-popup-table td:first-child { color: #999; white-space: nowrap; }
+.wm-popup-table td:last-child { color: #fff; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -603,6 +623,27 @@ const dotIcon = L.divIcon({
   iconSize: [14, 14],
   iconAnchor: [7, 7]
 });
+
+// Weather balloon glyph for radiosonde: envelope + string + payload box,
+// anchored near the payload (bottom), not the envelope center, so the
+// marker tip lines up with the actual lat/lon like Leaflet's default pins.
+const balloonIcon = L.divIcon({
+  className: 'wm-marker wm-balloon',
+  html: '<svg viewBox="0 0 24 34" width="28" height="40" xmlns="http://www.w3.org/2000/svg">' +
+        '<ellipse cx="12" cy="11" rx="9" ry="10" fill="#4da6ff" stroke="#fff" stroke-width="1.5"/>' +
+        '<line x1="12" y1="21" x2="12" y2="27" stroke="#fff" stroke-width="1.5"/>' +
+        '<rect x="9" y="27" width="6" height="5" rx="1" fill="#222" stroke="#fff" stroke-width="1"/>' +
+        '</svg>',
+  iconSize: [28, 40],
+  iconAnchor: [14, 38]
+});
+
+// Per-type icon lookup -- add a new type here as future decoders (ADS-B,
+// ACARS, ...) get their own glyph; anything unlisted falls back to the
+// plain dot.
+function iconFor(type) {
+  return type === 'radiosonde' ? balloonIcon : dotIcon;
+}
 
 const markers = new Map();
 
@@ -646,9 +687,72 @@ function keyOf(obj) {
   return (obj.type || '') + '|' + (obj.name || obj.seq || '?');
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+// Known "info" key=value fields -> [nice label, unit]. Unrecognized keys
+// (a future ADS-B/ACARS type, or anything else) still show up, just with
+// their raw key as the label instead of a translated one -- nothing
+// breaks, it just looks a little less polished until someone adds it here.
+const INFO_LABELS = {
+  alt_m:        ['Altitude', ' m'],
+  climb:        ['Climb rate', ' m/s'],
+  hdg:          ['Heading', '\u00b0'],
+  temp_c:       ['Temperature', '\u00b0C'],
+  rh_pct:       ['Humidity', '%'],
+  dewpt_c:      ['Dew point', '\u00b0C'],
+  pressure_hpa: ['Pressure', ' hPa'],
+  calib_pct:    ['Calibration', '%']
+};
+
+function infoRows(infoStr) {
+  if (!infoStr) return [];
+  return infoStr.split(' ').filter((p) => p.includes('=')).map((pair) => {
+    const eq = pair.indexOf('=');
+    const key = pair.slice(0, eq);
+    const val = pair.slice(eq + 1);
+    const meta = INFO_LABELS[key];
+    const label = meta ? meta[0] : key;
+    const unit = meta ? meta[1] : '';
+    return '<tr><td>' + escapeHtml(label) + '</td><td>' + escapeHtml(val) + unit + '</td></tr>';
+  });
+}
+
+function popupHtml(obj) {
+  let html = '<div class="wm-popup-title">' + escapeHtml(obj.name || '(unnamed)') + '</div>';
+  html += '<div class="wm-popup-sub">' + escapeHtml(obj.type || '') + '</div>';
+  html += '<table class="wm-popup-table">';
+  html += '<tr><td>Position</td><td>' + obj.lat.toFixed(5) + ', ' + obj.lon.toFixed(5) + '</td></tr>';
+  if (obj.date || obj.time) {
+    html += '<tr><td>Time (UTC)</td><td>' + escapeHtml(((obj.date || '') + ' ' + (obj.time || '')).trim()) + '</td></tr>';
+  }
+  if (obj.speed !== undefined && obj.speed !== null) {
+    const unit = obj.type === 'radiosonde' ? ' m/s' : '';
+    html += '<tr><td>Speed</td><td>' + obj.speed + unit + '</td></tr>';
+  }
+  html += infoRows(obj.info).join('');
+  html += '</table>';
+  return html;
+}
+
+// Jump to the first radiosonde seen (on load or live) so you don't have to
+// hunt for it on the default view -- only once per session/since the last
+// Reset, so it doesn't keep yanking the view back if you pan away while it
+// flies.
+let sondeAutoCentered = false;
+function maybeAutoCenterOnSonde(obj) {
+  if (sondeAutoCentered || obj.type !== 'radiosonde') return;
+  sondeAutoCentered = true;
+  map.setView([obj.lat, obj.lon], 12);
+}
+
 function upsert(obj) {
   const key = keyOf(obj);
   const pos = [obj.lat, obj.lon];
+  maybeAutoCenterOnSonde(obj);
 
   let hist = trails.get(key);
   if (!hist) { hist = []; trails.set(key, hist); }
@@ -658,12 +762,12 @@ function upsert(obj) {
 
   let m = markers.get(key);
   if (!m) {
-    m = L.marker(pos, { icon: dotIcon }).addTo(map);
+    m = L.marker(pos, { icon: iconFor(obj.type) }).addTo(map);
     markers.set(key, m);
   } else {
     m.setLatLng(pos);
   }
-  m.bindPopup('<pre style="margin:0">' + JSON.stringify(obj, null, 1) + '</pre>');
+  m.bindPopup(popupHtml(obj));
   setStatus(true);
 }
 
@@ -682,6 +786,7 @@ function clearAll() {
   trailLines.forEach((l) => map.removeLayer(l));
   trailLines.clear();
   trails.clear();
+  sondeAutoCentered = false;
   setStatus(es.readyState === EventSource.OPEN);
 }
 
