@@ -23,6 +23,9 @@ RUN apt-get -o Acquire::Retries=3 update && \
 RUN python3 -m pip install --no-cache-dir mako cmake
 
 # Install linuxdeploy and appimagetool for the host architecture.
+# appimagetool comes from the maintained AppImage/appimagetool project (not the
+# deprecated AppImageKit): it embeds the static type2-runtime, so the resulting
+# AppImage no longer needs libfuse2 on the host.
 # Both ship as AppImages that need FUSE — inside Docker we extract them once.
 RUN ARCH=$(uname -m) && \
     wget -q -O /tmp/linuxdeploy.AppImage \
@@ -33,7 +36,7 @@ RUN ARCH=$(uname -m) && \
     ln -sf /opt/linuxdeploy/AppRun /usr/local/bin/linuxdeploy && \
     rm /tmp/linuxdeploy.AppImage && \
     wget -q -O /tmp/appimagetool.AppImage \
-        "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${ARCH}.AppImage" && \
+        "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage" && \
     chmod +x /tmp/appimagetool.AppImage && \
     cd /tmp && /tmp/appimagetool.AppImage --appimage-extract >/dev/null && \
     mv squashfs-root /opt/appimagetool && \

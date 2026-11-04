@@ -12,7 +12,43 @@
 #include <stb_image.h>
 #include <stb_image_resize.h>
 
+// Window identity hints. The AppImage is built against old GLFW 3.3 headers
+// (Ubuntu focal) but runs against whatever libglfw the host provides, so the
+// 3.4-only Wayland hint must be defined here and enabled by a runtime version
+// check instead of a compile-time one.
+#ifndef GLFW_WAYLAND_APP_ID
+#define GLFW_WAYLAND_APP_ID 0x00026001
+#endif
+#ifndef GLFW_X11_CLASS_NAME
+#define GLFW_X11_CLASS_NAME 0x00024001
+#endif
+#ifndef GLFW_X11_INSTANCE_NAME
+#define GLFW_X11_INSTANCE_NAME 0x00024002
+#endif
+
+// Must match the .desktop file basename and its StartupWMClass key so that
+// desktop shells (GNOME, KDE) can map the window to its launcher icon.
+#define SDRPP_APP_ID "sdrpp-jp"
+
 namespace backend {
+    // Set Wayland app_id and X11 WM_CLASS for the next created window.
+    static void setWindowIdentityHints() {
+#ifndef __APPLE__
+        int major = 0, minor = 0, rev = 0;
+        glfwGetVersion(&major, &minor, &rev);
+        // X11 class hints exist since GLFW 3.3
+        if (major > 3 || (major == 3 && minor >= 3)) {
+            glfwWindowHintString(GLFW_X11_CLASS_NAME, SDRPP_APP_ID);
+            glfwWindowHintString(GLFW_X11_INSTANCE_NAME, SDRPP_APP_ID);
+        }
+        // Wayland app_id hint exists since GLFW 3.4; older libs would raise
+        // GLFW_INVALID_ENUM, so only set it when the runtime library supports it
+        if (major > 3 || (major == 3 && minor >= 4)) {
+            glfwWindowHintString(GLFW_WAYLAND_APP_ID, SDRPP_APP_ID);
+        }
+#endif
+    }
+
     const char* OPENGL_VERSIONS_GLSL[] = {
         "#version 120",
         "#version 300 es",
@@ -109,10 +145,8 @@ namespace backend {
             glfwWindowHint(GLFW_CLIENT_API, OPENGL_VERSIONS_IS_ES[i] ? GLFW_OPENGL_ES_API : GLFW_OPENGL_API);
             glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, OPENGL_VERSIONS_MAJOR[i]);
             glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, OPENGL_VERSIONS_MINOR[i]);
-    #if GLFW_VERSION_MAJOR > 3 || (GLFW_VERSION_MAJOR == 3 && GLFW_VERSION_MINOR >= 4)
-            glfwWindowHintString(GLFW_WAYLAND_APP_ID, "sdrpp-jp");
-    #endif
-            
+            setWindowIdentityHints();
+
             // Create window with graphics context
             monitor = glfwGetPrimaryMonitor();
             window = glfwCreateWindow(winWidth, winHeight, "SDR++ jp v" VERSION_STR " (Built at " __TIME__ ", " __DATE__ ")", NULL, NULL);

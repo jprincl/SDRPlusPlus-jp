@@ -69,6 +69,14 @@ sed -e "s|^Exec=.*|Exec=${APP_NAME}|" \
     "${DESKTOP_SRC}" > "${DESKTOP_DST}"
 cp "${DESKTOP_DST}" "${DESKTOP_SRC}"
 
+# The window sets Wayland app_id / X11 WM_CLASS to "${APP_NAME}" (see
+# core/backends/glfw/backend.cpp). Desktop shells match the window to its
+# launcher icon through StartupWMClass, so fail early if it ever goes missing.
+if ! grep -qx "StartupWMClass=${APP_NAME}" "${DESKTOP_DST}"; then
+    echo "ERROR: ${DESKTOP_DST} lacks StartupWMClass=${APP_NAME}" >&2
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Bundle dependencies. GPU/X11/glibc/glfw libs come from the host — bundling
 # them breaks driver ABI on the user's machine.
@@ -155,6 +163,8 @@ chmod +x "${APPDIR}/AppRun"
 # Pack the AppImage.
 # ---------------------------------------------------------------------------
 unset PKG_CONFIG_PATH
+# appimagetool fetches the static type2-runtime for ${ARCH} while packing
+export ARCH
 appimagetool "${APPDIR}" "${OUT}"
 
 ls -lh "${OUT}"
